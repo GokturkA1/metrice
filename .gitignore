@@ -1,0 +1,8 @@
+node_modules/
+project_dump.txt
+data_*.json
+peers_*.json
+*.db
+*.db-journal
+.DS_Store
+.vscode/

@@ -1,0 +1,20 @@
+export const ANSI = {
+  CLEAR: '\x1b[2J\x1b[3J\x1b[H',
+  CLEAR_LINE: '\x1b[2K',
+  RESET: '\x1b[0m',
+  BOLD: '\x1b[1m',
+  DIM: '\x1b[2m',
+  BG_DARK: '\x1b[48;5;235m',
+  BG_HEADER: '\x1b[48;5;237m',
+  BG_INPUT: '\x1b[48;5;236m',
+  FG_CYAN: '\x1b[38;5;51m',
+  FG_GREEN: '\x1b[38;5;82m',
+  FG_GRAY: '\x1b[38;5;245m',
+  FG_WHITE: '\x1b[38;5;255m',
+  FG_MAGENTA: '\x1b[38;5;201m',
+  FG_YELLOW: '\x1b[38;5;226m',
+  FG_RED: '\x1b[38;5;196m',
+  CURSOR_HIDE: '\x1b[?25l',
+  CURSOR_SHOW: '\x1b[?25h',
+  CURSOR_MOVE: (r, c) => `\x1b[${r};${c}H`
+};
