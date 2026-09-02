@@ -6,6 +6,6 @@ export default {
   description: I18n.t('CMD_SYSTEM_DESC'),
   usage: '/system',
   execute({ session }) {
-    session.setTarget('*sistem');
+    session.setTarget(I18n.t('SYSTEM_CONSOLE_NAME'));
   }
 };

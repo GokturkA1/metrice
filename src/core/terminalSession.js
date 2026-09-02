@@ -1,12 +1,23 @@
+import { EventEmitter } from 'node:events';
 import { ANSI } from '../utils/ansi.js';
 import { I18n } from '../locales/i18n.js';
 
-export class TerminalSession {
-  constructor(socket, userAddress, initialProfile, getOnlineUsersFn) {
+export class TerminalSession extends EventEmitter {
+  constructor(socket, userAddress, initialProfile, getOnlineUsersFn, getChannelMembersFn = null, onProfileChangeFn = null, getSystemStatsFn = null, getKnownCommandsFn = null) {
+    super();
     this.socket = socket;
     this.userAddress = userAddress;
+    this.userNick = userAddress.split(':')[0].replace('@', '');
     this.getOnlineUsers = getOnlineUsersFn;
-    this.activeTarget = '#genel';
+    this.getChannelMembers = getChannelMembersFn;
+    this.getSystemStats = getSystemStatsFn;
+    this.getKnownCommands = getKnownCommandsFn;
+    this.onProfileChange = onProfileChangeFn;
+
+    const defaultChannel = I18n.t('DEFAULT_CHANNEL_NAME');
+    const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
+
+    this.activeTarget = defaultChannel;
 
     this.inputBuffer = '';
     this.cursorIndex = 0;
@@ -15,21 +26,26 @@ export class TerminalSession {
     this.tempInput = '';
 
     this.focus = 'input';
-    this.contacts = initialProfile?.contacts || ['*sistem', '#genel'];
-    this.selectedContactIdx = this.contacts.indexOf('#genel') !== -1 ? this.contacts.indexOf('#genel') : 1;
+
+    this.tabCompletions = [];
+    this.tabIndex = -1;
+    this.tabPrefix = '';
+
+    const savedContacts = initialProfile?.contacts || [];
+    const baseContacts = [systemConsole, defaultChannel];
+    this.contacts = Array.from(new Set([...baseContacts, ...savedContacts]));
+    this.selectedContactIdx = this.contacts.indexOf(defaultChannel) !== -1 ? this.contacts.indexOf(defaultChannel) : 1;
 
     this.unreadCounts = new Map();
-    this.isManualPasteMode = false;
-    this.manualPasteLines = [];
 
     this.systemLogs = [
       {
-        from: '[SİSTEM]',
+        from: `[${I18n.t('TUI_SYSTEM_SENDER')}]`,
         content: I18n.t('SYS_WELCOME', { address: userAddress }),
         timestamp: new Date().toISOString()
       },
       {
-        from: '[SİSTEM]',
+        from: `[${I18n.t('TUI_SYSTEM_SENDER')}]`,
         content: I18n.t('SYS_HELP_TIP'),
         timestamp: new Date().toISOString()
       }
@@ -39,15 +55,69 @@ export class TerminalSession {
     this.typingUser = null;
     this.typingTimeout = null;
 
-    this.width = 90;
+    this.width = 110;
     this.height = 24;
-    this.sidebarWidth = 26;
+    this.leftSidebarWidth = 24;
+    this.rightSidebarWidth = 22;
+
+    this.screenBuffer = [];
+  }
+
+  // --- FEDERE MENTION KONTROLÜ (@nick veya @nick:host[:port]) ---
+  isUserMentioned(content) {
+    if (!content) return false;
+
+    // 1. Tam adres veya portsuz adres eşleşmesi (@ahmet:localhost:8001 / @ahmet:localhost)
+    if (content.includes(this.userAddress)) return true;
+    const withoutPort = this.userAddress.split(':').slice(0, 2).join(':');
+    if (content.includes(withoutPort)) return true;
+
+    // 2. Yalın rumuz eşleşmesi (@ahmet, @ahmet: @ahmet! vb.)
+    // Kelime sınırı (\b) kullanarak @nick sonrasındaki noktalama ve boşlukları destekler
+    const escapedNick = this.userNick.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`@${escapedNick}\\b`, 'i');
+    return regex.test(content);
+  }
+
+  isMemberOf(target) {
+    return this.contacts.includes(target);
+  }
+
+  getMyChannels() {
+    return this.contacts.filter((c) => c.startsWith('#'));
+  }
+
+  notifyProfileChange() {
+    if (typeof this.onProfileChange === 'function') {
+      this.onProfileChange(this.contacts, this.history);
+    }
+  }
+
+  resize(width, height) {
+    this.width = Math.max(40, width || 110);
+    this.height = Math.max(10, height || 24);
+    this.leftSidebarWidth = Math.min(26, Math.max(18, Math.floor(this.width * 0.22)));
+    this.rightSidebarWidth = Math.min(24, Math.max(16, Math.floor(this.width * 0.20)));
+    this.screenBuffer = [];
+    this.socket.write(ANSI.CLEAR);
+    this.emit('request_render');
   }
 
   addContact(target) {
     if (!this.contacts.includes(target)) {
       this.contacts.push(target);
+      this.notifyProfileChange();
     }
+  }
+
+  removeContact(target) {
+    this.contacts = this.contacts.filter((c) => c !== target);
+    this.unreadCounts.delete(target);
+    if (this.selectedContactIdx >= this.contacts.length) {
+      this.selectedContactIdx = Math.max(0, this.contacts.length - 1);
+    }
+    this.notifyProfileChange();
+    this.emit('request_render');
   }
 
   incrementUnread(target) {
@@ -62,76 +132,131 @@ export class TerminalSession {
     this.selectedContactIdx = this.contacts.indexOf(target);
     this.unreadCounts.delete(target);
     this.scrollOffset = 0;
+    this.emit('request_render');
   }
 
   addSystemLog(content) {
+    const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
     this.systemLogs.push({
-      from: '[SİSTEM]',
+      from: `[${I18n.t('TUI_SYSTEM_SENDER')}]`,
       content,
       timestamp: new Date().toISOString()
     });
-    if (this.activeTarget !== '*sistem') {
-      this.incrementUnread('*sistem');
+    if (this.activeTarget !== systemConsole) {
+      this.incrementUnread(systemConsole);
     }
     if (this.systemLogs.length > 200) {
       this.systemLogs.shift();
     }
+    this.emit('request_render');
   }
 
-  setTyping(user, renderCallback = null) {
+  setTyping(user) {
     this.typingUser = user;
-    if (renderCallback) renderCallback();
+    this.emit('request_render');
 
     if (this.typingTimeout) clearTimeout(this.typingTimeout);
     this.typingTimeout = setTimeout(() => {
       this.typingUser = null;
-      if (renderCallback) renderCallback();
+      this.emit('request_render');
     }, 3000);
   }
 
+  handleTabCompletion() {
+    const leftText = this.inputBuffer.slice(0, this.cursorIndex);
+    const tokens = leftText.split(' ');
+    const currentWord = tokens[tokens.length - 1];
+
+    if (!currentWord) return;
+
+    if (this.tabIndex === -1 || this.tabPrefix !== currentWord) {
+      this.tabPrefix = currentWord;
+      const candidates = [];
+
+      if (currentWord.startsWith('/')) {
+        const cmdPrefix = currentWord.slice(1).toLowerCase();
+        const allCmds = this.getKnownCommands ? this.getKnownCommands() : [];
+        allCmds.forEach((c) => {
+          if (c.startsWith(cmdPrefix)) candidates.push(`/${c} `);
+        });
+      } else if (currentWord.startsWith('@')) {
+        const userPrefix = currentWord.toLowerCase();
+        const onlineUsers = this.getOnlineUsers ? this.getOnlineUsers() : [];
+        onlineUsers.forEach((u) => {
+          if (u.toLowerCase().startsWith(userPrefix)) candidates.push(`${u} `);
+        });
+      } else if (currentWord.startsWith('#')) {
+        const chanPrefix = currentWord.toLowerCase();
+        this.contacts.filter((c) => c.startsWith('#')).forEach((ch) => {
+          if (ch.toLowerCase().startsWith(chanPrefix)) candidates.push(`${ch} `);
+        });
+      }
+
+      if (candidates.length === 0) return;
+
+      this.tabCompletions = candidates;
+      this.tabIndex = 0;
+    } else {
+      this.tabIndex = (this.tabIndex + 1) % this.tabCompletions.length;
+    }
+
+    const chosen = this.tabCompletions[this.tabIndex];
+    tokens[tokens.length - 1] = chosen;
+    const newLeft = tokens.join(' ');
+    this.inputBuffer = newLeft + this.inputBuffer.slice(this.cursorIndex);
+    this.cursorIndex = newLeft.length;
+    this.renderInputOnly();
+  }
+
+  resetTabCompletion() {
+    this.tabIndex = -1;
+    this.tabCompletions = [];
+    this.tabPrefix = '';
+  }
+
   insertChar(char) {
+    this.resetTabCompletion();
     this.inputBuffer = this.inputBuffer.slice(0, this.cursorIndex) + char + this.inputBuffer.slice(this.cursorIndex);
     this.cursorIndex += char.length;
   }
 
   backspace() {
+    this.resetTabCompletion();
     if (this.cursorIndex > 0) {
       this.inputBuffer = this.inputBuffer.slice(0, this.cursorIndex - 1) + this.inputBuffer.slice(this.cursorIndex);
       this.cursorIndex--;
     }
   }
 
-  resize(width, height) {
-    // Minimum 60 sütun ve 15 satır garanti edilir
-    this.width = Math.max(60, width || 90);
-    this.height = Math.max(15, height || 24);
-    // Sol menü genişliği pencere boyutuna göre dengeli kalsın
-    this.sidebarWidth = Math.min(30, Math.max(20, Math.floor(this.width * 0.28)));
-  }
-
   deleteForward() {
+    this.resetTabCompletion();
     if (this.cursorIndex < this.inputBuffer.length) {
       this.inputBuffer = this.inputBuffer.slice(0, this.cursorIndex) + this.inputBuffer.slice(this.cursorIndex + 1);
     }
   }
 
   moveCursorLeft() {
+    this.resetTabCompletion();
     if (this.cursorIndex > 0) this.cursorIndex--;
   }
 
   moveCursorRight() {
+    this.resetTabCompletion();
     if (this.cursorIndex < this.inputBuffer.length) this.cursorIndex++;
   }
 
   moveCursorHome() {
+    this.resetTabCompletion();
     this.cursorIndex = 0;
   }
 
   moveCursorEnd() {
+    this.resetTabCompletion();
     this.cursorIndex = this.inputBuffer.length;
   }
 
   deleteWord() {
+    this.resetTabCompletion();
     if (this.cursorIndex === 0) return;
     const leftPart = this.inputBuffer.slice(0, this.cursorIndex).trimEnd();
     const lastSpace = leftPart.lastIndexOf(' ');
@@ -141,12 +266,16 @@ export class TerminalSession {
   }
 
   clearInput() {
+    this.resetTabCompletion();
     this.inputBuffer = '';
     this.cursorIndex = 0;
   }
 
   pushHistory(command) {
-    if (command.trim()) this.history.push(command);
+    if (command.trim()) {
+      this.history.push(command);
+      this.notifyProfileChange();
+    }
     this.historyIndex = -1;
     this.tempInput = '';
   }
@@ -198,7 +327,6 @@ export class TerminalSession {
     }
   }
 
-  // Metindeki tüm zararlı görünmez karakterleri ve satır sonlarını arındırır
   sanitizeContent(str) {
     return (str || '')
       .replace(/\x00/g, '')
@@ -207,7 +335,6 @@ export class TerminalSession {
       .replace(/\t/g, '  ');
   }
 
-  // Verilen satırı genişlik sınırına göre parçalara ayırır
   wrapLineStrict(line, maxWidth) {
     if (!line) return [''];
     if (line.length <= maxWidth) return [line];
@@ -224,12 +351,16 @@ export class TerminalSession {
 
   formatMessagesToLines(messages, maxLineWidth) {
     const formattedLines = [];
+    const systemSender = I18n.t('TUI_SYSTEM_SENDER');
 
     for (const msg of messages) {
       const isMe = msg.from === this.userAddress;
-      const isSystem = msg.from === '[SİSTEM]';
-      const sender = isSystem ? I18n.t('TUI_SYSTEM_SENDER') : (isMe ? I18n.t('TUI_ME_SENDER_YOU') : msg.from.split(':')[0].replace('@', ''));
+      const isSystem = msg.from === `[${systemSender}]` || msg.from === '[SİSTEM]';
+      const sender = isSystem ? systemSender : (isMe ? I18n.t('TUI_ME_SENDER_YOU') : msg.from.split(':')[0].replace('@', ''));
       const timeStr = `${ANSI.FG_GRAY}${this.formatTime(msg.timestamp)}${ANSI.RESET}`;
+
+      // Federe Mention Kontrolü
+      const isMentioned = !isMe && !isSystem && this.isUserMentioned(msg.content);
 
       let color = isMe ? ANSI.FG_CYAN : ANSI.FG_MAGENTA;
       if (isSystem) color = ANSI.FG_YELLOW + ANSI.BOLD;
@@ -237,13 +368,16 @@ export class TerminalSession {
       const raw = this.sanitizeContent(msg.content);
       const isMultiLine = raw.includes('\n') || msg.isSnippet;
 
-      // 1. Çok Satırlı Kod / Snippet Bloğu
+      // Mention durumunda sarı rozet ve arka plan vurgusu
+      const mentionPrefix = isMentioned ? `${ANSI.BG_HEADER}${ANSI.FG_YELLOW}[@] ` : '';
+      const mentionSuffix = isMentioned ? `${ANSI.RESET}` : '';
+
       if (isMultiLine) {
-        const titleLine = `${timeStr} ${color}[${sender}]${ANSI.RESET} ${ANSI.DIM}--- [KOD / METİN BLOKU] ---${ANSI.RESET}`;
+        const titleLine = `${timeStr} ${mentionPrefix}${color}[${sender}]${ANSI.RESET} ${ANSI.DIM}--- [KOD / METİN BLOKU] ---${ANSI.RESET}${mentionSuffix}`;
         formattedLines.push(titleLine);
 
         const lines = raw.split('\n');
-        const codeMaxWidth = Math.max(10, maxLineWidth - 3); // "│ " (2) + pay
+        const codeMaxWidth = Math.max(10, maxLineWidth - 3);
 
         for (const line of lines) {
           const chunks = this.wrapLineStrict(line, codeMaxWidth);
@@ -254,26 +388,24 @@ export class TerminalSession {
         continue;
       }
 
-      // 2. /me Eylem Mesajı
       if (msg.isAction) {
         const fullActionText = `* ${sender} ${raw}`;
         const chunks = this.wrapLineStrict(fullActionText, maxLineWidth - 6);
         for (const chunk of chunks) {
-          formattedLines.push(`${timeStr} ${ANSI.FG_YELLOW}${chunk}${ANSI.RESET}`);
+          formattedLines.push(`${timeStr} ${mentionPrefix}${ANSI.FG_YELLOW}${chunk}${ANSI.RESET}${mentionSuffix}`);
         }
         continue;
       }
 
-      // 3. Normal Tek Satırlı Mesaj
       const prefix = `[${sender}] `;
-      const prefixLen = 6 + prefix.length;
+      const prefixLen = 6 + prefix.length + (isMentioned ? 4 : 0);
       const maxTextWidth = Math.max(10, maxLineWidth - prefixLen);
       const indent = ' '.repeat(prefixLen);
       const chunks = this.wrapLineStrict(raw, maxTextWidth);
 
       chunks.forEach((chunk, idx) => {
         if (idx === 0) {
-          formattedLines.push(`${timeStr} ${color}${prefix}${ANSI.RESET}${chunk}`);
+          formattedLines.push(`${timeStr} ${mentionPrefix}${color}${prefix}${ANSI.RESET}${chunk}${mentionSuffix}`);
         } else {
           formattedLines.push(`${indent}${chunk}`);
         }
@@ -283,25 +415,100 @@ export class TerminalSession {
     return formattedLines;
   }
 
+  calculateInputRender() {
+    const inputColor = this.focus === 'input' ? ANSI.FG_GREEN : ANSI.FG_GRAY;
+    const maxInputWidth = Math.max(10, this.width - 4);
+
+    let visibleText = this.inputBuffer;
+    let visualCursor = this.cursorIndex;
+
+    if (this.inputBuffer.length > maxInputWidth) {
+      let start = Math.max(0, this.cursorIndex - Math.floor(maxInputWidth / 2));
+      if (start + maxInputWidth > this.inputBuffer.length) {
+        start = Math.max(0, this.inputBuffer.length - maxInputWidth);
+      }
+      visibleText = this.inputBuffer.slice(start, start + maxInputWidth);
+      visualCursor = this.cursorIndex - start;
+    }
+
+    const padding = ' '.repeat(Math.max(0, maxInputWidth - visibleText.length));
+    const lineContent = `${inputColor}> ${ANSI.RESET}${visibleText}${padding}`;
+    const cursorCol = 3 + visualCursor;
+
+    return { lineContent, cursorCol };
+  }
+
   renderInputOnly() {
     try {
-      const inputColor = this.focus === 'input' ? ANSI.FG_GREEN : ANSI.FG_GRAY;
+      if (this.width < 70 || this.height < 12) return;
+
+      const { lineContent, cursorCol } = this.calculateInputRender();
+      this.screenBuffer[this.height - 1] = lineContent;
+
       let out = ANSI.CURSOR_MOVE(this.height, 1) + ANSI.CLEAR_LINE;
-      const promptSymbol = this.isManualPasteMode ? '[PASTE]> ' : '> ';
-      out += `${inputColor}${promptSymbol}${ANSI.RESET}${this.inputBuffer}`;
-      out += ANSI.CURSOR_MOVE(this.height, promptSymbol.length + 1 + this.cursorIndex);
+      out += lineContent;
+      out += ANSI.CURSOR_MOVE(this.height, cursorCol);
       this.socket.write(out);
     } catch {}
   }
 
   renderFull(messages = []) {
     try {
-      let out = ANSI.CLEAR;
-      const innerLeftWidth = this.sidebarWidth - 2; // 24 karakter
-      const innerRightWidth = this.width - this.sidebarWidth - 1; // 63 karakter
+      if (this.width < 75 || this.height < 14) {
+        let warn = ANSI.CLEAR + ANSI.CURSOR_MOVE(Math.floor(this.height / 2), 2);
+        warn += `${ANSI.FG_YELLOW}Terminal çok küçük! Lütfen büyütün (Min: 80x15). Şu an: ${this.width}x${this.height}${ANSI.RESET}`;
+        this.screenBuffer = [];
+        this.socket.write(warn);
+        return;
+      }
+
+      const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
+      const isSystemWindow = this.activeTarget === systemConsole;
+      const newFrame = new Array(this.height);
+
+      const innerLeftWidth = Math.max(10, this.leftSidebarWidth - 2);
+      const innerRightWidth = Math.max(10, this.rightSidebarWidth - 2);
+      const innerMidWidth = Math.max(10, this.width - this.leftSidebarWidth - this.rightSidebarWidth - 1);
+
       const onlineList = this.getOnlineUsers ? this.getOnlineUsers() : [];
 
-      const activeMessages = this.activeTarget === '*sistem' ? this.systemLogs : messages;
+      let rightPanelLines = [];
+      let rightTitle = '';
+
+      if (isSystemWindow) {
+        const stats = this.getSystemStats ? this.getSystemStats() : { uptime: '-', rss: '-', peers: [] };
+        rightTitle = ' [Düğüm & Eşler] ';
+        rightPanelLines.push(`${ANSI.FG_CYAN}UPTIME :${ANSI.RESET} ${stats.uptime}`);
+        rightPanelLines.push(`${ANSI.FG_CYAN}RAM    :${ANSI.RESET} ${stats.rss}MB`);
+        rightPanelLines.push(`${ANSI.FG_GRAY}----------------${ANSI.RESET}`);
+        rightPanelLines.push(`${ANSI.FG_YELLOW}EŞLER (${stats.peers.length}):${ANSI.RESET}`);
+        if (stats.peers.length === 0) {
+          rightPanelLines.push(`${ANSI.FG_GRAY}(Eş yok)${ANSI.RESET}`);
+        } else {
+          stats.peers.forEach((p) => {
+            rightPanelLines.push(`${ANSI.FG_GREEN}●${ANSI.RESET} ${p}`);
+          });
+        }
+      } else {
+        let channelMembers = [];
+        if (this.getChannelMembers) {
+          channelMembers = this.getChannelMembers(this.activeTarget);
+        }
+        rightTitle = I18n.t('TUI_MEMBERS_HEADER', { count: channelMembers.length });
+        channelMembers.forEach((member) => {
+          const isOnline = onlineList.includes(member);
+          const isMe = member === this.userAddress;
+          const statusChar = isOnline ? '●' : '○';
+          const statusColor = isOnline ? ANSI.FG_GREEN : ANSI.FG_GRAY;
+          const memberNick = member.split(':')[0].replace('@', '');
+          const maxNameLen = Math.max(4, innerRightWidth - 3);
+          const visibleMember = memberNick.slice(0, maxNameLen);
+          const nameColor = isMe ? ANSI.FG_CYAN + ANSI.BOLD : (isOnline ? ANSI.FG_WHITE : ANSI.FG_GRAY);
+          rightPanelLines.push(`${statusColor}${statusChar}${ANSI.RESET} ${nameColor}${visibleMember}${ANSI.RESET}`);
+        });
+      }
+
+      const activeMessages = isSystemWindow ? this.systemLogs : messages;
 
       // 1. Üst Başlık
       const focusHint = this.focus === 'sidebar'
@@ -310,23 +517,23 @@ export class TerminalSession {
 
       const titleText = I18n.t('TUI_HEADER_TITLE', { address: this.userAddress });
       const spaceBetween = Math.max(1, this.width - titleText.length - focusHint.length);
-      out += ANSI.CURSOR_MOVE(1, 1) + ANSI.BG_HEADER + ANSI.FG_CYAN + ANSI.BOLD;
-      out += titleText + ' '.repeat(spaceBetween) + ANSI.FG_YELLOW + focusHint + ANSI.RESET;
+      newFrame[0] = ANSI.BG_HEADER + ANSI.FG_CYAN + ANSI.BOLD + titleText + ' '.repeat(spaceBetween) + ANSI.FG_YELLOW + focusHint + ANSI.RESET;
 
       // 2. Üst Çerçeve
       const leftTitle = this.focus === 'sidebar' ? I18n.t('TUI_SIDEBAR_HEADER_FOCUSED') : I18n.t('TUI_SIDEBAR_HEADER_UNFOCUSED');
       const scrollInfo = this.scrollOffset > 0 ? ` [▲ +${this.scrollOffset}]` : '';
-      const rightTitle = I18n.t('TUI_CHAT_HEADER', { target: this.activeTarget || I18n.t('TUI_CHAT_NO_TARGET'), scroll: scrollInfo });
+      const midTitle = I18n.t('TUI_CHAT_HEADER', { target: this.activeTarget || I18n.t('TUI_CHAT_NO_TARGET'), scroll: scrollInfo });
       const leftBorderColor = this.focus === 'sidebar' ? ANSI.FG_YELLOW : ANSI.FG_CYAN;
 
-      let topBorder = ANSI.CURSOR_MOVE(2, 1) + '+';
+      let topBorder = '+';
       topBorder += leftBorderColor + ANSI.BOLD + leftTitle + ANSI.RESET + '-'.repeat(Math.max(0, innerLeftWidth - leftTitle.length)) + '+';
-      topBorder += ANSI.FG_CYAN + ANSI.BOLD + rightTitle + ANSI.RESET + '-'.repeat(Math.max(0, innerRightWidth - rightTitle.length)) + '+';
-      out += topBorder;
+      topBorder += ANSI.FG_CYAN + ANSI.BOLD + midTitle + ANSI.RESET + '-'.repeat(Math.max(0, innerMidWidth - midTitle.length)) + '+';
+      topBorder += (isSystemWindow ? ANSI.FG_YELLOW : ANSI.FG_GRAY) + ANSI.BOLD + rightTitle + ANSI.RESET + '-'.repeat(Math.max(0, innerRightWidth - rightTitle.length)) + '+';
+      newFrame[1] = topBorder;
 
       // 3. Gövde
       const chatHeight = this.height - 4;
-      const allFormattedLines = this.formatMessagesToLines(activeMessages, innerRightWidth - 2);
+      const allFormattedLines = this.formatMessagesToLines(activeMessages, innerMidWidth - 2);
 
       const totalLines = allFormattedLines.length;
       const maxScroll = Math.max(0, totalLines - (chatHeight - 2));
@@ -337,7 +544,7 @@ export class TerminalSession {
       const visibleLines = allFormattedLines.slice(startIdx, endIdx);
 
       for (let i = 1; i <= chatHeight - 2; i++) {
-        const row = 2 + i;
+        const frameIndex = 1 + i;
 
         // Sol Bölme
         let leftCell = ' '.repeat(innerLeftWidth);
@@ -352,7 +559,7 @@ export class TerminalSession {
           let statusChar = '○';
           let statusColor = ANSI.FG_GRAY;
 
-          if (contact === '*sistem') {
+          if (contact === systemConsole) {
             statusChar = '★';
             statusColor = ANSI.FG_YELLOW;
           } else if (contact.startsWith('#')) {
@@ -366,11 +573,11 @@ export class TerminalSession {
           const prefix = isCurrent ? '>' : (isSelected ? '▶' : ' ');
           const unreadBadge = unread > 0 ? ` (${unread})` : '';
 
-          const maxTextLen = innerLeftWidth - 4 - unreadBadge.length;
-          const visibleName = contact.slice(0, Math.max(0, maxTextLen));
+          const maxTextLen = Math.max(4, innerLeftWidth - 4 - unreadBadge.length);
+          const visibleName = contact.slice(0, maxTextLen);
 
           let nameColor = isCurrent ? ANSI.FG_GREEN + ANSI.BOLD : ANSI.FG_GRAY;
-          if (contact === '*sistem' && !isCurrent) nameColor = ANSI.FG_YELLOW;
+          if (contact === systemConsole && !isCurrent) nameColor = ANSI.FG_YELLOW;
           if (unread > 0 && !isCurrent) nameColor = ANSI.FG_WHITE + ANSI.BOLD;
           if (isSelected) nameColor = ANSI.BG_HEADER + ANSI.FG_YELLOW + ANSI.BOLD;
 
@@ -382,39 +589,52 @@ export class TerminalSession {
           leftCell = `${fullLabel}${padding}`;
         }
 
-        // Sağ Bölme (ANSI temizleme ve matematiksel genişlik kilitleme)
-        let rightCell = ' '.repeat(innerRightWidth);
+        // Orta Bölme
+        let midCell = ' '.repeat(innerMidWidth);
         const lineContent = visibleLines[i - 1];
         if (lineContent !== undefined) {
           const plainLength = lineContent.replace(/\x1b\[[0-9;]*m/g, '').length;
-          const padding = ' '.repeat(Math.max(0, innerRightWidth - plainLength));
-          rightCell = `${lineContent}${padding}`;
+          const padding = ' '.repeat(Math.max(0, innerMidWidth - plainLength));
+          midCell = `${lineContent}${padding}`;
         }
 
-        out += ANSI.CURSOR_MOVE(row, 1) + '|' + leftCell + '|' + rightCell + '|';
+        // Sağ Bölme
+        let rightCell = ' '.repeat(innerRightWidth);
+        const rContent = rightPanelLines[i - 1];
+        if (rContent !== undefined) {
+          const plainLength = rContent.replace(/\x1b\[[0-9;]*m/g, '').length;
+          const padding = ' '.repeat(Math.max(0, innerRightWidth - plainLength));
+          rightCell = `${rContent}${padding}`;
+        }
+
+        newFrame[frameIndex] = '|' + leftCell + '|' + midCell + '|' + rightCell + '|';
       }
 
       // 4. Alt Çerçeve
-      out += ANSI.CURSOR_MOVE(this.height - 2, 1) + '+' + '-'.repeat(innerLeftWidth) + '+' + '-'.repeat(innerRightWidth) + '+';
+      newFrame[this.height - 3] = '+' + '-'.repeat(innerLeftWidth) + '+' + '-'.repeat(innerMidWidth) + '+' + '-'.repeat(innerRightWidth) + '+';
 
       // 5. Bilgi Çubuğu
-      out += ANSI.CURSOR_MOVE(this.height - 1, 1) + ANSI.BG_INPUT + ANSI.FG_WHITE;
       let bottomBarText = I18n.t('TUI_BOTTOM_INFO');
-      if (this.isManualPasteMode) {
-        bottomBarText = ` ${ANSI.FG_YELLOW}[PASTE MODU AKTİF - /end ile gönder, /cancel ile çık]${ANSI.RESET}`;
-      } else if (this.typingUser) {
+      if (this.typingUser) {
         bottomBarText = I18n.t('TUI_TYPING_INDICATOR', { user: this.typingUser });
       }
-      out += bottomBarText.padEnd(this.width) + ANSI.RESET;
+      newFrame[this.height - 2] = ANSI.BG_INPUT + ANSI.FG_WHITE + bottomBarText.padEnd(this.width) + ANSI.RESET;
 
       // 6. Giriş Satırı
-      const inputBorderColor = this.focus === 'input' ? ANSI.FG_GREEN : ANSI.FG_GRAY;
-      out += ANSI.CURSOR_MOVE(this.height, 1) + ANSI.CLEAR_LINE;
-      const promptSymbol = this.isManualPasteMode ? '[PASTE]> ' : '> ';
-      out += `${inputBorderColor}${promptSymbol}${ANSI.RESET}${this.inputBuffer}`;
-      out += ANSI.CURSOR_MOVE(this.height, promptSymbol.length + 1 + this.cursorIndex);
+      const { lineContent, cursorCol } = this.calculateInputRender();
+      newFrame[this.height - 1] = lineContent;
 
-      this.socket.write(out);
+      let diffOutput = '';
+      for (let r = 0; r < this.height; r++) {
+        if (this.screenBuffer[r] !== newFrame[r]) {
+          diffOutput += ANSI.CURSOR_MOVE(r + 1, 1) + ANSI.CLEAR_LINE + (newFrame[r] || '');
+        }
+      }
+
+      diffOutput += ANSI.CURSOR_MOVE(this.height, cursorCol);
+
+      this.screenBuffer = newFrame;
+      this.socket.write(diffOutput);
     } catch {}
   }
 }

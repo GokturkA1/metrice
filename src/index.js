@@ -25,3 +25,26 @@ const clientServer = new ClientServer(db, federation);
 
 federation.start();
 clientServer.start();
+
+// --- GRACEFUL SHUTDOWN (TEMİZ KAPANIŞ) ---
+let isShuttingDown = false;
+const shutdown = (signal) => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  log.warn(`\n[${signal}] ${I18n.t('BOOTSTRAP_SHUTTING_DOWN')}`);
+
+  try {
+    clientServer.close();
+    federation.close();
+    db.close();
+    log.info('Temiz kapanış tamamlandı. Hoşça kalın!');
+  } catch (err) {
+    log.error(`Kapanış sırasında hata: ${err.message}`);
+  } finally {
+    process.exit(0);
+  }
+};
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));

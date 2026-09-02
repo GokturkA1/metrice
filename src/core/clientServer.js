@@ -26,16 +26,20 @@ export class ClientServer {
     this.federation = federation;
     this.sessions = new Map();
     this.commands = createCommandRegistry();
+    this.server = null;
 
-    this.federation.setLocalUsersGetter(() => this.getLocalOnlineUsers());
+    this.federation.setLocalStateGetter(() => ({
+      users: this.getLocalOnlineUsers(),
+      memberships: this.getLocalMemberships()
+    }));
+
     this.federation.on('presence_change', () => {
-      this.broadcastSessionRefresh();
+      this.notifyAllSessionsRender();
     });
   }
 
   sendHandshakeAndSizeQuery(socket) {
     try {
-      // 1. Telnet Handshake + DO NAWS
       const initPayload = Buffer.from([
         TELNET.IAC, TELNET.WILL, TELNET.OPT_ECHO,
         TELNET.IAC, TELNET.WILL, TELNET.OPT_SUPPRESS_GO_AHEAD,
@@ -43,11 +47,7 @@ export class ClientServer {
         TELNET.IAC, TELNET.DO, TELNET.OPT_NAWS
       ]);
       socket.write(initPayload);
-
-      // 2. Bracketed Paste aç
       socket.write('\x1b[?2004h');
-
-      // 3. Evrensel Boyut Sorgusu: İmleci 999;999'a çek ve pozisyon raporu (CPR) iste
       socket.write('\x1b[s\x1b[999;999H\x1b[6n\x1b[u');
     } catch {}
   }
@@ -56,23 +56,60 @@ export class ClientServer {
     return Array.from(this.sessions.keys());
   }
 
+  getLocalMemberships() {
+    const list = [];
+    for (const [userAddr, session] of this.sessions.entries()) {
+      list.push({
+        user: userAddr,
+        channels: session.getMyChannels()
+      });
+    }
+    return list;
+  }
+
   getOnlineUsers() {
     return this.federation.getAllOnlineUsers();
   }
 
-  broadcastSessionRefresh() {
-    for (const [addr, s] of this.sessions.entries()) {
-      const conv = s.activeTarget === '*sistem'
-        ? s.systemLogs
-        : s.activeTarget
-        ? this.db.getConversation(addr, s.activeTarget)
-        : [];
-      s.renderFull(conv);
+  getChannelMembers(target) {
+    if (!target) return [];
+
+    const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
+
+    if (target === systemConsole) {
+      return this.getOnlineUsers();
+    }
+
+    if (target.startsWith('@')) {
+      return [target];
+    }
+
+    const localMembers = [];
+    for (const [userAddr, session] of this.sessions.entries()) {
+      if (session.isMemberOf(target)) {
+        localMembers.push(userAddr);
+      }
+    }
+
+    const remoteMembers = this.federation.getChannelMembers(target);
+    return Array.from(new Set([...localMembers, ...remoteMembers]));
+  }
+
+  notifyAllSessionsRender() {
+    for (const session of this.sessions.values()) {
+      session.emit('request_render');
     }
   }
 
+  getCurrentConversation(userAddress, activeTarget, systemLogs) {
+    const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
+    if (activeTarget === systemConsole) return systemLogs;
+    if (!activeTarget) return [];
+    return this.db.getConversation(userAddress, activeTarget);
+  }
+
   start() {
-    const server = net.createServer((socket) => {
+    this.server = net.createServer((socket) => {
       const clientAddr = `${socket.remoteAddress}:${socket.remotePort}`;
       log.info(I18n.t('CLIENT_NEW_CONN', { addr: clientAddr }));
 
@@ -81,7 +118,7 @@ export class ClientServer {
       let userAddress = null;
       let session = null;
       let loginBuffer = '';
-      let detectedWidth = 90;
+      let detectedWidth = 110;
       let detectedHeight = 24;
 
       const parser = new InputParser();
@@ -94,24 +131,16 @@ export class ClientServer {
           const actions = parser.parse(chunk);
 
           for (const action of actions) {
-            // --- 0. Boyutlandırma (Login Öncesi ve Sonrası) ---
             if (action.type === 'RESIZE') {
               detectedWidth = action.width;
               detectedHeight = action.height;
 
               if (session) {
                 session.resize(detectedWidth, detectedHeight);
-                const conv = session.activeTarget === '*sistem'
-                  ? session.systemLogs
-                  : session.activeTarget
-                  ? this.db.getConversation(userAddress, session.activeTarget)
-                  : [];
-                session.renderFull(conv);
               }
               continue;
             }
 
-            // --- 1. Login Ekranı ---
             if (!userAddress) {
               if (action.type === 'CHAR') {
                 loginBuffer += action.char;
@@ -129,51 +158,73 @@ export class ClientServer {
                   return;
                 }
 
-                userAddress = AddressHelper.formatUser(username);
+                const targetUserAddress = AddressHelper.formatUser(username);
 
-                if (this.sessions.has(userAddress)) {
+                if (this.sessions.has(targetUserAddress)) {
                   socket.write(I18n.t('TUI_USERNAME_TAKEN'));
                   loginBuffer = '';
+                  userAddress = null;
                   return;
                 }
 
+                userAddress = targetUserAddress;
+
                 const profile = this.db.getUserProfile(userAddress);
-                session = new TerminalSession(socket, userAddress, profile, () => this.getOnlineUsers());
-                
-                // Başlangıçta tespit edilen gerçek boyutu oturuma uygula
+                session = new TerminalSession(
+                  socket,
+                  userAddress,
+                  profile,
+                  () => this.getOnlineUsers(),
+                  (target) => this.getChannelMembers(target),
+                  (contacts, history) => {
+                    this.db.updateUserProfile(userAddress, contacts, history);
+                    this.federation.broadcastPresence();
+                  },
+                  () => {
+                    const uptimeSec = Math.floor(process.uptime());
+                    const mins = Math.floor(uptimeSec / 60);
+                    const mem = process.memoryUsage();
+                    const rssMB = (mem.rss / 1024 / 1024).toFixed(1);
+                    const peers = this.federation.peerManager ? this.federation.peerManager.getAllPeers() : [];
+                    return { uptime: `${mins}m`, rss: rssMB, peers };
+                  },
+                  () => this.commands.getAllUnique().map((c) => c.name)
+                );
+
+                session.on('request_render', () => {
+                  const conv = this.getCurrentConversation(userAddress, session.activeTarget, session.systemLogs);
+                  session.renderFull(conv);
+                });
+
                 session.resize(detectedWidth, detectedHeight);
                 this.sessions.set(userAddress, session);
                 log.info(I18n.t('CLIENT_USER_LOGGED_IN'), { user: userAddress });
 
-                session.renderFull(this.db.getConversation(userAddress, session.activeTarget));
-                this.broadcastSessionRefresh();
+                session.emit('request_render');
+                this.notifyAllSessionsRender();
                 this.federation.broadcastPresence();
               }
               continue;
             }
 
-            // --- 2. Çok Satırlı Yapıştırma ---
             if (action.type === 'PASTE_COMPLETE') {
               const pastedText = action.content;
-              if (pastedText && session.activeTarget && session.activeTarget !== '*sistem') {
+              const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
+              if (pastedText && session.activeTarget && session.activeTarget !== systemConsole) {
                 await this.handleOutboundMessage(session, userAddress, session.activeTarget, pastedText, false, true);
-                session.renderFull(this.db.getConversation(userAddress, session.activeTarget));
+                session.emit('request_render');
               }
               continue;
             }
 
-            // --- 3. TUI Navigasyon & Komutlar ---
-            const currentConversation = () =>
-              session.activeTarget === '*sistem'
-                ? session.systemLogs
-                : session.activeTarget
-                ? this.db.getConversation(userAddress, session.activeTarget)
-                : [];
-
             switch (action.type) {
               case 'KEY_TAB':
-                session.focus = session.focus === 'input' ? 'sidebar' : 'input';
-                session.renderFull(currentConversation());
+                if (session.focus === 'input' && session.inputBuffer.trim().length > 0) {
+                  session.handleTabCompletion();
+                } else {
+                  session.focus = session.focus === 'input' ? 'sidebar' : 'input';
+                  session.emit('request_render');
+                }
                 break;
 
               case 'CHAR':
@@ -181,22 +232,25 @@ export class ClientServer {
                   session.insertChar(action.char);
                   session.renderInputOnly();
 
-                  if (session.activeTarget && !session.activeTarget.startsWith('#') && session.activeTarget !== '*sistem') {
+                  const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
+                  if (session.activeTarget && !session.activeTarget.startsWith('#') && session.activeTarget !== systemConsole) {
                     const targetParsed = AddressHelper.parse(session.activeTarget);
                     if (targetParsed) {
                       if (targetParsed.isLocal) {
                         const localRecipient = this.sessions.get(targetParsed.raw);
                         if (localRecipient && localRecipient.activeTarget === userAddress) {
                           const senderNick = userAddress.split(':')[0].replace('@', '');
-                          localRecipient.setTyping(senderNick, () => {
-                            localRecipient.renderFull(this.db.getConversation(targetParsed.raw, localRecipient.activeTarget));
-                          });
+                          localRecipient.setTyping(senderNick);
                         }
                       } else {
                         this.federation.sendTyping(userAddress, session.activeTarget);
                       }
                     }
                   }
+                } else {
+                  session.focus = 'input';
+                  session.insertChar(action.char);
+                  session.emit('request_render');
                 }
                 break;
 
@@ -244,12 +298,12 @@ export class ClientServer {
 
               case 'KEY_PAGE_UP':
                 session.scrollUp(5);
-                session.renderFull(currentConversation());
+                session.emit('request_render');
                 break;
 
               case 'KEY_PAGE_DOWN':
                 session.scrollDown(5);
-                session.renderFull(currentConversation());
+                session.emit('request_render');
                 break;
 
               case 'KEY_UP':
@@ -258,7 +312,7 @@ export class ClientServer {
                   session.renderInputOnly();
                 } else if (session.focus === 'sidebar') {
                   if (session.selectedContactIdx > 0) session.selectedContactIdx--;
-                  session.renderFull(currentConversation());
+                  session.emit('request_render');
                 }
                 break;
 
@@ -268,7 +322,7 @@ export class ClientServer {
                   session.renderInputOnly();
                 } else if (session.focus === 'sidebar') {
                   if (session.selectedContactIdx < session.contacts.length - 1) session.selectedContactIdx++;
-                  session.renderFull(currentConversation());
+                  session.emit('request_render');
                 }
                 break;
 
@@ -278,36 +332,12 @@ export class ClientServer {
                   if (selectedTarget) {
                     session.setTarget(selectedTarget);
                     session.focus = 'input';
-                    session.renderFull(currentConversation());
                   }
                   break;
                 }
 
                 const input = session.inputBuffer.trim();
                 session.clearInput();
-
-                if (session.isManualPasteMode) {
-                  if (input === '/end') {
-                    session.isManualPasteMode = false;
-                    const fullSnippet = session.manualPasteLines.join('\n');
-                    session.manualPasteLines = [];
-                    if (fullSnippet && session.activeTarget && session.activeTarget !== '*sistem') {
-                      await this.handleOutboundMessage(session, userAddress, session.activeTarget, fullSnippet, false, true);
-                    }
-                    session.renderFull(currentConversation());
-                    break;
-                  } else if (input === '/cancel') {
-                    session.isManualPasteMode = false;
-                    session.manualPasteLines = [];
-                    session.addSystemLog(I18n.t('SYS_PASTE_MODE_CANCEL'));
-                    session.renderFull(currentConversation());
-                    break;
-                  } else {
-                    session.manualPasteLines.push(input);
-                    session.renderInputOnly();
-                    break;
-                  }
-                }
 
                 if (!input) {
                   session.renderInputOnly();
@@ -326,19 +356,19 @@ export class ClientServer {
                     registry: this.commands,
                     userAddress
                   });
-                  session.renderFull(currentConversation());
+                  session.emit('request_render');
                   break;
                 }
 
-                if (session.activeTarget === '*sistem') {
+                const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
+                if (session.activeTarget === systemConsole) {
                   session.addSystemLog(I18n.t('SYS_SYSTEM_WINDOW_NO_MSG'));
-                  session.renderFull(currentConversation());
                   break;
                 }
 
                 if (session.activeTarget) {
                   await this.handleOutboundMessage(session, userAddress, session.activeTarget, input, false, false);
-                  session.renderFull(this.db.getConversation(userAddress, session.activeTarget));
+                  session.emit('request_render');
                 }
                 break;
 
@@ -356,7 +386,7 @@ export class ClientServer {
         if (userAddress && session) {
           this.db.updateUserProfile(userAddress, session.contacts, session.history);
           this.sessions.delete(userAddress);
-          this.broadcastSessionRefresh();
+          this.notifyAllSessionsRender();
           this.federation.broadcastPresence();
         }
         log.info(I18n.t('CLIENT_CONN_CLOSED', { addr: clientAddr }));
@@ -367,22 +397,27 @@ export class ClientServer {
       });
     });
 
-    server.listen(CONFIG.clientPort, () => {
+    this.server.listen(CONFIG.clientPort, () => {
       log.info(I18n.t('CLIENT_LISTENING', { port: CONFIG.clientPort }));
     });
 
+    // --- UZAKTAN GELEN MESAJLARDA MENTION VE ZİL KONTROLÜ ---
     this.federation.on('message', (msg) => {
       try {
         if (msg.to.startsWith('#')) {
           for (const [addr, userSession] of this.sessions.entries()) {
             if (msg.from !== addr) {
-              userSession.addContact(msg.to);
-              userSession.incrementUnread(msg.to);
-              userSession.notifyNewMessage();
-              const conv = userSession.activeTarget === msg.to
-                ? this.db.getConversation(addr, msg.to)
-                : this.db.getConversation(addr, userSession.activeTarget);
-              userSession.renderFull(conv);
+              if (userSession.isMemberOf(msg.to)) {
+                userSession.incrementUnread(msg.to);
+
+                // Kullanıcı mention edilmişse (@nick veya @nick:server:port) odaya baksa bile zil çal
+                const isMentioned = userSession.isUserMentioned(msg.content);
+                if (userSession.activeTarget !== msg.to || isMentioned) {
+                  userSession.notifyNewMessage();
+                }
+
+                userSession.emit('request_render');
+              }
             }
           }
         } else {
@@ -391,10 +426,7 @@ export class ClientServer {
             recipientSession.addContact(msg.from);
             recipientSession.incrementUnread(msg.from);
             recipientSession.notifyNewMessage();
-            const conv = recipientSession.activeTarget === msg.from
-              ? this.db.getConversation(msg.to, recipientSession.activeTarget)
-              : this.db.getConversation(msg.to, recipientSession.activeTarget);
-            recipientSession.renderFull(conv);
+            recipientSession.emit('request_render');
           }
         }
       } catch (err) {
@@ -407,15 +439,13 @@ export class ClientServer {
         const recipientSession = this.sessions.get(payload.to);
         if (recipientSession && recipientSession.activeTarget === payload.from) {
           const rawName = payload.from.split(':')[0].replace('@', '');
-          recipientSession.setTyping(rawName, () => {
-            const conv = this.db.getConversation(payload.to, recipientSession.activeTarget);
-            recipientSession.renderFull(conv);
-          });
+          recipientSession.setTyping(rawName);
         }
       } catch {}
     });
   }
 
+  // --- YEREL KANALA YAZILAN MESAJLARDA MENTION VE ZİL KONTROLÜ ---
   async handleOutboundMessage(session, from, to, content, isAction = false, isSnippet = false) {
     const target = AddressHelper.parse(to);
     if (!target) return;
@@ -428,24 +458,36 @@ export class ClientServer {
       isSnippet
     };
 
+    // Veritabanına kaydet ve üretilen ID/timestamp değerlerini al
     const saved = this.db.saveMessage(messageRecord);
     if (!saved) return;
+
+    // Pakete kesinleşmiş ID ve zamanı ekle
+    messageRecord.id = saved.id;
+    messageRecord.timestamp = saved.timestamp;
 
     if (target.type === 'CHANNEL') {
       for (const [addr, userSession] of this.sessions.entries()) {
         if (addr !== from) {
-          userSession.addContact(target.raw);
-          userSession.incrementUnread(target.raw);
-          userSession.notifyNewMessage();
-          const conv = userSession.activeTarget === target.raw
-            ? this.db.getConversation(addr, target.raw)
-            : this.db.getConversation(addr, userSession.activeTarget);
-          userSession.renderFull(conv);
+          if (userSession.isMemberOf(target.raw)) {
+            userSession.incrementUnread(target.raw);
+
+            const isMentioned = userSession.isUserMentioned(content);
+            if (userSession.activeTarget !== target.raw || isMentioned) {
+              userSession.notifyNewMessage();
+            }
+            userSession.emit('request_render');
+          }
         }
       }
 
-      if (target.isMeshChannel) {
+      if (target.isGlobalChannel) {
         await this.federation.sendRemoteMessage(from, target.raw, content, isAction, isSnippet);
+      } else if (!target.isLocal) {
+        await this.federation.sendRemoteMessage(from, target.raw, content, isAction, isSnippet);
+      } else {
+        // ID'si olan eksiksiz kaydı ilet
+        this.federation.forwardToChannelSubscribers(target.raw, messageRecord);
       }
     } else {
       if (target.isLocal) {
@@ -454,10 +496,7 @@ export class ClientServer {
           recipientSession.addContact(from);
           recipientSession.incrementUnread(from);
           recipientSession.notifyNewMessage();
-          const conv = recipientSession.activeTarget === from
-            ? this.db.getConversation(target.raw, from)
-            : this.db.getConversation(target.raw, recipientSession.activeTarget);
-          recipientSession.renderFull(conv);
+          recipientSession.emit('request_render');
         }
       } else {
         const res = await this.federation.sendRemoteMessage(from, target.raw, content, isAction, isSnippet);
@@ -466,5 +505,22 @@ export class ClientServer {
         }
       }
     }
+  }
+
+  close() {
+    for (const session of this.sessions.values()) {
+      try {
+        session.socket.write(I18n.t('TUI_SERVER_SHUTDOWN'));
+        session.socket.end();
+      } catch {}
+    }
+    this.sessions.clear();
+
+    if (this.server) {
+      try {
+        this.server.close();
+      } catch {}
+    }
+    log.info('İstemci TUI sunucusu ve açık oturumlar kapatıldı.');
   }
 }

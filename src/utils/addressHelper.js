@@ -1,4 +1,5 @@
 import { CONFIG } from '../config/index.js';
+import { I18n } from '../locales/i18n.js';
 
 export class AddressHelper {
   static USER_REGEX = /^[a-zA-Z0-9_-]+$/;
@@ -16,7 +17,6 @@ export class AddressHelper {
     if (!isUser && !isChannel) return null;
 
     const type = isChannel ? 'CHANNEL' : 'USER';
-    const prefix = clean.charAt(0);
     const body = clean.slice(1);
     const parts = body.split(':');
 
@@ -24,29 +24,45 @@ export class AddressHelper {
       const channelName = parts[0];
       if (!channelName) return null;
 
-      // Özel sunucu kanalı belirtilmişse (#oda:host:port)
+      const globalChannelName = I18n.t('DEFAULT_CHANNEL_NAME').replace('#', '');
+
+      // 1. Sadece Locale'de tanımlı genel kanal (Örn: #genel) Global Mesh kanalıdır
+      if (channelName === globalChannelName && parts.length === 1) {
+        return {
+          type,
+          raw: `#${channelName}`,
+          name: channelName,
+          host: null,
+          port: null,
+          isGlobalChannel: true,
+          isLocal: true
+        };
+      }
+
+      // 2. Özel sunucu kanalı (#sohbet:localhost:8002)
       if (parts.length > 1) {
         const host = parts[1] || CONFIG.serverName;
         const port = parts[2] ? parseInt(parts[2], 10) : CONFIG.federationPort;
+        const isLocal = host === CONFIG.serverName && port === CONFIG.federationPort;
         return {
           type,
           raw: `#${channelName}:${host}:${port}`,
           name: channelName,
           host,
           port,
-          isMeshChannel: false,
-          isLocal: host === CONFIG.serverName && port === CONFIG.federationPort
+          isGlobalChannel: false,
+          isLocal
         };
       }
 
-      // Genel Mesh Kanalı (#genel vb.)
+      // 3. Varsayılan olarak yerel sunucu kanalı (#sohbet -> #sohbet:localhost:8001)
       return {
         type,
-        raw: `#${channelName}`,
+        raw: `#${channelName}:${CONFIG.serverName}:${CONFIG.federationPort}`,
         name: channelName,
-        host: null,
-        port: null,
-        isMeshChannel: true,
+        host: CONFIG.serverName,
+        port: CONFIG.federationPort,
+        isGlobalChannel: false,
         isLocal: true
       };
     }

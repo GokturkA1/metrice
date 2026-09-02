@@ -1,10 +1,15 @@
 export default {
+  // Kanallar
+  DEFAULT_CHANNEL_NAME: '#genel',
+  SYSTEM_CONSOLE_NAME: '*sistem',
+
   // Bootstrap & Server
   BOOTSTRAP_BANNER: '====================================================',
   BOOTSTRAP_STARTING: 'Düğüm Başlatılıyor: {name}',
   BOOTSTRAP_FED_PORT: 'Federation Port: {port}',
   BOOTSTRAP_CLIENT_PORT: 'Client TUI Port: {port}',
   BOOTSTRAP_LOG_LEVEL: 'Log Seviyesi: {level}',
+  BOOTSTRAP_SHUTTING_DOWN: 'Düğüm kapatılıyor, bağlantılar ve veritabanı temizleniyor...',
 
   // Database Logs
   DB_LOADED: 'Veritabanı yüklendi: {path}',
@@ -33,6 +38,8 @@ export default {
   FED_CONN_CLOSED: 'Federasyon bağlantısı kapandı: {peer}',
   FED_OUTBOX_SENT: 'Outbox mesajı başarıyla iletildi: {id}',
   FED_OUTBOX_QUEUED: 'Mesaj iletilemedi, Outbox kuyruğuna alınıyor ({to}): {error}',
+  FED_CHANNEL_SUBSCRIBED: 'Uzak kanal abonesi eklendi: {peer} -> {channel}',
+  FED_CHANNEL_UNSUBSCRIBED: 'Uzak kanal abonesi çıkarıldı: {peer} -> {channel}',
 
   // Client Server Logs
   CLIENT_NEW_CONN: 'Yeni terminal bağlantısı açıldı: {addr}',
@@ -48,20 +55,22 @@ export default {
   ERR_UNHANDLED_REJECTION: 'Yakalanmamış Asenkron Promise (unhandledRejection): {error}',
   ERR_OPERATION_FAILED: '[{context}] Hata yakalandı: {error}',
 
-  // TUI Screen Texts & Prompts
-  TUI_WELCOME_BANNER: '=== NODE MESH TERMINAL ===\n',
+  // TUI Screen Texts & Prompts (\r\n ile satır başı hizalaması yapıldı)
+  TUI_WELCOME_BANNER: '=== NODE MESH TERMINAL ===\r\n',
   TUI_LOGIN_PROMPT: 'Kullanıcı adı girin (a-z, 0-9, _): ',
-  TUI_INVALID_USERNAME: '\nGeçersiz ad! Sadece a-z, 0-9, _, - kullanın: ',
-  TUI_USERNAME_TAKEN: '\nBu kullanıcı zaten bağlı! Başka bir ad seçin: ',
-  TUI_SESSION_CLOSED: '\nOturum kapatıldı.\n',
-  TUI_HINT_SIDEBAR_FOCUS: '[ODAK: LİSTE | Ok/Enter | Tab: Yaz]',
-  TUI_HINT_INPUT_FOCUS: '[PgUp/PgDn: Kaydır | Tab: Liste]',
+  TUI_INVALID_USERNAME: '\r\nGeçersiz ad! Sadece a-z, 0-9, _, - kullanın: ',
+  TUI_USERNAME_TAKEN: '\r\nBu kullanıcı zaten bağlı! Başka bir ad seçin: ',
+  TUI_SESSION_CLOSED: '\r\nOturum kapatıldı.\r\n',
+  TUI_SERVER_SHUTDOWN: '\r\n[SUNUCU] Sunucu kapatılıyor. Oturumunuz sonlandırıldı.\r\n',
+  TUI_HINT_SIDEBAR_FOCUS: '[ODAK: LİSTE | Ok/Enter | Tab/Yaz: Giriş]',
+  TUI_HINT_INPUT_FOCUS: '[Tab: Tamamla/Liste | PgUp/Dn: Kaydır]',
   TUI_HEADER_TITLE: ' MESH | {address}',
   TUI_SIDEBAR_HEADER_FOCUSED: ' [Konsol/Odalar] ',
   TUI_SIDEBAR_HEADER_UNFOCUSED: ' Konsol/Odalar ',
+  TUI_MEMBERS_HEADER: ' Üyeler ({count}) ',
   TUI_CHAT_HEADER: ' Pencere: {target}{scroll} ',
   TUI_CHAT_NO_TARGET: 'Seçilmedi',
-  TUI_BOTTOM_INFO: ' /help | /join #oda | /msg @kisi | /status | [Tab] Menü',
+  TUI_BOTTOM_INFO: ' /help | /join #oda | /leave | /msg @kisi | /remove | /status | [Tab] Tamamla',
   TUI_TYPING_INDICATOR: ' ✎ {user} yazıyor...',
   TUI_ME_SENDER_YOU: 'Sen',
   TUI_SYSTEM_SENDER: 'SİSTEM',
@@ -74,9 +83,9 @@ export default {
   SYS_COMMAND_ERROR: '[HATA] /{cmd} çalıştırılırken hata: {error}',
   SYS_SYSTEM_WINDOW_NO_MSG: '[BİLGİ] Sistem konsoluna doğrudan mesaj yazılamaz. Komut çalıştırmak için / ile başlayın veya bir odaya geçin.',
   SYS_OUTBOX_QUEUED: '[OUTBOX] {target} çevrimdışı, mesaj kuyruğa alındı.',
-  SYS_PASTE_MODE_ON: '[BİLGİ] Çok satırlı yapıştırma modu açıldı. Bitirip göndermek için /end yazın veya iptal için /cancel yazın.',
-  SYS_PASTE_MODE_CANCEL: '[BİLGİ] Yapıştırma işlemi iptal edildi.',
-  SYS_PASTE_MODE_EMPTY: '[BİLGİ] Boş metin gönderilmedi.',
+  SYS_JOINED_CHANNEL: '[BİLGİ] {channel} kanalına katıldınız.',
+  SYS_LEFT_CHANNEL: '[BİLGİ] {channel} kanalından ayrıldınız ve mesaj geçmişiniz silindi.',
+  SYS_REMOVED_DM: '[BİLGİ] {target} ile olan özel sohbet ve mesaj geçmişiniz silindi.',
 
   // Commands
   CMD_HELP_HEADER: '=== KULLANILABİLİR KOMUTLAR ===',
@@ -88,7 +97,11 @@ export default {
   CMD_MSG_USAGE_ERROR: '[HATA] Kullanım: /msg @user:host[:port]',
   CMD_MSG_FORMAT_ERROR: '[HATA] Geçersiz format: {input}. Örnek: /msg @ahmet:localhost:8002',
   CMD_JOIN_DESC: 'Bir odaya/kanala katılır',
-  CMD_JOIN_USAGE_ERROR: '[HATA] Kullanım: /join #oda_adi',
+  CMD_JOIN_USAGE_ERROR: '[HATA] Kullanım: /join #oda_adi veya /join #oda:host:port',
+  CMD_LEAVE_DESC: 'Bulunduğunuz kanaldan ayrılır ve sizdeki geçmişi siler',
+  CMD_LEAVE_USAGE_ERROR: '[HATA] Sadece kanallardan (/leave #oda) ayrılabilirsiniz. DM silmek için /remove kullanın.',
+  CMD_REMOVE_DESC: 'Bir DM sohbetini listeden kaldırır ve sizdeki mesajları siler',
+  CMD_REMOVE_USAGE_ERROR: '[HATA] Kullanım: /remove @kullanici (veya aktif DM penceresindeyken /remove)',
   CMD_SYSTEM_DESC: 'Sistem konsol penceresine geçer',
   CMD_WHO_DESC: 'Bu sunucudaki aktif kullanıcıları listeler',
   CMD_WHO_EMPTY: 'Kimse yok',
@@ -104,8 +117,5 @@ export default {
   CMD_STATUS_MEMORY: 'Bellek Tüketimi (RSS)   : {rss} MB (Heap: {heap} MB)',
   CMD_STATUS_CLIENTS: 'Aktif Yerel Oturumlar   : {count} kullanıcı',
   CMD_STATUS_PEERS: 'Keşfedilen Eş Düğümler  : {count} adet ({peers})',
-  CMD_STATUS_OUTBOX: 'Bekleyen İletim Kuyruğu : {count} mesaj',
-  CMD_PASTE_DESC: 'Çok satırlı metin yapıştırma modunu açar',
-  CMD_END_DESC: 'Yapıştırma modundaki metni gönderir',
-  CMD_CANCEL_DESC: 'Yapıştırma modunu iptal eder'
+  CMD_STATUS_OUTBOX: 'Bekleyen İletim Kuyruğu : {count} mesaj'
 };

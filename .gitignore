@@ -1,8 +1,22 @@
+# Bağımlılıklar
 node_modules/
-project_dump.txt
-data_*.json
-peers_*.json
+
+# SQLite Veritabanı ve WAL dosyaları
 *.db
-*.db-journal
+*.db-wal
+*.db-shm
+
+# Dinamik Eş ve Durum JSON Dosyaları
+peers_*.json
+data_*.json
+project_dump.txt
+
+# Geçici Test Dosyaları
+data_test_*
+peers_test_*
+
+# İşletim sistemi ve editör dosyaları
 .DS_Store
 .vscode/
+.idea/
+*.log

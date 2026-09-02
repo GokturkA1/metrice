@@ -95,20 +95,23 @@ export class PeerManager {
     });
 
     this.udpSocket.bind(this.broadcastPort, () => {
-      try {
-        this.udpSocket.setBroadcast(true);
-      } catch {}
+        try {
+            this.udpSocket.setBroadcast(true);
+        } catch {}
 
-      log.info(I18n.t('PEER_LAN_ACTIVE', { port: this.broadcastPort }));
+        log.info(I18n.t('PEER_LAN_ACTIVE', { port: this.broadcastPort }));
 
-      const scheduleBeacon = () => {
-        const interval = 8000 + Math.floor(Math.random() * 4000);
-        setTimeout(() => {
-          this.sendBeacon();
-          scheduleBeacon();
-        }, interval);
-      };
-      scheduleBeacon();
+        // Açılışta hemen bir beacon at, ardından aralıklarla devam et
+        this.sendBeacon();
+
+        const scheduleBeacon = () => {
+            const interval = 3000 + Math.floor(Math.random() * 2000);
+            setTimeout(() => {
+                this.sendBeacon();
+                scheduleBeacon();
+            }, interval);
+        };
+        scheduleBeacon();
     });
   }
 
@@ -121,6 +124,9 @@ export class PeerManager {
         timestamp: Date.now()
       })
     );
+
+    // Hem LAN broadcast'e hem de yerel döngü portuna gönder
     this.udpSocket.send(payload, 0, payload.length, this.broadcastPort, '255.255.255.255', () => {});
+    this.udpSocket.send(payload, 0, payload.length, this.broadcastPort, '127.0.0.1', () => {});
   }
 }
