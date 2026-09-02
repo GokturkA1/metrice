@@ -8,6 +8,7 @@ export default {
   BOOTSTRAP_STARTING: 'Düğüm Başlatılıyor: {name}',
   BOOTSTRAP_FED_PORT: 'Federation Port: {port}',
   BOOTSTRAP_CLIENT_PORT: 'Client TUI Port: {port}',
+  BOOTSTRAP_SSH_PORT: 'SSH Sunucu Portu: {port}',
   BOOTSTRAP_LOG_LEVEL: 'Log Seviyesi: {level}',
   BOOTSTRAP_SHUTTING_DOWN: 'Düğüm kapatılıyor, bağlantılar ve veritabanı temizleniyor...',
 
@@ -17,6 +18,10 @@ export default {
   DB_CREATED: 'Yeni veritabanı oluşturuluyor: {path}',
   DB_WRITE_ERROR: 'Veritabanı yazma hatası: {error}',
   DB_MSG_SAVED: 'Mesaj DB\'ye eklendi',
+  DB_GEN_IDENTITY_KEYS: 'Düğüm için yeni Ed25519 ve Kyber (ML-KEM-768) anahtar çiftleri üretiliyor...',
+  DB_MIGRATION_WARN: 'Migrasyon uyarısı: {error}',
+  DB_WAL_CLOSED: 'Veritabanı WAL temizlendi ve güvenle kapatıldı.',
+  DB_CLOSE_ERROR: 'Veritabanı kapatılırken hata: {error}',
 
   // Peer Manager Logs
   PEER_CACHE_LOADED: 'Dinamik eş havuzu yüklendi ({count} eş)',
@@ -25,14 +30,14 @@ export default {
   PEER_UDP_ERROR: 'UDP Keşif soketi uyarısı: {error}',
   PEER_LAN_ACTIVE: 'LAN Keşif yayını aktif -> Port: {port}',
 
-  // Federation Logs & Network
+  // Federation & Security Transport Logs
   FED_INCOMING_CONN: 'Gelen federasyon bağlantısı: {peer}',
   FED_INVALID_JSON: 'Geçersiz JSON paketi ({peer}): {error}',
   FED_SOCKET_ERROR: 'Federasyon soket hatası ({peer}): {error}',
   FED_LISTENING: 'Federasyon ağı dinleniyor -> Port: {port}',
   FED_MSG_RECEIVED: 'Uzak mesaj alındı: {from} -> {to}',
   FED_CONNECTING: 'Uzak sunucuya bağlanılıyor: {host}:{port}',
-  FED_CONNECTED: 'Uzak sunucuya bağlandı ({host}:{port}). Mesaj iletiliyor...',
+  FED_CONNECTED: 'Uzak sunucuya bağlandı ({host}:{port}). Şifreli kanal hazır.',
   FED_REMOTE_ACK: 'Uzak sunucu onayı alındı',
   FED_SEND_FAILED: 'Uzak sunucuya iletim başarısız ({host}:{port}): {error}',
   FED_CONN_CLOSED: 'Federasyon bağlantısı kapandı: {peer}',
@@ -40,26 +45,58 @@ export default {
   FED_OUTBOX_QUEUED: 'Mesaj iletilemedi, Outbox kuyruğuna alınıyor ({to}): {error}',
   FED_CHANNEL_SUBSCRIBED: 'Uzak kanal abonesi eklendi: {peer} -> {channel}',
   FED_CHANNEL_UNSUBSCRIBED: 'Uzak kanal abonesi çıkarıldı: {peer} -> {channel}',
+  FED_NODE_IDENTITY_READY: 'Düğüm Kimliği Aktif -> Ed25519 & Kyber-768 | Adres: {address}',
+  FED_SECURE_CHANNEL_PARSE_ERR: 'Şifreli kanal çerçeve ayrıştırma hatası: {error}',
+  FED_SECURE_HANDSHAKE_INIT_FAIL: '[GÜVENLİK] Handshake INIT imza doğrulaması başarısız: {node}',
+  FED_SECURE_HANDSHAKE_REPLY_FAIL: '[GÜVENLİK] Handshake REPLY imza doğrulaması başarısız: {node}',
+  FED_SECURE_FRAME_NOT_READY: 'El sıkışma tamamlanmadan şifreli paket alındı, düşürülüyor.',
+  FED_SECURE_DECRYPT_FAIL: '[GÜVENLİK] Paket deşifre edilemedi veya bütünlük (AuthTag) bozuk! Peer: {peer}',
+  FED_SECURE_DECRYPT_JSON_ERR: 'Deşifre edilen JSON bozuk: {error}',
+  FED_SECURE_TIMEOUT: 'Güvenli kanal zaman aşımına uğradı',
+  FED_CLOSED: 'Federasyon motoru ve güvenli taşıma kanalları kapatıldı.',
+
+  // SSH Server Logs
+  SSH_SRV_LISTENING: 'Sıfır Bağımlılık SSH-2 Sunucusu Hazır -> Port: {port}',
+  SSH_CLIENT_IDENTIFIED: 'SSH İstemci Tanımlandı: {version}',
+  SSH_CONN_ERROR: 'SSH Bağlantı hatası: {error}',
+  SSH_HMAC_FAIL: 'SSH HMAC doğrulaması başarısız, bağlantı kesiliyor.',
+  SSH_TRANSPORT_READY: 'SSH Şifreli Taşıma Katmanı (AES-256-CTR + HMAC-SHA256) Devreye Alındı.',
+  SSH_AUTH_SUCCESS: 'SSH Kullanıcı Parola ile Doğrulandı: {user}',
+  SSH_BUFFER_OVERFLOW: 'SSH Buffer taşması: {target}',
+
+  // E2EE & Güvenlik Bildirimleri
+  E2EE_ACTIVE_BADGE: ' [🔒 E2EE] ',
+  E2EE_INACTIVE_BADGE: ' [🔓 DÜZ METİN] ',
+  E2EE_WARNING_TELNET_PEER: '[GÜVENLİK] {user} Telnet üzerinden bağlı olduğu için bu sohbette uçtan uca şifreleme (E2EE) devre dışıdır.',
+  E2EE_ENABLED_NOTICE: '[GÜVENLİK] Uçtan uca şifreleme (E2EE - Kyber768 + AES-256-GCM) aktif.',
 
   // Client Server Logs
   CLIENT_NEW_CONN: 'Yeni terminal bağlantısı açıldı: {addr}',
-  CLIENT_USER_LOGGED_IN: 'Kullanıcı oturum açtı',
+  CLIENT_USER_LOGGED_IN: 'Kullanıcı oturum açtı: {user}',
   CLIENT_CONN_CLOSED: 'Bağlantı kapandı: {addr}',
   CLIENT_SOCKET_ERROR: 'Soket hatası ({addr}): {error}',
   CLIENT_LISTENING: 'Terminal TUI Portu Dinleniyor: {port}',
   CLIENT_INPUT_ERROR: 'Girdi işleme hatası: {error}',
   CLIENT_MSG_DISPATCH_ERROR: 'Mesaj dağıtım hatası: {error}',
+  CLIENT_CLOSED: 'İstemci TUI sunucusu ve açık oturumlar kapatıldı.',
 
   // Error Handler
   ERR_UNCAUGHT: 'Kritik Yakalanmamış Hata (uncaughtException): {error}',
   ERR_UNHANDLED_REJECTION: 'Yakalanmamış Asenkron Promise (unhandledRejection): {error}',
   ERR_OPERATION_FAILED: '[{context}] Hata yakalandı: {error}',
 
-  // TUI Screen Texts & Prompts (\r\n ile satır başı hizalaması yapıldı)
+  // TUI Screen Texts & Prompts
   TUI_WELCOME_BANNER: '=== NODE MESH TERMINAL ===\r\n',
   TUI_LOGIN_PROMPT: 'Kullanıcı adı girin (a-z, 0-9, _): ',
   TUI_INVALID_USERNAME: '\r\nGeçersiz ad! Sadece a-z, 0-9, _, - kullanın: ',
   TUI_USERNAME_TAKEN: '\r\nBu kullanıcı zaten bağlı! Başka bir ad seçin: ',
+  TUI_PASSWORD_PROMPT: '\r\nParola: ',
+  TUI_NEW_USER_PASSWORD_PROMPT: '\r\n[YENİ HESAP] Parola belirleyin (min 4 karakter): ',
+  TUI_CONFIRM_PASSWORD_PROMPT: '\r\nParolayı tekrar girin: ',
+  TUI_PASSWORD_MISMATCH: '\r\n[HATA] Parolalar eşleşmedi! Tekrar deneyin.\r\n',
+  TUI_PASSWORD_TOO_SHORT: '\r\n[HATA] Parola en az 4 karakter olmalıdır!\r\n',
+  TUI_WRONG_PASSWORD: '\r\n[HATA] Hatalı parola! Kalan hak: {remaining}\r\n',
+  TUI_MAX_LOGIN_ATTEMPTS: '\r\nÇok fazla hatalı deneme. Bağlantı kesildi.\r\n',
   TUI_SESSION_CLOSED: '\r\nOturum kapatıldı.\r\n',
   TUI_SERVER_SHUTDOWN: '\r\n[SUNUCU] Sunucu kapatılıyor. Oturumunuz sonlandırıldı.\r\n',
   TUI_HINT_SIDEBAR_FOCUS: '[ODAK: LİSTE | Ok/Enter | Tab/Yaz: Giriş]',
@@ -117,5 +154,7 @@ export default {
   CMD_STATUS_MEMORY: 'Bellek Tüketimi (RSS)   : {rss} MB (Heap: {heap} MB)',
   CMD_STATUS_CLIENTS: 'Aktif Yerel Oturumlar   : {count} kullanıcı',
   CMD_STATUS_PEERS: 'Keşfedilen Eş Düğümler  : {count} adet ({peers})',
-  CMD_STATUS_OUTBOX: 'Bekleyen İletim Kuyruğu : {count} mesaj'
+  CMD_STATUS_OUTBOX: 'Bekleyen İletim Kuyruğu : {count} mesaj',
+
+  E2EE_ENCRYPTED_PLACEHOLDER: '🔒 [ŞİFRELİ METİN]',
 };

@@ -40,6 +40,28 @@ export class PeerManager {
     const selfAddr = `${CONFIG.serverName}:${CONFIG.federationPort}`;
     if (peerAddr === selfAddr || !peerAddr.includes(':')) return;
 
+    // 1. Host & Port Validasyonu (Sybil ve Port Zehirleme Koruması)
+    const [host, portStr] = peerAddr.split(':');
+    const port = parseInt(portStr, 10);
+    if (!host || isNaN(port) || port <= 0 || port > 65535) return;
+
+    // Ayrılmış veya yasaklı IP/broadcast adreslerini engelle
+    if (host === '0.0.0.0' || host === '255.255.255.255') return;
+
+    // 2. Maksimum Eş Havuzu Limiti (Sybil Flood Koruması - Max 250 Düğüm)
+    if (this.peers.size >= 250 && !this.peers.has(peerAddr)) {
+      // En düşük skorlu eşi bul ve tahliye et
+      let lowestKey = null;
+      let minScore = Infinity;
+      for (const [key, val] of this.peers.entries()) {
+        if (val.score < minScore) {
+          minScore = val.score;
+          lowestKey = key;
+        }
+      }
+      if (lowestKey) this.peers.delete(lowestKey);
+    }
+
     const current = this.peers.get(peerAddr) || { score: 10, lastSeen: Date.now(), failures: 0 };
 
     if (success) {

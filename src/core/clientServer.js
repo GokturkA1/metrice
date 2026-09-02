@@ -1,8 +1,10 @@
 import net from 'node:net';
+import crypto from 'node:crypto';
 import { CONFIG } from '../config/index.js';
 import { Logger } from '../utils/logger.js';
 import { InputParser } from '../utils/inputParser.js';
 import { AddressHelper } from '../utils/addressHelper.js';
+import { CryptoHelper } from '../utils/cryptoHelper.js';
 import { TerminalSession } from './terminalSession.js';
 import { createCommandRegistry } from '../commands/index.js';
 import { I18n } from '../locales/i18n.js';
@@ -18,6 +20,14 @@ const TELNET = {
   OPT_SUPPRESS_GO_AHEAD: 0x03,
   OPT_LINEMODE: 0x22,
   OPT_NAWS: 0x1F
+};
+
+const AUTH_STATE = {
+  USERNAME: 'USERNAME',
+  LOGIN_PASSWORD: 'LOGIN_PASSWORD',
+  REGISTER_PASSWORD: 'REGISTER_PASSWORD',
+  CONFIRM_PASSWORD: 'CONFIRM_PASSWORD',
+  AUTHENTICATED: 'AUTHENTICATED'
 };
 
 export class ClientServer {
@@ -61,7 +71,9 @@ export class ClientServer {
     for (const [userAddr, session] of this.sessions.entries()) {
       list.push({
         user: userAddr,
-        channels: session.getMyChannels()
+        channels: session.getMyChannels(),
+        isSsh: !!session.isSsh,
+        kemPublicKey: session.kemKeyPair ? session.kemKeyPair.publicKey : ''
       });
     }
     return list;
@@ -105,7 +117,42 @@ export class ClientServer {
     const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
     if (activeTarget === systemConsole) return systemLogs;
     if (!activeTarget) return [];
-    return this.db.getConversation(userAddress, activeTarget);
+
+    const messages = this.db.getConversation(userAddress, activeTarget);
+    const session = this.sessions.get(userAddress);
+
+    // E2EE Çift Zarf Deşifre Pipeline'ı
+    if (session && session.isSsh && session.kemKeyPair) {
+      return messages.map((m) => {
+        if (m.isE2EE && typeof m.content === 'string' && m.content.startsWith('e2ee:v2:')) {
+          try {
+            const parts = m.content.split(':');
+            const rCombined = parts[2].split('!');
+            const sCombined = parts[3].split('!');
+            const iv = parts[4];
+            const authTag = parts[5];
+            const ciphertext = parts[6];
+
+            const isSender = m.from === userAddress;
+            const chosen = isSender ? sCombined : rCombined;
+
+            const sharedSecret = CryptoHelper.decapsulateKey(session.kemKeyPair.privateKey, chosen[0]);
+            const wrapAes = CryptoHelper.deriveKey(sharedSecret, 'e2ee-wrap', 'wrap-key');
+            const messageKeyBase64 = CryptoHelper.decrypt({ ciphertext: chosen[3], iv: chosen[1], authTag: chosen[2] }, wrapAes);
+
+            const messageKey = Buffer.from(messageKeyBase64, 'base64');
+            const plaintext = CryptoHelper.decrypt({ ciphertext, iv, authTag }, messageKey);
+
+            return { ...m, content: plaintext || m.content };
+          } catch {
+            return m;
+          }
+        }
+        return m;
+      });
+    }
+
+    return messages;
   }
 
   start() {
@@ -115,13 +162,62 @@ export class ClientServer {
 
       this.sendHandshakeAndSizeQuery(socket);
 
+      let authState = AUTH_STATE.USERNAME;
+      let targetUserAddress = null;
+      let userProfile = null;
+      let loginAttempts = 0;
+
+      let inputBuffer = '';
+      let tempPassword = '';
+
       let userAddress = null;
       let session = null;
-      let loginBuffer = '';
       let detectedWidth = 110;
       let detectedHeight = 24;
 
       const parser = new InputParser();
+
+      const completeLogin = async () => {
+        authState = AUTH_STATE.AUTHENTICATED;
+        userAddress = targetUserAddress;
+
+        session = new TerminalSession(
+          socket,
+          userAddress,
+          userProfile,
+          () => this.getOnlineUsers(),
+          (target) => this.getChannelMembers(target),
+          (contacts, history) => {
+            this.db.updateUserProfile(userAddress, contacts, history);
+            this.federation.broadcastPresence();
+          },
+          () => {
+            const uptimeSec = Math.floor(process.uptime());
+            const mins = Math.floor(uptimeSec / 60);
+            const mem = process.memoryUsage();
+            const rssMB = (mem.rss / 1024 / 1024).toFixed(1);
+            const peers = this.federation.peerManager ? this.federation.peerManager.getAllPeers() : [];
+            return { uptime: `${mins}m`, rss: mem, peers };
+          },
+          () => this.commands.getAllUnique().map((c) => c.name)
+        );
+
+        session.isSsh = false;
+        session.isSecureE2EE = false;
+
+        session.on('request_render', () => {
+          const conv = this.getCurrentConversation(userAddress, session.activeTarget, session.systemLogs);
+          session.renderFull(conv);
+        });
+
+        session.resize(detectedWidth, detectedHeight);
+        this.sessions.set(userAddress, session);
+        log.info(I18n.t('CLIENT_USER_LOGGED_IN', { user: userAddress }));
+
+        session.emit('request_render');
+        this.notifyAllSessionsRender();
+        this.federation.broadcastPresence();
+      };
 
       socket.write('\x1b[2J\x1b[H\x1b[1;36m' + I18n.t('TUI_WELCOME_BANNER') + '\x1b[0m');
       socket.write(I18n.t('TUI_LOGIN_PROMPT'));
@@ -134,75 +230,98 @@ export class ClientServer {
             if (action.type === 'RESIZE') {
               detectedWidth = action.width;
               detectedHeight = action.height;
-
-              if (session) {
-                session.resize(detectedWidth, detectedHeight);
-              }
+              if (session) session.resize(detectedWidth, detectedHeight);
               continue;
             }
 
-            if (!userAddress) {
+            if (authState !== AUTH_STATE.AUTHENTICATED) {
               if (action.type === 'CHAR') {
-                loginBuffer += action.char;
-                socket.write(action.char);
+                inputBuffer += action.char;
+                if (authState === AUTH_STATE.USERNAME) socket.write(action.char);
+                else socket.write('*');
               } else if (action.type === 'KEY_BACKSPACE') {
-                if (loginBuffer.length > 0) {
-                  loginBuffer = loginBuffer.slice(0, -1);
+                if (inputBuffer.length > 0) {
+                  inputBuffer = inputBuffer.slice(0, -1);
                   socket.write('\b \b');
                 }
               } else if (action.type === 'KEY_ENTER') {
-                const username = loginBuffer.trim();
-                if (!AddressHelper.isValidUsername(username)) {
-                  socket.write(I18n.t('TUI_INVALID_USERNAME'));
-                  loginBuffer = '';
+                const val = inputBuffer.trim();
+                inputBuffer = '';
+
+                if (authState === AUTH_STATE.USERNAME) {
+                  if (!AddressHelper.isValidUsername(val)) {
+                    socket.write(I18n.t('TUI_INVALID_USERNAME'));
+                    return;
+                  }
+
+                  targetUserAddress = AddressHelper.formatUser(val);
+
+                  if (this.sessions.has(targetUserAddress)) {
+                    socket.write(I18n.t('TUI_USERNAME_TAKEN'));
+                    targetUserAddress = null;
+                    return;
+                  }
+
+                  userProfile = this.db.getUserProfile(targetUserAddress);
+
+                  if (!userProfile.passwordHash) {
+                    authState = AUTH_STATE.REGISTER_PASSWORD;
+                    socket.write(I18n.t('TUI_NEW_USER_PASSWORD_PROMPT'));
+                  } else {
+                    authState = AUTH_STATE.LOGIN_PASSWORD;
+                    socket.write(I18n.t('TUI_PASSWORD_PROMPT'));
+                  }
                   return;
                 }
 
-                const targetUserAddress = AddressHelper.formatUser(username);
-
-                if (this.sessions.has(targetUserAddress)) {
-                  socket.write(I18n.t('TUI_USERNAME_TAKEN'));
-                  loginBuffer = '';
-                  userAddress = null;
+                if (authState === AUTH_STATE.REGISTER_PASSWORD) {
+                  if (val.length < 4) {
+                    socket.write(I18n.t('TUI_PASSWORD_TOO_SHORT'));
+                    socket.write(I18n.t('TUI_NEW_USER_PASSWORD_PROMPT'));
+                    return;
+                  }
+                  tempPassword = val;
+                  authState = AUTH_STATE.CONFIRM_PASSWORD;
+                  socket.write(I18n.t('TUI_CONFIRM_PASSWORD_PROMPT'));
                   return;
                 }
 
-                userAddress = targetUserAddress;
+                if (authState === AUTH_STATE.CONFIRM_PASSWORD) {
+                  if (val !== tempPassword) {
+                    tempPassword = '';
+                    authState = AUTH_STATE.REGISTER_PASSWORD;
+                    socket.write(I18n.t('TUI_PASSWORD_MISMATCH'));
+                    socket.write(I18n.t('TUI_NEW_USER_PASSWORD_PROMPT'));
+                    return;
+                  }
 
-                const profile = this.db.getUserProfile(userAddress);
-                session = new TerminalSession(
-                  socket,
-                  userAddress,
-                  profile,
-                  () => this.getOnlineUsers(),
-                  (target) => this.getChannelMembers(target),
-                  (contacts, history) => {
-                    this.db.updateUserProfile(userAddress, contacts, history);
-                    this.federation.broadcastPresence();
-                  },
-                  () => {
-                    const uptimeSec = Math.floor(process.uptime());
-                    const mins = Math.floor(uptimeSec / 60);
-                    const mem = process.memoryUsage();
-                    const rssMB = (mem.rss / 1024 / 1024).toFixed(1);
-                    const peers = this.federation.peerManager ? this.federation.peerManager.getAllPeers() : [];
-                    return { uptime: `${mins}m`, rss: rssMB, peers };
-                  },
-                  () => this.commands.getAllUnique().map((c) => c.name)
-                );
+                  const hash = await CryptoHelper.hashPassword(val);
+                  this.db.updateUserPassword(targetUserAddress, hash);
+                  userProfile.passwordHash = hash;
+                  tempPassword = '';
 
-                session.on('request_render', () => {
-                  const conv = this.getCurrentConversation(userAddress, session.activeTarget, session.systemLogs);
-                  session.renderFull(conv);
-                });
+                  await completeLogin();
+                  return;
+                }
 
-                session.resize(detectedWidth, detectedHeight);
-                this.sessions.set(userAddress, session);
-                log.info(I18n.t('CLIENT_USER_LOGGED_IN'), { user: userAddress });
+                if (authState === AUTH_STATE.LOGIN_PASSWORD) {
+                  const isValid = await CryptoHelper.verifyPassword(val, userProfile.passwordHash);
+                  if (!isValid) {
+                    loginAttempts++;
+                    const remaining = 3 - loginAttempts;
+                    if (remaining <= 0) {
+                      socket.write(I18n.t('TUI_MAX_LOGIN_ATTEMPTS'));
+                      socket.end();
+                      return;
+                    }
+                    socket.write(I18n.t('TUI_WRONG_PASSWORD', { remaining }));
+                    socket.write(I18n.t('TUI_PASSWORD_PROMPT'));
+                    return;
+                  }
 
-                session.emit('request_render');
-                this.notifyAllSessionsRender();
-                this.federation.broadcastPresence();
+                  await completeLogin();
+                  return;
+                }
               }
               continue;
             }
@@ -401,7 +520,6 @@ export class ClientServer {
       log.info(I18n.t('CLIENT_LISTENING', { port: CONFIG.clientPort }));
     });
 
-    // --- UZAKTAN GELEN MESAJLARDA MENTION VE ZİL KONTROLÜ ---
     this.federation.on('message', (msg) => {
       try {
         if (msg.to.startsWith('#')) {
@@ -409,13 +527,10 @@ export class ClientServer {
             if (msg.from !== addr) {
               if (userSession.isMemberOf(msg.to)) {
                 userSession.incrementUnread(msg.to);
-
-                // Kullanıcı mention edilmişse (@nick veya @nick:server:port) odaya baksa bile zil çal
                 const isMentioned = userSession.isUserMentioned(msg.content);
                 if (userSession.activeTarget !== msg.to || isMentioned) {
                   userSession.notifyNewMessage();
                 }
-
                 userSession.emit('request_render');
               }
             }
@@ -445,24 +560,74 @@ export class ClientServer {
     });
   }
 
-  // --- YEREL KANALA YAZILAN MESAJLARDA MENTION VE ZİL KONTROLÜ ---
   async handleOutboundMessage(session, from, to, content, isAction = false, isSnippet = false) {
     const target = AddressHelper.parse(to);
     if (!target) return;
 
+    let finalContent = content;
+    let isE2EE = false;
+
+    // --- E2EE ŞİFRELEME & GÜVENLİK POSTÜRÜ ---
+    if (target.type === 'USER') {
+      const recipientSession = this.sessions.get(target.raw);
+      const recipientProfile = this.db.getUserProfile(target.raw);
+      const remoteSec = this.federation.getRemoteUserSecurity(target.raw);
+
+      const recipientIsSSH = recipientSession 
+        ? recipientSession.isSsh 
+        : (remoteSec ? remoteSec.isSsh : !!recipientProfile.kemPublicKey);
+
+      const recipientKemPub = recipientSession?.kemKeyPair?.publicKey 
+        || remoteSec?.kemPublicKey 
+        || recipientProfile.kemPublicKey;
+
+      if (session.isSsh) {
+        if (recipientIsSSH && recipientKemPub && session.kemKeyPair) {
+          // İki taraf da SSH: Çift Zarf (Dual-Envelope) ML-KEM-768 Şifreleme
+          try {
+            const messageKey = crypto.randomBytes(32);
+            const enc = CryptoHelper.encrypt(content, messageKey);
+
+            // 1. Alıcının KEM anahtarı ile messageKey sarma
+            const rKem = CryptoHelper.encapsulateKey(recipientKemPub);
+            const rAes = CryptoHelper.deriveKey(rKem.sharedSecret, 'e2ee-wrap', 'wrap-key');
+            const rEncKey = CryptoHelper.encrypt(messageKey.toString('base64'), rAes);
+
+            // 2. Göndericinin KEM anahtarı ile messageKey sarma
+            const sKem = CryptoHelper.encapsulateKey(session.kemKeyPair.publicKey);
+            const sAes = CryptoHelper.deriveKey(sKem.sharedSecret, 'e2ee-wrap', 'wrap-key');
+            const sEncKey = CryptoHelper.encrypt(messageKey.toString('base64'), sAes);
+
+            const rCombined = `${rKem.encapsulatedKey}!${rEncKey.iv}!${rEncKey.authTag}!${rEncKey.ciphertext}`;
+            const sCombined = `${sKem.encapsulatedKey}!${sEncKey.iv}!${sEncKey.authTag}!${sEncKey.ciphertext}`;
+
+            finalContent = `e2ee:v2:${rCombined}:${sCombined}:${enc.iv}:${enc.authTag}:${enc.ciphertext}`;
+            isE2EE = true;
+          } catch (err) {
+            log.warn(`E2EE şifreleme hatası: ${err.message}`);
+          }
+        } else {
+          // Karşı taraf Telnet
+          if (!session.warnedInsecureTargets.has(target.raw)) {
+            session.warnedInsecureTargets.add(target.raw);
+            session.addSystemLog(I18n.t('E2EE_WARNING_TELNET_PEER', { user: target.raw }));
+          }
+        }
+      }
+    }
+
     const messageRecord = {
       from,
       to: target.raw,
-      content,
+      content: finalContent,
       isAction,
-      isSnippet
+      isSnippet,
+      isE2EE
     };
 
-    // Veritabanına kaydet ve üretilen ID/timestamp değerlerini al
     const saved = this.db.saveMessage(messageRecord);
     if (!saved) return;
 
-    // Pakete kesinleşmiş ID ve zamanı ekle
     messageRecord.id = saved.id;
     messageRecord.timestamp = saved.timestamp;
 
@@ -471,7 +636,6 @@ export class ClientServer {
         if (addr !== from) {
           if (userSession.isMemberOf(target.raw)) {
             userSession.incrementUnread(target.raw);
-
             const isMentioned = userSession.isUserMentioned(content);
             if (userSession.activeTarget !== target.raw || isMentioned) {
               userSession.notifyNewMessage();
@@ -482,11 +646,10 @@ export class ClientServer {
       }
 
       if (target.isGlobalChannel) {
-        await this.federation.sendRemoteMessage(from, target.raw, content, isAction, isSnippet);
+        await this.federation.sendRemoteMessage(from, target.raw, finalContent, isAction, isSnippet, isE2EE);
       } else if (!target.isLocal) {
-        await this.federation.sendRemoteMessage(from, target.raw, content, isAction, isSnippet);
+        await this.federation.sendRemoteMessage(from, target.raw, finalContent, isAction, isSnippet, isE2EE);
       } else {
-        // ID'si olan eksiksiz kaydı ilet
         this.federation.forwardToChannelSubscribers(target.raw, messageRecord);
       }
     } else {
@@ -499,7 +662,7 @@ export class ClientServer {
           recipientSession.emit('request_render');
         }
       } else {
-        const res = await this.federation.sendRemoteMessage(from, target.raw, content, isAction, isSnippet);
+        const res = await this.federation.sendRemoteMessage(from, target.raw, finalContent, isAction, isSnippet, isE2EE);
         if (res && res.status === 'queued') {
           session.addSystemLog(I18n.t('SYS_OUTBOX_QUEUED', { target: target.raw }));
         }
@@ -521,6 +684,6 @@ export class ClientServer {
         this.server.close();
       } catch {}
     }
-    log.info('İstemci TUI sunucusu ve açık oturumlar kapatıldı.');
+    log.info(I18n.t('CLIENT_CLOSED'));
   }
 }

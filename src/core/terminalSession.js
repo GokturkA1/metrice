@@ -14,6 +14,12 @@ export class TerminalSession extends EventEmitter {
     this.getKnownCommands = getKnownCommandsFn;
     this.onProfileChange = onProfileChangeFn;
 
+    // E2EE ve Güvenlik Durumu
+    this.isSsh = false;
+    this.isSecureE2EE = false;
+    this.kemKeyPair = null;
+    this.warnedInsecureTargets = new Set();
+
     const defaultChannel = I18n.t('DEFAULT_CHANNEL_NAME');
     const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
 
@@ -63,17 +69,12 @@ export class TerminalSession extends EventEmitter {
     this.screenBuffer = [];
   }
 
-  // --- FEDERE MENTION KONTROLÜ (@nick veya @nick:host[:port]) ---
   isUserMentioned(content) {
     if (!content) return false;
-
-    // 1. Tam adres veya portsuz adres eşleşmesi (@ahmet:localhost:8001 / @ahmet:localhost)
     if (content.includes(this.userAddress)) return true;
     const withoutPort = this.userAddress.split(':').slice(0, 2).join(':');
     if (content.includes(withoutPort)) return true;
 
-    // 2. Yalın rumuz eşleşmesi (@ahmet, @ahmet: @ahmet! vb.)
-    // Kelime sınırı (\b) kullanarak @nick sonrasındaki noktalama ve boşlukları destekler
     const escapedNick = this.userNick.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const regex = new RegExp(`@${escapedNick}\\b`, 'i');
     return regex.test(content);
@@ -245,16 +246,6 @@ export class TerminalSession extends EventEmitter {
     if (this.cursorIndex < this.inputBuffer.length) this.cursorIndex++;
   }
 
-  moveCursorHome() {
-    this.resetTabCompletion();
-    this.cursorIndex = 0;
-  }
-
-  moveCursorEnd() {
-    this.resetTabCompletion();
-    this.cursorIndex = this.inputBuffer.length;
-  }
-
   deleteWord() {
     this.resetTabCompletion();
     if (this.cursorIndex === 0) return;
@@ -328,8 +319,16 @@ export class TerminalSession extends EventEmitter {
   }
 
   sanitizeContent(str) {
-    return (str || '')
-      .replace(/\x00/g, '')
+    if (!str) return '';
+    // 1. ANSI escape kodları (CSI, OSC, ESC dizileri) ve kontrol karakterlerini (0x00-0x08, 0x0B-0x0C, 0x0E-0x1F, 0x7F) temizle
+    const ansiRegex = /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
+    const oscRegex = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
+    const controlCharsRegex = /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g;
+
+    return str
+      .replace(oscRegex, '')
+      .replace(ansiRegex, '')
+      .replace(controlCharsRegex, '')
       .replace(/\r\n/g, '\n')
       .replace(/\r/g, '\n')
       .replace(/\t/g, '  ');
@@ -359,21 +358,27 @@ export class TerminalSession extends EventEmitter {
       const sender = isSystem ? systemSender : (isMe ? I18n.t('TUI_ME_SENDER_YOU') : msg.from.split(':')[0].replace('@', ''));
       const timeStr = `${ANSI.FG_GRAY}${this.formatTime(msg.timestamp)}${ANSI.RESET}`;
 
-      // Federe Mention Kontrolü
-      const isMentioned = !isMe && !isSystem && this.isUserMentioned(msg.content);
+      // Çözülememiş ham E2EE paketi kontrolü
+      const isUndecryptedE2EE = typeof msg.content === 'string' && msg.content.startsWith('e2ee:');
+
+      // Ham şifreli metin yerine kalın kırmızı placeholder göster
+      let raw = isUndecryptedE2EE
+        ? `${ANSI.BOLD}${ANSI.FG_RED}${I18n.t('E2EE_ENCRYPTED_PLACEHOLDER')}${ANSI.RESET}`
+        : this.sanitizeContent(msg.content);
+
+      const isMentioned = !isMe && !isSystem && !isUndecryptedE2EE && this.isUserMentioned(msg.content);
 
       let color = isMe ? ANSI.FG_CYAN : ANSI.FG_MAGENTA;
       if (isSystem) color = ANSI.FG_YELLOW + ANSI.BOLD;
 
-      const raw = this.sanitizeContent(msg.content);
-      const isMultiLine = raw.includes('\n') || msg.isSnippet;
+      const lockBadge = msg.isE2EE ? `${ANSI.FG_YELLOW}🔒${ANSI.RESET} ` : '';
 
-      // Mention durumunda sarı rozet ve arka plan vurgusu
+      const isMultiLine = !isUndecryptedE2EE && (raw.includes('\n') || msg.isSnippet);
       const mentionPrefix = isMentioned ? `${ANSI.BG_HEADER}${ANSI.FG_YELLOW}[@] ` : '';
       const mentionSuffix = isMentioned ? `${ANSI.RESET}` : '';
 
       if (isMultiLine) {
-        const titleLine = `${timeStr} ${mentionPrefix}${color}[${sender}]${ANSI.RESET} ${ANSI.DIM}--- [KOD / METİN BLOKU] ---${ANSI.RESET}${mentionSuffix}`;
+        const titleLine = `${timeStr} ${lockBadge}${mentionPrefix}${color}[${sender}]${ANSI.RESET} ${ANSI.DIM}${I18n.t('TUI_SNIPPET_TITLE')}${ANSI.RESET}${mentionSuffix}`;
         formattedLines.push(titleLine);
 
         const lines = raw.split('\n');
@@ -388,24 +393,24 @@ export class TerminalSession extends EventEmitter {
         continue;
       }
 
-      if (msg.isAction) {
+      if (msg.isAction && !isUndecryptedE2EE) {
         const fullActionText = `* ${sender} ${raw}`;
         const chunks = this.wrapLineStrict(fullActionText, maxLineWidth - 6);
         for (const chunk of chunks) {
-          formattedLines.push(`${timeStr} ${mentionPrefix}${ANSI.FG_YELLOW}${chunk}${ANSI.RESET}${mentionSuffix}`);
+          formattedLines.push(`${timeStr} ${lockBadge}${mentionPrefix}${ANSI.FG_YELLOW}${chunk}${ANSI.RESET}${mentionSuffix}`);
         }
         continue;
       }
 
       const prefix = `[${sender}] `;
-      const prefixLen = 6 + prefix.length + (isMentioned ? 4 : 0);
+      const prefixLen = 6 + prefix.length + (msg.isE2EE ? 2 : 0) + (isMentioned ? 4 : 0);
       const maxTextWidth = Math.max(10, maxLineWidth - prefixLen);
       const indent = ' '.repeat(prefixLen);
       const chunks = this.wrapLineStrict(raw, maxTextWidth);
 
       chunks.forEach((chunk, idx) => {
         if (idx === 0) {
-          formattedLines.push(`${timeStr} ${mentionPrefix}${color}${prefix}${ANSI.RESET}${chunk}${mentionSuffix}`);
+          formattedLines.push(`${timeStr} ${lockBadge}${mentionPrefix}${color}${prefix}${ANSI.RESET}${chunk}${mentionSuffix}`);
         } else {
           formattedLines.push(`${indent}${chunk}`);
         }
@@ -510,16 +515,15 @@ export class TerminalSession extends EventEmitter {
 
       const activeMessages = isSystemWindow ? this.systemLogs : messages;
 
-      // 1. Üst Başlık
       const focusHint = this.focus === 'sidebar'
         ? I18n.t('TUI_HINT_SIDEBAR_FOCUS')
         : I18n.t('TUI_HINT_INPUT_FOCUS');
 
-      const titleText = I18n.t('TUI_HEADER_TITLE', { address: this.userAddress });
+      const e2eeBadge = this.isSsh ? I18n.t('E2EE_ACTIVE_BADGE') : I18n.t('E2EE_INACTIVE_BADGE');
+      const titleText = I18n.t('TUI_HEADER_TITLE', { address: this.userAddress }) + e2eeBadge;
       const spaceBetween = Math.max(1, this.width - titleText.length - focusHint.length);
       newFrame[0] = ANSI.BG_HEADER + ANSI.FG_CYAN + ANSI.BOLD + titleText + ' '.repeat(spaceBetween) + ANSI.FG_YELLOW + focusHint + ANSI.RESET;
 
-      // 2. Üst Çerçeve
       const leftTitle = this.focus === 'sidebar' ? I18n.t('TUI_SIDEBAR_HEADER_FOCUSED') : I18n.t('TUI_SIDEBAR_HEADER_UNFOCUSED');
       const scrollInfo = this.scrollOffset > 0 ? ` [▲ +${this.scrollOffset}]` : '';
       const midTitle = I18n.t('TUI_CHAT_HEADER', { target: this.activeTarget || I18n.t('TUI_CHAT_NO_TARGET'), scroll: scrollInfo });
@@ -531,7 +535,6 @@ export class TerminalSession extends EventEmitter {
       topBorder += (isSystemWindow ? ANSI.FG_YELLOW : ANSI.FG_GRAY) + ANSI.BOLD + rightTitle + ANSI.RESET + '-'.repeat(Math.max(0, innerRightWidth - rightTitle.length)) + '+';
       newFrame[1] = topBorder;
 
-      // 3. Gövde
       const chatHeight = this.height - 4;
       const allFormattedLines = this.formatMessagesToLines(activeMessages, innerMidWidth - 2);
 
@@ -546,7 +549,6 @@ export class TerminalSession extends EventEmitter {
       for (let i = 1; i <= chatHeight - 2; i++) {
         const frameIndex = 1 + i;
 
-        // Sol Bölme
         let leftCell = ' '.repeat(innerLeftWidth);
         const contactIdx = i - 1;
         if (this.contacts[contactIdx]) {
@@ -589,7 +591,6 @@ export class TerminalSession extends EventEmitter {
           leftCell = `${fullLabel}${padding}`;
         }
 
-        // Orta Bölme
         let midCell = ' '.repeat(innerMidWidth);
         const lineContent = visibleLines[i - 1];
         if (lineContent !== undefined) {
@@ -598,7 +599,6 @@ export class TerminalSession extends EventEmitter {
           midCell = `${lineContent}${padding}`;
         }
 
-        // Sağ Bölme
         let rightCell = ' '.repeat(innerRightWidth);
         const rContent = rightPanelLines[i - 1];
         if (rContent !== undefined) {
@@ -610,17 +610,14 @@ export class TerminalSession extends EventEmitter {
         newFrame[frameIndex] = '|' + leftCell + '|' + midCell + '|' + rightCell + '|';
       }
 
-      // 4. Alt Çerçeve
       newFrame[this.height - 3] = '+' + '-'.repeat(innerLeftWidth) + '+' + '-'.repeat(innerMidWidth) + '+' + '-'.repeat(innerRightWidth) + '+';
 
-      // 5. Bilgi Çubuğu
       let bottomBarText = I18n.t('TUI_BOTTOM_INFO');
       if (this.typingUser) {
         bottomBarText = I18n.t('TUI_TYPING_INDICATOR', { user: this.typingUser });
       }
       newFrame[this.height - 2] = ANSI.BG_INPUT + ANSI.FG_WHITE + bottomBarText.padEnd(this.width) + ANSI.RESET;
 
-      // 6. Giriş Satırı
       const { lineContent, cursorCol } = this.calculateInputRender();
       newFrame[this.height - 1] = lineContent;
 

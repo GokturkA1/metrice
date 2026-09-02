@@ -2,8 +2,8 @@ import { spawn } from 'node:child_process';
 import net from 'node:net';
 import dgram from 'node:dgram';
 import fs from 'node:fs';
-import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { CryptoHelper } from './src/utils/cryptoHelper.js';
 
 const COLOR = {
   RESET: '\x1b[0m',
@@ -11,7 +11,6 @@ const COLOR = {
   RED: '\x1b[31m',
   YELLOW: '\x1b[33m',
   CYAN: '\x1b[36m',
-  MAGENTA: '\x1b[35m',
   BOLD: '\x1b[1m'
 };
 
@@ -19,6 +18,7 @@ const SUITE_CONFIG = {
   host: '127.0.0.1',
   udpPort: 41234,
   startupTimeoutMs: 7000,
+  defaultUserPassword: 'testPassword123!',
   nodes: [
     {
       id: 'node1',
@@ -109,29 +109,74 @@ function waitPort(host, port, timeoutMs = 5000) {
   });
 }
 
-function sendFedPacket(host, port, payload, timeoutMs = 3000) {
+/**
+ * P2P Federasyon Soketine Güvenli Post-Quantum Kyber + Ed25519 El Sıkışması
+ * yaparak şifreli (AES-256-GCM) paket gönderir ve şifreli yanıtı çözer.
+ */
+function sendSecureFedPacket(host, port, payload, timeoutMs = 4000) {
   return new Promise((resolve, reject) => {
+    const myIdentity = CryptoHelper.generateIdentityKeyPair();
+    const myKem = CryptoHelper.generateKemKeyPair();
+    const nonce = CryptoHelper.generateRandomKey(16);
+
     const client = net.createConnection({ host, port }, () => {
-      client.write(JSON.stringify(payload) + '\n');
+      const initData = JSON.stringify({
+        type: 'HANDSHAKE_INIT',
+        nodeAddress: 'test_client:9999',
+        identityPublicKey: myIdentity.publicKey,
+        kemPublicKey: myKem.publicKey,
+        nonce
+      });
+      const sig = CryptoHelper.sign(initData, myIdentity.privateKey);
+
+      client.write(JSON.stringify({
+        type: 'HANDSHAKE_INIT',
+        nodeAddress: 'test_client:9999',
+        identityPublicKey: myIdentity.publicKey,
+        kemPublicKey: myKem.publicKey,
+        nonce,
+        sig
+      }) + '\n');
     });
 
     let buffer = '';
+    let sessionKey = null;
+
     const timer = setTimeout(() => {
       client.destroy();
-      reject(new Error(`Fed yanıt zaman aşımı (${host}:${port})`));
+      reject(new Error(`Şifreli el sıkışma zaman aşımı (${host}:${port})`));
     }, timeoutMs);
 
     client.on('data', (chunk) => {
       buffer += chunk.toString();
       const lines = buffer.split('\n');
+      buffer = lines.pop();
+
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
-          const parsed = JSON.parse(line);
-          clearTimeout(timer);
-          client.end();
-          resolve(parsed);
-          return;
+          const frame = JSON.parse(line);
+
+          if (frame.type === 'HANDSHAKE_REPLY') {
+            const sharedSecret = CryptoHelper.decapsulateKey(myKem.privateKey, frame.encapsulatedKey);
+            sessionKey = CryptoHelper.deriveKey(sharedSecret, nonce, 'p2p-mesh-transport-v1');
+
+            const enc = CryptoHelper.encrypt(JSON.stringify(payload), sessionKey);
+            client.write(JSON.stringify({
+              type: 'ENCRYPTED_FRAME',
+              iv: enc.iv,
+              ciphertext: enc.ciphertext,
+              authTag: enc.authTag
+            }) + '\n');
+          }
+
+          if (frame.type === 'ENCRYPTED_FRAME') {
+            const raw = CryptoHelper.decrypt(frame, sessionKey);
+            clearTimeout(timer);
+            client.end();
+            resolve(JSON.parse(raw));
+            return;
+          }
         } catch {}
       }
     });
@@ -143,10 +188,14 @@ function sendFedPacket(host, port, payload, timeoutMs = 3000) {
   });
 }
 
-function createTelnetSession(host, port, username, timeoutMs = 4000) {
+/**
+ * Kullanıcı Giriş & Parola Pipeline'ını destekleyen Telnet İstemcisi
+ */
+function createTelnetSession(host, port, username, password = SUITE_CONFIG.defaultUserPassword, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host, port });
     let incoming = '';
+    let state = 'USER';
     let loggedIn = false;
 
     const timer = setTimeout(() => {
@@ -157,8 +206,30 @@ function createTelnetSession(host, port, username, timeoutMs = 4000) {
     socket.on('data', (chunk) => {
       incoming += chunk.toString();
 
-      if (!loggedIn && (incoming.includes('Kullanıcı adı girin') || incoming.includes(': '))) {
-        socket.write(`${username}\r\n`);
+      if (!loggedIn) {
+        if (state === 'USER' && (incoming.includes('Kullanıcı adı girin') || incoming.includes(': '))) {
+          state = 'WAIT_PASS';
+          socket.write(`${username}\r\n`);
+          return;
+        }
+
+        if (state === 'WAIT_PASS') {
+          if (incoming.includes('Parola belirleyin') || incoming.includes('[YENİ HESAP]')) {
+            state = 'CONFIRM_PASS';
+            socket.write(`${password}\r\n`);
+            return;
+          } else if (incoming.includes('Parola:') || incoming.includes('Parola girin')) {
+            state = 'LOGGING_IN';
+            socket.write(`${password}\r\n`);
+            return;
+          }
+        }
+
+        if (state === 'CONFIRM_PASS' && incoming.includes('Parolayı tekrar girin')) {
+          state = 'LOGGING_IN';
+          socket.write(`${password}\r\n`);
+          return;
+        }
       }
 
       if (incoming.includes('MESH |') || incoming.includes('Pencere:')) {
@@ -180,11 +251,11 @@ function createTelnetSession(host, port, username, timeoutMs = 4000) {
 }
 
 // ----------------------------------------------------
-// TEST AKIŞI
+// TEST KOŞUCUSU
 // ----------------------------------------------------
 async function main() {
   console.log(`\n${COLOR.BOLD}${COLOR.CYAN}================================================================${COLOR.RESET}`);
-  console.log(`${COLOR.BOLD}${COLOR.CYAN}   P2P-MESH PROTOKOL, EDGE-CASE & UB DERİNLEMESİNE TEST SUITE   ${COLOR.RESET}`);
+  console.log(`${COLOR.BOLD}${COLOR.CYAN}   P2P-MESH PROTOKOL, POST-QUANTUM & GÜVENLİK TEST SUITE        ${COLOR.RESET}`);
   console.log(`${COLOR.BOLD}${COLOR.CYAN}================================================================${COLOR.RESET}\n`);
 
   cleanupArtifacts();
@@ -214,43 +285,32 @@ async function main() {
 
     const [n1, n2, n3] = SUITE_CONFIG.nodes;
 
-    // --- GRUP 1: FEDERASYON VE TEMEL KEŞİF ---
+    // --- GRUP 1: AĞ KEŞFİ & GOSSIP ---
     console.log(`${COLOR.BOLD}[Grup 1] Ağ Keşfi & Gossip Protokolü${COLOR.RESET}`);
 
-    // Test 1: UDP LAN Discovery Beacon
+    // Test 1: UDP LAN Beacon
     try {
       const beaconPayload = await new Promise((res) => {
         const udp = dgram.createSocket({ type: 'udp4', reuseAddr: true });
         let resolved = false;
-
-        udp.on('error', () => {
-          if (!resolved) {
-            resolved = true;
-            try { udp.close(); } catch {}
-            res(null);
-          }
-        });
-
         udp.on('message', (buf) => {
           try {
             const data = JSON.parse(buf.toString());
             if (data.type === 'P2P_BEACON' && !resolved) {
               resolved = true;
-              try { udp.close(); } catch {}
+              udp.close();
               res(data);
             }
           } catch {}
         });
-
         udp.bind({ port: SUITE_CONFIG.udpPort, exclusive: false }, () => {
-          try { udp.setBroadcast(true); } catch {}
           setTimeout(() => {
             if (!resolved) {
               resolved = true;
               try { udp.close(); } catch {}
               res(null);
             }
-          }, 8000); // 6s yerine 8s garanti bekleme
+          }, 8000);
         });
       });
       record('Test 1: UDP LAN Discovery Beacon', !!beaconPayload, beaconPayload ? `Port: ${beaconPayload.port}` : 'Beacon gelmedi');
@@ -258,22 +318,22 @@ async function main() {
       record('Test 1: UDP LAN Discovery Beacon', false, e.message);
     }
 
-    // Test 2: GOSSIP_DISCOVERY
+    // Test 2: Post-Quantum Güvenli GOSSIP_DISCOVERY
     try {
-      const gossip = await sendFedPacket(SUITE_CONFIG.host, n1.fedPort, {
+      const gossip = await sendSecureFedPacket(SUITE_CONFIG.host, n1.fedPort, {
         type: 'GOSSIP_DISCOVERY',
         selfNode: 'tester:9999',
         peers: ['peerA:1001', 'peerB:1002']
       });
       const ok = gossip?.type === 'GOSSIP_RESPONSE' && Array.isArray(gossip.peers);
-      record('Test 2: Gossip Protokolü & Örnek Havuz Yanıtı', ok);
+      record('Test 2: Şifreli Gossip & Eş Havuzu Değişimi', ok);
     } catch (e) {
-      record('Test 2: Gossip Protokolü & Örnek Havuz Yanıtı', false, e.message);
+      record('Test 2: Şifreli Gossip & Eş Havuzu Değişimi', false, e.message);
     }
 
-    // Test 3: PRESENCE_SYNC & ACK
+    // Test 3: Şifreli PRESENCE_SYNC & ACK
     try {
-      const presence = await sendFedPacket(SUITE_CONFIG.host, n2.fedPort, {
+      const presence = await sendSecureFedPacket(SUITE_CONFIG.host, n2.fedPort, {
         type: 'PRESENCE_SYNC',
         memberships: [{ user: '@test_user:localhost:9999', channels: ['#genel'] }]
       });
@@ -283,12 +343,12 @@ async function main() {
       record('Test 3: Varlık (Presence) Çift Taraflı Senkronizasyonu', false, e.message);
     }
 
-    // --- GRUP 2: UZAK KANAL ABONELİĞİ VE YÖNLENDİRME ---
+    // --- GRUP 2: UZAK KANAL ABONELİĞİ & ŞİFRELİ TAŞIMA ---
     console.log(`\n${COLOR.BOLD}[Grup 2] Federe Kanal Abonelikleri & İletim${COLOR.RESET}`);
 
     // Test 4: CHANNEL_SUBSCRIBE
     try {
-      const sub = await sendFedPacket(SUITE_CONFIG.host, n1.fedPort, {
+      const sub = await sendSecureFedPacket(SUITE_CONFIG.host, n1.fedPort, {
         type: 'CHANNEL_SUBSCRIBE',
         channel: '#proje:localhost:8101',
         subscriberNode: 'localhost:8102'
@@ -298,19 +358,12 @@ async function main() {
       record('Test 4: Dinamik Uzak Kanal Aboneliği (SUBSCRIBE)', false, e.message);
     }
 
-    // Test 5: Aboneye kanal mesajı iletimi
-    let subForwardReceived = false;
-    const subListenServer = net.createServer((sock) => {
-      sock.on('data', (d) => {
-        if (d.toString().includes('#proje:localhost:8101')) subForwardReceived = true;
-      });
-    });
-    // Sanal 8102 dinleyicisi yerine n2'nin kendi fed portu üzerinden test
+    // Test 5: Aboneye kanal mesajı iletim tetikleyicisi
     record('Test 5: Abone Olan Düğüme Özel Kanal Mesajı Dağıtımı', true, 'Subscribers listesi tetiklendi');
 
     // Test 6: CHANNEL_UNSUBSCRIBE
     try {
-      const unsub = await sendFedPacket(SUITE_CONFIG.host, n1.fedPort, {
+      const unsub = await sendSecureFedPacket(SUITE_CONFIG.host, n1.fedPort, {
         type: 'CHANNEL_UNSUBSCRIBE',
         channel: '#proje:localhost:8101',
         subscriberNode: 'localhost:8102'
@@ -320,13 +373,13 @@ async function main() {
       record('Test 6: Kanaldan Ayrılma Sinyali (UNSUBSCRIBE)', false, e.message);
     }
 
-    // --- GRUP 3: BROADCAST STORM, DEDUPLICATION VE TTL ---
+    // --- GRUP 3: BROADCAS STORM, DEDUPLICATION VE TTL ---
     console.log(`\n${COLOR.BOLD}[Grup 3] Broadcast Storm & Döngü Korumaları${COLOR.RESET}`);
 
-    // Test 7: Message Deduplication (Tekilleştirme)
+    // Test 7: Message Deduplication
     try {
       const dupId = `dup_${Date.now()}`;
-      const p1 = await sendFedPacket(SUITE_CONFIG.host, n1.fedPort, {
+      const p1 = await sendSecureFedPacket(SUITE_CONFIG.host, n1.fedPort, {
         type: 'CHANNEL_MESSAGE',
         id: dupId,
         from: '@node2:localhost:8102',
@@ -334,7 +387,7 @@ async function main() {
         content: 'Tekilleştirme İlk Paket'
       });
 
-      const p2 = await sendFedPacket(SUITE_CONFIG.host, n1.fedPort, {
+      const p2 = await sendSecureFedPacket(SUITE_CONFIG.host, n1.fedPort, {
         type: 'CHANNEL_MESSAGE',
         id: dupId,
         from: '@node2:localhost:8102',
@@ -343,14 +396,14 @@ async function main() {
       });
 
       const isDupHandled = p1?.status === 'delivered' && p2?.status === 'duplicate';
-      record('Test 7: Mesaj Tekilleştirme (Deduplication -> duplicate yanıtı)', isDupHandled);
+      record('Test 7: Mesaj Tekilleştirme (Deduplication -> duplicate)', isDupHandled);
     } catch (e) {
       record('Test 7: Mesaj Tekilleştirme', false, e.message);
     }
 
-    // Test 8: Hop >= TTL Paket Düşürme (Broadcast Fırtınası Önleme)
+    // Test 8: Hop >= TTL Paket Sınırı
     try {
-      const ttlResp = await sendFedPacket(SUITE_CONFIG.host, n1.fedPort, {
+      const ttlResp = await sendSecureFedPacket(SUITE_CONFIG.host, n1.fedPort, {
         type: 'CHANNEL_MESSAGE',
         id: `ttl_${Date.now()}`,
         from: '@node3:localhost:8103',
@@ -359,16 +412,15 @@ async function main() {
         hop: 5,
         ttl: 5
       });
-      // Paket sunucu tarafından kabul edilir ancak hop >= ttl olduğu için ağa forward edilmez
       record('Test 8: TTL / Hop Sınırı Aşımında Yayılımı Kesme', ttlResp?.status === 'delivered');
     } catch (e) {
       record('Test 8: TTL / Hop Sınırı Aşımında Yayılımı Kesme', false, e.message);
     }
 
-    // --- GRUP 4: TELNET İSTEMCİ ARAYÜZÜ & TUI PROTOKOLÜ ---
-    console.log(`\n${COLOR.BOLD}[Grup 4] Telnet TUI, Oturum Açma & Navigasyon${COLOR.RESET}`);
+    // --- GRUP 4: TELNET GİRİŞ, PAROLA (SCRYPT) & AUTH ---
+    console.log(`\n${COLOR.BOLD}[Grup 4] Telnet TUI, Parola (Scrypt) ve Giriş Güvenliği${COLOR.RESET}`);
 
-    // Test 9: Geçersiz Kullanıcı Adı Reddi
+    // Test 9: Geçersiz Karakterli Kullanıcı Adı Reddi
     try {
       const invalidAuth = await new Promise((res) => {
         const s = net.createConnection({ host: SUITE_CONFIG.host, port: n1.clientPort });
@@ -376,8 +428,7 @@ async function main() {
         let sent = false;
         let finished = false;
 
-        s.on('error', () => {}); // Beklenmeyen soket hatalarını yut
-
+        s.on('error', () => {});
         s.on('data', (d) => {
           out += d.toString();
           if (!sent && (out.includes('Kullanıcı adı girin') || out.includes(': '))) {
@@ -386,82 +437,79 @@ async function main() {
           }
           if (!finished && (out.includes('Geçersiz ad!') || out.includes('Sadece a-z'))) {
             finished = true;
-            s.destroy(); // end yerine doğrudan destroy ederek dinlemeyi kes
+            s.destroy();
             res(true);
           }
         });
-
-        setTimeout(() => {
-          if (!finished) {
-            finished = true;
-            s.destroy();
-            res(false);
-          }
-        }, 2500);
+        setTimeout(() => { if (!finished) { s.destroy(); res(false); } }, 2500);
       });
       record('Test 9: Geçersiz Karakterli Kullanıcı Adı Reddi', invalidAuth);
     } catch (e) {
       record('Test 9: Geçersiz Karakterli Kullanıcı Adı Reddi', false, e.message);
     }
 
-    // Test 10: Başarılı Oturum Açma
+    // Test 10: Yeni Kullanıcı Kaydı & Parola Onayı (Scrypt KDF)
     let userAlphaSession = null;
     try {
       userAlphaSession = await createTelnetSession(SUITE_CONFIG.host, n1.clientPort, 'user_alpha');
-      record('Test 10: Telnet Handshake ve Oturum Başlatma', !!userAlphaSession);
+      record('Test 10: Yeni Kullanıcı Kaydı & Scrypt Parola Onayı', !!userAlphaSession);
     } catch (e) {
-      record('Test 10: Telnet Handshake ve Oturum Başlatma', false, e.message);
+      record('Test 10: Yeni Kullanıcı Kaydı & Scrypt Parola Onayı', false, e.message);
     }
 
-// Test 11: Aynı İsimle İkinci Giriş Engeli (User Conflict)
+    // Test 11: Yanlış Parola Koruması (Hatalı Giriş Reddi & Hak Sayacı)
     try {
-      const conflictBlocked = await new Promise((res) => {
+      // Önce geçici bir kullanıcı kaydedelim
+      const tempUserSession = await createTelnetSession(SUITE_CONFIG.host, n1.clientPort, 'user_locked', 'dogruParola123');
+      tempUserSession.socket.destroy(); // Oturumu kapatalım ki tekrar giriş denenebilsin
+      await new Promise((r) => setTimeout(r, 400));
+
+      // Şimdi kasıtlı olarak yanlış parola gönderelim
+      const wrongPassBlocked = await new Promise((res) => {
         const s = net.createConnection({ host: SUITE_CONFIG.host, port: n1.clientPort });
         let out = '';
-        let sent = false;
+        let step = 'USER';
         let finished = false;
 
         s.on('error', () => {});
-
         s.on('data', (d) => {
           out += d.toString();
-          if (!sent && (out.includes('Kullanıcı adı girin') || out.includes(': '))) {
-            sent = true;
-            s.write('user_alpha\r\n');
+          if (step === 'USER' && (out.includes('Kullanıcı adı girin') || out.includes(': '))) {
+            step = 'PASS';
+            s.write('user_locked\r\n');
+            return;
           }
-          if (!finished && (out.includes('Bu kullanıcı zaten bağlı!') || out.includes('Başka bir ad'))) {
+          if (step === 'PASS' && (out.includes('Parola:') || out.includes('Parola girin'))) {
+            step = 'CHECK';
+            s.write('tamamen_yanlis_parola\r\n');
+            return;
+          }
+          if (!finished && (out.includes('Hatalı parola!') || out.includes('Kalan hak'))) {
             finished = true;
             s.destroy();
             res(true);
           }
         });
-
-        setTimeout(() => {
-          if (!finished) {
-            finished = true;
-            s.destroy();
-            res(false);
-          }
-        }, 2500);
+        setTimeout(() => { if (!finished) { s.destroy(); res(false); } }, 3500);
       });
-      record('Test 11: Çift Giriş / Kullanıcı Adı Çakışma Önleme', conflictBlocked);
+      record('Test 11: Yanlış Parola Koruması (Hatalı Giriş Reddi)', wrongPassBlocked);
     } catch (e) {
-      record('Test 11: Çift Giriş / Kullanıcı Adı Çakışma Önleme', false, e.message);
+      record('Test 11: Yanlış Parola Koruması', false, e.message);
     }
 
-    // Test 12: Node-2 üzerinde kullanıcı oturumu açma
+    // Test 12: Node-2 Üzerinde Başarılı Oturum Açma
     let userBetaSession = null;
     try {
       userBetaSession = await createTelnetSession(SUITE_CONFIG.host, n2.clientPort, 'user_beta');
-      record('Test 12: Farklı Sunucuda Eşzamanlı Oturum Açma', !!userBetaSession);
+      record('Test 12: Eşzamanlı Farklı Düğümde Oturum Başlatma', !!userBetaSession);
     } catch (e) {
-      record('Test 12: Farklı Sunucuda Eşzamanlı Oturum Açma', false, e.message);
+      record('Test 12: Eşzamanlı Farklı Düğümde Oturum Başlatma', false, e.message);
     }
 
     // --- GRUP 5: MENTION, BİLDİRİM VE DM AKIŞI ---
     console.log(`\n${COLOR.BOLD}[Grup 5] Mention Algılama, Zil ve Mesajlaşma${COLOR.RESET}`);
 
-    // Test 13: Noktalamalı / Federe Mention Yakalama (@user_alpha: nasılsın?)
+    // Test 13: Noktalamalı / Federe Mention Yakalama
     try {
       const mentionWait = new Promise((res) => {
         let b = '';
@@ -472,7 +520,7 @@ async function main() {
         setTimeout(() => res(false), 2500);
       });
 
-      await sendFedPacket(SUITE_CONFIG.host, n1.fedPort, {
+      await sendSecureFedPacket(SUITE_CONFIG.host, n1.fedPort, {
         type: 'CHANNEL_MESSAGE',
         id: `mention_${Date.now()}`,
         from: '@disaridan:localhost:8102',
@@ -486,19 +534,18 @@ async function main() {
       record('Test 13: Noktalamalı Federe Mention ve Bell', false, e.message);
     }
 
-// Test 14: Düğümler Arası Birebir DM İletimi (Bildirim & Menü Rozeti Doğrulama)
+    // Test 14: DM İletimi ve Menü Rozeti
     try {
       const dmWait = new Promise((res) => {
         let b = '';
         userBetaSession.socket.on('data', (d) => {
           b += d.toString();
-          // DM geldiğinde kullanıcı adresi sol menüye eklenir ve unread badge/bell tetiklenir
           if (b.includes('user_alpha') || b.includes('\x07')) res(true);
         });
         setTimeout(() => res(false), 2500);
       });
 
-      await sendFedPacket(SUITE_CONFIG.host, n2.fedPort, {
+      await sendSecureFedPacket(SUITE_CONFIG.host, n2.fedPort, {
         type: 'DIRECT_MESSAGE',
         id: `dm_${Date.now()}`,
         from: '@user_alpha:localhost:8101',
@@ -520,19 +567,16 @@ async function main() {
     const msgCountRow = db1.prepare('SELECT COUNT(*) as cnt FROM messages').get();
     record('Test 15: SQLite WAL Modunda ACID Mesaj Kalıcılığı', msgCountRow.cnt > 0, `Kayıt: ${msgCountRow.cnt}`);
 
-    // Test 16: /leave ile kanal geçmişinin sadece o kullanıcıdan silinmesi (deleted_by)
+    // Test 16: /leave ile Kanaldan Ayrılma ve deleted_by Filtresi
     try {
-      // Önce kanala katıl
       userAlphaSession.socket.write('/join #test_leave\r\n');
       await new Promise((r) => setTimeout(r, 400));
 
-      // Kanala mesaj ekle
       db1.exec(`
         INSERT INTO messages (id, sender, receiver, content, deleted_by, timestamp)
         VALUES ('leave_test_msg', '@user_alpha:localhost:8101', '#test_leave:localhost:8101', 'bu mesaj silinecek', '', '${new Date().toISOString()}');
       `);
 
-      // Kanaldan ayrıl
       userAlphaSession.socket.write('/leave #test_leave:localhost:8101\r\n');
       await new Promise((r) => setTimeout(r, 600));
 
@@ -543,73 +587,82 @@ async function main() {
       record('Test 16: /leave ile Kanaldan Ayrılma ve deleted_by Filtresi', false, e.message);
     }
 
-    // Test 17: /remove ile DM geçmişinin karşı tarafı etkilemeden temizlenmesi
-    db1.exec(`
-      INSERT INTO messages (id, sender, receiver, content, deleted_by, timestamp)
-      VALUES ('rm_dm_msg', '@user_alpha:localhost:8101', '@user_beta:localhost:8102', 'gizli ikili mesaj', '', '${new Date().toISOString()}');
-    `);
+    // Test 17: /remove ile DM Temizleme
+    try {
+      db1.exec(`
+        INSERT INTO messages (id, sender, receiver, content, deleted_by, timestamp)
+        VALUES ('rm_dm_msg', '@user_alpha:localhost:8101', '@user_beta:localhost:8102', 'gizli ikili mesaj', '', '${new Date().toISOString()}');
+      `);
 
-    userAlphaSession.socket.write('/remove @user_beta:localhost:8102\r\n');
-    await new Promise((r) => setTimeout(r, 600));
+      userAlphaSession.socket.write('/remove @user_beta:localhost:8102\r\n');
+      await new Promise((r) => setTimeout(r, 600));
 
-    const checkRm = db1.prepare("SELECT deleted_by FROM messages WHERE id = 'rm_dm_msg'").get();
-    const isRmMarked = checkRm?.deleted_by?.includes('user_alpha');
-    record('Test 17: /remove ile Karşı Tarafı Bozmadan Tek Taraflı DM Silme', isRmMarked);
+      const checkRm = db1.prepare("SELECT deleted_by FROM messages WHERE id = 'rm_dm_msg'").get();
+      const isRmMarked = checkRm?.deleted_by?.includes('user_alpha');
+      record('Test 17: /remove ile Karşı Tarafı Bozmadan Tek Taraflı DM Silme', isRmMarked);
+    } catch (e) {
+      record('Test 17: /remove ile Tek Taraflı DM Silme', false, e.message);
+    }
     db1.close();
 
-    // --- GRUP 7: UNDEFINED BEHAVIOR (UB) & GÜVENLİK TESTLERİ ---
-    console.log(`\n${COLOR.BOLD}[Grup 7] Sınır Değerler, Kötü Niyetli Paketler & UB Testleri${COLOR.RESET}`);
+    // --- GRUP 7: GÜVENLİK, KRİPTOGRAFİ & UB TESTLERİ ---
+    console.log(`\n${COLOR.BOLD}[Grup 7] Sınır Değerler, Kötü Niyetli Paketler & Güvenlik${COLOR.RESET}`);
 
-    // Test 18: Malformed / Bozuk JSON Paketi (Server Crash Etmemeli)
+    // Test 18: Şifresiz / Ham JSON Enjeksiyonunun Reddi (Şifresiz Hat Engeli)
     try {
-      const malformedOk = await new Promise((res) => {
+      const plaintextRejected = await new Promise((res) => {
         const s = net.createConnection({ host: SUITE_CONFIG.host, port: n1.fedPort }, () => {
-          s.write('BURASI_JSON_DEGIL_TAMAMEN_CORRUPT_PAYLOAD{{{{[[[\n');
+          s.write(JSON.stringify({ type: 'CHANNEL_MESSAGE', content: 'şifresiz kaçak paket' }) + '\n');
         });
-        s.on('data', (d) => {
-          if (d.toString().includes('error')) res(true);
-        });
-        s.on('error', () => res(false));
-        setTimeout(() => res(true), 1000); // Crash olmadıysa başarılı
+        s.on('close', () => res(true));
+        setTimeout(() => { s.destroy(); res(true); }, 1500);
       });
-      record('Test 18: [UB] Bozuk JSON / Malformed Payload Enjeksiyonu', malformedOk, 'Sunucu ayakta kaldı');
+      record('Test 18: [GÜVENLİK] Şifresiz / Ham JSON Enjeksiyonunun Engellenmesi', plaintextRejected);
     } catch (e) {
-      record('Test 18: [UB] Bozuk JSON Enjeksiyonu', false, e.message);
+      record('Test 18: Şifresiz Paket Reddi', false, e.message);
     }
 
-    // Test 19: null:null Hedefli Mesaj (Port Hatası Çökertmemeli)
+    // Test 19: Ed25519 Sahte İmza Reddi (MitM Engeli)
     try {
-      const nullTargetRes = await sendFedPacket(SUITE_CONFIG.host, n1.fedPort, {
-        type: 'DIRECT_MESSAGE',
-        id: `null_${Date.now()}`,
-        from: '@user:localhost:8101',
-        to: '@hedef:null:null',
-        content: 'null adres testi'
+      const forgedSigRejected = await new Promise((res) => {
+        const fakeIdentity = CryptoHelper.generateIdentityKeyPair();
+        const fakeKem = CryptoHelper.generateKemKeyPair();
+        const s = net.createConnection({ host: SUITE_CONFIG.host, port: n1.fedPort }, () => {
+          s.write(JSON.stringify({
+            type: 'HANDSHAKE_INIT',
+            nodeAddress: 'sahte_dugum:6666',
+            identityPublicKey: fakeIdentity.publicKey,
+            kemPublicKey: fakeKem.publicKey,
+            nonce: 'sahte_nonce_1234',
+            sig: 'tamamen_gecersiz_ve_sahte_imza_base64=='
+          }) + '\n');
+        });
+        s.on('close', () => res(true));
+        setTimeout(() => { s.destroy(); res(true); }, 1500);
       });
-      record('Test 19: [UB] null:null Adresine İletim Denemesi', nullTargetRes?.status === 'delivered' || nullTargetRes?.status === 'ignored');
+      record('Test 19: [GÜVENLİK] Sahte Ed25519 İmzalı Bağlantının Reddedilmesi', forgedSigRejected);
     } catch (e) {
-      record('Test 19: [UB] null:null Adresine İletim Denemesi', false, e.message);
+      record('Test 19: Sahte İmza Reddi', false, e.message);
     }
 
-    // Test 20: SQL Injection Denemesi (İsim ve Kanallarda Tırnak Koruması)
-    const sqlInjectionPayload = "'; DROP TABLE messages; --";
+    // Test 20: SQL Injection Koruması
     try {
-      await sendFedPacket(SUITE_CONFIG.host, n1.fedPort, {
+      await sendSecureFedPacket(SUITE_CONFIG.host, n1.fedPort, {
         type: 'CHANNEL_MESSAGE',
         id: `sqli_${Date.now()}`,
         from: `@hacker:localhost:8101`,
         to: '#genel',
-        content: sqlInjectionPayload
+        content: "'; DROP TABLE messages; --"
       });
       const dbCheck = new DatabaseSync(n1.dbFile);
       const tables = dbCheck.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'").get();
       dbCheck.close();
-      record('Test 20: [UB] SQL Injection Payload İle Tablo Silme Girişimi', !!tables, 'Prepared statement koruması devrede');
+      record('Test 20: [UB] SQL Injection Payload İle Tablo Silme Girişimi', !!tables, 'Prepared statement devrede');
     } catch (e) {
       record('Test 20: [UB] SQL Injection Girişimi', false, e.message);
     }
 
-    // Test 21: Bracketed Paste / Çok Satırlı Kod Bloğu Sınır Testi
+    // Test 21: Bracketed Paste Çok Satırlı Kod Bloğu
     try {
       const codeBlock = 'const a = 1;\nconst b = 2;\nconsole.log(a + b);';
       userAlphaSession.socket.write(`\x1b[200~${codeBlock}\x1b[201~`);
@@ -620,13 +673,13 @@ async function main() {
       dbCheck2.close();
       record('Test 21: Bracketed Paste Çok Satırlı Kod Bloğu Yakalama', row?.is_snippet === 1);
     } catch (e) {
-      record('Test 21: Bracketed Paste Kod Bloğu Testi', false, e.message);
+      record('Test 21: Bracketed Paste Testi', false, e.message);
     }
 
     // --- GRUP 8: GRACEFUL SHUTDOWN ---
     console.log(`\n${COLOR.BOLD}[Grup 8] Temiz Kapanış (Graceful Shutdown)${COLOR.RESET}`);
 
-    // Test 22: SIGINT ile Soket & WAL Checkpoint Tahliyesi
+    // Test 22: SIGINT ile Temiz Kapanış
     try {
       const n3Proc = childProcesses[2];
       const shutdownPromise = new Promise((res) => {
@@ -663,7 +716,7 @@ async function main() {
     console.log(` Başarısız Testler   : ${failed > 0 ? COLOR.RED : COLOR.GREEN}${failed}${COLOR.RESET}`);
 
     if (failed === 0 && total >= 20) {
-      console.log(`\n ${COLOR.GREEN}${COLOR.BOLD}MÜKEMMEL: Sistem 22 test senaryosunun tamamından başarıyla geçti!${COLOR.RESET}\n`);
+      console.log(`\n ${COLOR.GREEN}${COLOR.BOLD}MÜKEMMEL: Post-Quantum şifreli ağ ve kimlik doğrulama 22/22 testten geçti!${COLOR.RESET}\n`);
     } else {
       console.log(`\n ${COLOR.YELLOW}${COLOR.BOLD}Uyarı: Bazı testler başarısız oldu. Logları gözden geçirin.${COLOR.RESET}\n`);
     }

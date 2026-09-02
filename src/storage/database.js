@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { Logger } from '../utils/logger.js';
 import { I18n } from '../locales/i18n.js';
+import { CryptoHelper } from '../utils/cryptoHelper.js';
 
 const log = new Logger('DATABASE');
 
@@ -25,6 +26,7 @@ export class Database {
           content TEXT NOT NULL,
           is_action INTEGER DEFAULT 0,
           is_snippet INTEGER DEFAULT 0,
+          is_e2ee INTEGER DEFAULT 0,
           deleted_by TEXT DEFAULT '',
           timestamp TEXT NOT NULL
         );
@@ -35,7 +37,26 @@ export class Database {
         CREATE TABLE IF NOT EXISTS profiles (
           user_address TEXT PRIMARY KEY,
           contacts TEXT NOT NULL,
-          history TEXT NOT NULL
+          history TEXT NOT NULL,
+          password_hash TEXT DEFAULT '',
+          public_key TEXT DEFAULT '',
+          kem_public_key TEXT DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS node_identity (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          identity_private_key TEXT NOT NULL,
+          identity_public_key TEXT NOT NULL,
+          kem_private_key TEXT NOT NULL,
+          kem_public_key TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS trusted_keys (
+          node_address TEXT PRIMARY KEY,
+          identity_public_key TEXT NOT NULL,
+          kem_public_key TEXT NOT NULL,
+          last_updated TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS outbox (
@@ -45,21 +66,28 @@ export class Database {
           content TEXT NOT NULL,
           is_action INTEGER DEFAULT 0,
           is_snippet INTEGER DEFAULT 0,
+          is_e2ee INTEGER DEFAULT 0,
           retries INTEGER DEFAULT 0,
           next_retry INTEGER NOT NULL,
           timestamp TEXT NOT NULL
         );
       `);
 
-      // Şema Migrasyonu: Mevcut tablolarda deleted_by yoksa ekle
       try {
         const tableInfo = this.db.prepare('PRAGMA table_info(messages)').all();
-        const hasDeletedBy = tableInfo.some((col) => col.name === 'deleted_by');
-        if (!hasDeletedBy) {
+        if (!tableInfo.some((col) => col.name === 'deleted_by')) {
           this.db.exec("ALTER TABLE messages ADD COLUMN deleted_by TEXT DEFAULT '';");
         }
+        if (!tableInfo.some((col) => col.name === 'is_e2ee')) {
+          this.db.exec("ALTER TABLE messages ADD COLUMN is_e2ee INTEGER DEFAULT 0;");
+        }
+
+        const profileInfo = this.db.prepare('PRAGMA table_info(profiles)').all();
+        if (!profileInfo.some((col) => col.name === 'kem_public_key')) {
+          this.db.exec("ALTER TABLE profiles ADD COLUMN kem_public_key TEXT DEFAULT '';");
+        }
       } catch (migErr) {
-        log.warn(`Migrasyon uyarısı: ${migErr.message}`);
+        log.warn(I18n.t('DB_MIGRATION_WARN', { error: migErr.message }));
       }
 
       log.info(I18n.t('DB_LOADED', { path: this.filepath }));
@@ -69,20 +97,74 @@ export class Database {
     }
   }
 
+  getNodeIdentity() {
+    const stmt = this.db.prepare('SELECT * FROM node_identity WHERE id = 1');
+    const row = stmt.get();
+
+    if (row) {
+      return {
+        identityKeyPair: {
+          privateKey: row.identity_private_key,
+          publicKey: row.identity_public_key
+        },
+        kemKeyPair: {
+          privateKey: row.kem_private_key,
+          publicKey: row.kem_public_key
+        }
+      };
+    }
+
+    log.info(I18n.t('DB_GEN_IDENTITY_KEYS'));
+    const identityKeyPair = CryptoHelper.generateIdentityKeyPair();
+    const kemKeyPair = CryptoHelper.generateKemKeyPair();
+
+    const insertStmt = this.db.prepare(`
+      INSERT INTO node_identity (id, identity_private_key, identity_public_key, kem_private_key, kem_public_key, created_at)
+      VALUES (1, ?, ?, ?, ?, ?)
+    `);
+
+    insertStmt.run(
+      identityKeyPair.privateKey,
+      identityKeyPair.publicKey,
+      kemKeyPair.privateKey,
+      kemKeyPair.publicKey,
+      new Date().toISOString()
+    );
+
+    return { identityKeyPair, kemKeyPair };
+  }
+
+  saveTrustedNodeKey(nodeAddress, identityPublicKey, kemPublicKey) {
+    const stmt = this.db.prepare(`
+      INSERT INTO trusted_keys (node_address, identity_public_key, kem_public_key, last_updated)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(node_address) DO UPDATE SET
+        identity_public_key = excluded.identity_public_key,
+        kem_public_key = excluded.kem_public_key,
+        last_updated = excluded.last_updated
+    `);
+    stmt.run(nodeAddress, identityPublicKey, kemPublicKey, new Date().toISOString());
+  }
+
+  getTrustedNodeKey(nodeAddress) {
+    const stmt = this.db.prepare('SELECT identity_public_key, kem_public_key FROM trusted_keys WHERE node_address = ?');
+    return stmt.get(nodeAddress);
+  }
+
   close() {
     try {
       if (this.db) {
         this.db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
         this.db.close();
-        log.info('Veritabanı WAL temizlendi ve güvenle kapatıldı.');
+        log.info(I18n.t('DB_WAL_CLOSED'));
       }
     } catch (err) {
-      log.error(`Veritabanı kapatılırken hata: ${err.message}`);
+      log.error(I18n.t('DB_CLOSE_ERROR', { error: err.message }));
     }
   }
 
   getUserProfile(userAddress) {
-    const stmt = this.db.prepare('SELECT contacts, history FROM profiles WHERE user_address = ?');
+    const stmt = this.db.prepare('SELECT contacts, history, password_hash, public_key, kem_public_key FROM profiles WHERE user_address = ?');
     const row = stmt.get(userAddress);
 
     const defaultChannel = I18n.t('DEFAULT_CHANNEL_NAME');
@@ -91,7 +173,10 @@ export class Database {
     if (!row) {
       const defaultProfile = {
         contacts: [systemConsole, defaultChannel],
-        history: []
+        history: [],
+        passwordHash: '',
+        publicKey: '',
+        kemPublicKey: ''
       };
       this.updateUserProfile(userAddress, defaultProfile.contacts, defaultProfile.history);
       return defaultProfile;
@@ -100,10 +185,13 @@ export class Database {
     try {
       return {
         contacts: JSON.parse(row.contacts),
-        history: JSON.parse(row.history)
+        history: JSON.parse(row.history),
+        passwordHash: row.password_hash || '',
+        publicKey: row.public_key || '',
+        kemPublicKey: row.kem_public_key || ''
       };
     } catch {
-      return { contacts: [systemConsole, defaultChannel], history: [] };
+      return { contacts: [systemConsole, defaultChannel], history: [], passwordHash: '', publicKey: '', kemPublicKey: '' };
     }
   }
 
@@ -122,13 +210,13 @@ export class Database {
     stmt.run(userAddress, JSON.stringify(cleanContacts), JSON.stringify(cleanHistory));
   }
 
-  saveMessage({ id, from, to, content, isAction = false, isSnippet = false, timestamp = new Date().toISOString() }) {
+  saveMessage({ id, from, to, content, isAction = false, isSnippet = false, isE2EE = false, timestamp = new Date().toISOString() }) {
     const messageId = id || `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     
     try {
       const stmt = this.db.prepare(`
-        INSERT OR IGNORE INTO messages (id, sender, receiver, content, is_action, is_snippet, deleted_by, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, '', ?)
+        INSERT OR IGNORE INTO messages (id, sender, receiver, content, is_action, is_snippet, is_e2ee, deleted_by, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '', ?)
       `);
 
       const res = stmt.run(
@@ -138,6 +226,7 @@ export class Database {
         content,
         isAction ? 1 : 0,
         isSnippet ? 1 : 0,
+        isE2EE ? 1 : 0,
         timestamp
       );
 
@@ -150,10 +239,11 @@ export class Database {
         content,
         isAction: !!isAction,
         isSnippet: !!isSnippet,
+        isE2EE: !!isE2EE,
         timestamp
       };
 
-      log.debug(I18n.t('DB_MSG_SAVED'), { id: record.id, from, to });
+      log.debug(I18n.t('DB_MSG_SAVED'), { id: record.id, from, to, isE2EE });
       return record;
     } catch (err) {
       log.error(I18n.t('DB_WRITE_ERROR', { error: err.message }));
@@ -187,16 +277,16 @@ export class Database {
     }
   }
 
-  queueOutbox({ id, from, to, content, isAction = false, isSnippet = false, timestamp = new Date().toISOString() }) {
+  queueOutbox({ id, from, to, content, isAction = false, isSnippet = false, isE2EE = false, timestamp = new Date().toISOString() }) {
     const outboxId = id || `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const nextRetry = Date.now() + 5000;
 
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO outbox (id, sender, receiver, content, is_action, is_snippet, retries, next_retry, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+      INSERT OR REPLACE INTO outbox (id, sender, receiver, content, is_action, is_snippet, is_e2ee, retries, next_retry, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
     `);
 
-    stmt.run(outboxId, from, to, content, isAction ? 1 : 0, isSnippet ? 1 : 0, nextRetry, timestamp);
+    stmt.run(outboxId, from, to, content, isAction ? 1 : 0, isSnippet ? 1 : 0, isE2EE ? 1 : 0, nextRetry, timestamp);
   }
 
   getPendingOutbox() {
@@ -211,6 +301,7 @@ export class Database {
       content: r.content,
       isAction: r.is_action === 1,
       isSnippet: r.is_snippet === 1,
+      isE2EE: r.is_e2ee === 1,
       retries: r.retries,
       nextRetry: r.next_retry,
       timestamp: r.timestamp
@@ -236,6 +327,23 @@ export class Database {
     }
   }
 
+  updateUserPassword(userAddress, passwordHash) {
+    const stmt = this.db.prepare(`
+      INSERT INTO profiles (user_address, contacts, history, password_hash, public_key, kem_public_key)
+      VALUES (?, '[]', '[]', ?, '', '')
+      ON CONFLICT(user_address) DO UPDATE SET
+        password_hash = excluded.password_hash
+    `);
+    stmt.run(userAddress, passwordHash);
+  }
+
+  updateUserKemKey(userAddress, kemPublicKey) {
+    const stmt = this.db.prepare(`
+      UPDATE profiles SET kem_public_key = ? WHERE user_address = ?
+    `);
+    stmt.run(kemPublicKey, userAddress);
+  }
+
   getConversation(targetA, targetB, limit = 100) {
     if (!targetB) return [];
 
@@ -244,7 +352,7 @@ export class Database {
     if (targetB.startsWith('#')) {
       const stmt = this.db.prepare(`
         SELECT * FROM (
-          SELECT id, sender, receiver, content, is_action, is_snippet, timestamp 
+          SELECT id, sender, receiver, content, is_action, is_snippet, is_e2ee, timestamp 
           FROM messages 
           WHERE receiver = ? AND (deleted_by NOT LIKE '%' || ? || '%')
           ORDER BY timestamp DESC 
@@ -255,7 +363,7 @@ export class Database {
     } else {
       const stmt = this.db.prepare(`
         SELECT * FROM (
-          SELECT id, sender, receiver, content, is_action, is_snippet, timestamp 
+          SELECT id, sender, receiver, content, is_action, is_snippet, is_e2ee, timestamp 
           FROM messages 
           WHERE ((sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?))
             AND (deleted_by NOT LIKE '%' || ? || '%')
@@ -273,6 +381,7 @@ export class Database {
       content: r.content,
       isAction: r.is_action === 1,
       isSnippet: r.is_snippet === 1,
+      isE2EE: r.is_e2ee === 1,
       timestamp: r.timestamp
     }));
   }
