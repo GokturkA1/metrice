@@ -6,6 +6,7 @@ import { ClientServer } from './core/clientServer.js';
 import { SshServer } from './core/sshServer.js';
 import { Logger } from './utils/logger.js';
 import { ErrorHandler } from './utils/errorHandler.js';
+import { CryptoHelper } from './utils/cryptoHelper.js';
 import { I18n } from './locales/i18n.js';
 
 ErrorHandler.initGlobalHandlers();
@@ -25,6 +26,8 @@ const federation = new FederationEngine(db, peerManager);
 const clientServer = new ClientServer(db, federation);
 const sshServer = new SshServer(db, clientServer);
 
+CryptoHelper.verifyQuantumSafePosture();
+
 federation.start();
 clientServer.start();
 sshServer.start(CONFIG.sshPort);
@@ -42,9 +45,9 @@ const shutdown = (signal) => {
     sshServer.close();
     federation.close();
     db.close();
-    log.info('Temiz kapanış tamamlandı. Hoşça kalın!');
+    log.info(I18n.t('BOOTSTRAP_CLEAN_EXIT'));
   } catch (err) {
-    log.error(`Kapanış sırasında hata: ${err.message}`);
+    log.error(I18n.t('BOOTSTRAP_SHUTDOWN_ERROR', { error: err.message }));
   } finally {
     process.exit(0);
   }

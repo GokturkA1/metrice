@@ -143,7 +143,10 @@ export class ClientServer {
             const messageKey = Buffer.from(messageKeyBase64, 'base64');
             const plaintext = CryptoHelper.decrypt({ ciphertext, iv, authTag }, messageKey);
 
-            return { ...m, content: plaintext || m.content };
+            if (!plaintext) {
+              return { ...m, content: `\x1b[1;31m${I18n.t('E2EE_DECRYPT_FAIL_PLACEHOLDER')}\x1b[0m` };
+            }
+            return { ...m, content: plaintext };
           } catch {
             return m;
           }
@@ -248,6 +251,7 @@ export class ClientServer {
                 const val = inputBuffer.trim();
                 inputBuffer = '';
 
+                // 1. KULLANICI ADI AŞAMASI (KAYIP BLOK BUYDU!)
                 if (authState === AUTH_STATE.USERNAME) {
                   if (!AddressHelper.isValidUsername(val)) {
                     socket.write(I18n.t('TUI_INVALID_USERNAME'));
@@ -274,6 +278,7 @@ export class ClientServer {
                   return;
                 }
 
+                // 2. YENİ KULLANICI İLK PAROLA AŞAMASI
                 if (authState === AUTH_STATE.REGISTER_PASSWORD) {
                   if (val.length < 4) {
                     socket.write(I18n.t('TUI_PASSWORD_TOO_SHORT'));
@@ -286,6 +291,7 @@ export class ClientServer {
                   return;
                 }
 
+                // 3. YENİ KULLANICI PAROLA TEKRAR AŞAMASI
                 if (authState === AUTH_STATE.CONFIRM_PASSWORD) {
                   if (val !== tempPassword) {
                     tempPassword = '';
@@ -304,7 +310,53 @@ export class ClientServer {
                   return;
                 }
 
+                // 4. MEVCUT KULLANICI GİRİŞ PAROLASI
                 if (authState === AUTH_STATE.LOGIN_PASSWORD) {
+                  userProfile = this.db.getUserProfile(targetUserAddress);
+                  const isSshVault = userProfile.passwordHash && userProfile.passwordHash.startsWith('{');
+
+                  if (isSshVault) {
+                    if (!userProfile.allowTelnet) {
+                      socket.write(I18n.t('TUI_TELNET_BLOCKED_SSH_ONLY'));
+                      socket.end();
+                      return;
+                    }
+
+                    if (!userProfile.publicKey) {
+                      socket.write(I18n.t('TUI_TELNET_NO_KEY_IN_PROFILE'));
+                      socket.end();
+                      return;
+                    }
+
+                    const isValid = await CryptoHelper.verifyPassword(
+                      val,
+                      userProfile.passwordHash,
+                      userProfile.publicKey,
+                      this.federation.nodeAddress
+                    );
+
+                    if (!isValid) {
+                      loginAttempts++;
+                      const remaining = 3 - loginAttempts;
+                      if (remaining <= 0) {
+                        socket.write(I18n.t('TUI_MAX_LOGIN_ATTEMPTS'));
+                        socket.end();
+                        return;
+                      }
+                      socket.write(I18n.t('TUI_WRONG_PASSWORD', { remaining }));
+                      socket.write(I18n.t('TUI_PASSWORD_PROMPT'));
+                      return;
+                    }
+
+                    await completeLogin();
+
+                    if (session) {
+                      session.addSystemLog(I18n.t('E2EE_TELNET_BANNER_WARNING'));
+                    }
+                    return;
+                  }
+
+                  // Klasik Telnet hesabı
                   const isValid = await CryptoHelper.verifyPassword(val, userProfile.passwordHash);
                   if (!isValid) {
                     loginAttempts++;
@@ -604,7 +656,8 @@ export class ClientServer {
             finalContent = `e2ee:v2:${rCombined}:${sCombined}:${enc.iv}:${enc.authTag}:${enc.ciphertext}`;
             isE2EE = true;
           } catch (err) {
-            log.warn(`E2EE şifreleme hatası: ${err.message}`);
+            log.warn(I18n.t('E2EE_ENCRYPT_ERROR_LOG', { error: err.message }));
+            session.addSystemLog(`\x1b[1;31m${I18n.t('E2EE_ENCRYPT_ERROR_NOTICE', { error: err.message })}\x1b[0m`);
           }
         } else {
           // Karşı taraf Telnet

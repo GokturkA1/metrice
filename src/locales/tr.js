@@ -1,5 +1,5 @@
 export default {
-  // Kanallar
+  // Kanallar & Özel Odalar
   DEFAULT_CHANNEL_NAME: '#genel',
   SYSTEM_CONSOLE_NAME: '*sistem',
 
@@ -11,6 +11,8 @@ export default {
   BOOTSTRAP_SSH_PORT: 'SSH Sunucu Portu: {port}',
   BOOTSTRAP_LOG_LEVEL: 'Log Seviyesi: {level}',
   BOOTSTRAP_SHUTTING_DOWN: 'Düğüm kapatılıyor, bağlantılar ve veritabanı temizleniyor...',
+  BOOTSTRAP_CLEAN_EXIT: 'Temiz kapanış tamamlandı. Hoşça kalın!',
+  BOOTSTRAP_SHUTDOWN_ERROR: 'Kapanış sırasında hata: {error}',
 
   // Database Logs
   DB_LOADED: 'Veritabanı yüklendi: {path}',
@@ -54,8 +56,10 @@ export default {
   FED_SECURE_DECRYPT_JSON_ERR: 'Deşifre edilen JSON bozuk: {error}',
   FED_SECURE_TIMEOUT: 'Güvenli kanal zaman aşımına uğradı',
   FED_CLOSED: 'Federasyon motoru ve güvenli taşıma kanalları kapatıldı.',
+  FED_REPLAY_NONCE_DETECTED: '[GÜVENLİK] Tekrarlanan (Replay) Nonce saptandı, bağlantı kesiliyor: {node}',
+  FED_IP_SPOOFING_DETECTED: '[GÜVENLİK] IP Spoofing saptandı! İddia edilen: {declared}, Gerçek IP: {remote}',
 
-  // SSH Server Logs
+  // SSH Server Logs & Protocol Errors
   SSH_SRV_LISTENING: 'Sıfır Bağımlılık SSH-2 Sunucusu Hazır -> Port: {port}',
   SSH_CLIENT_IDENTIFIED: 'SSH İstemci Tanımlandı: {version}',
   SSH_CONN_ERROR: 'SSH Bağlantı hatası: {error}',
@@ -63,12 +67,40 @@ export default {
   SSH_TRANSPORT_READY: 'SSH Şifreli Taşıma Katmanı (AES-256-CTR + HMAC-SHA256) Devreye Alındı.',
   SSH_AUTH_SUCCESS: 'SSH Kullanıcı Parola ile Doğrulandı: {user}',
   SSH_BUFFER_OVERFLOW: 'SSH Buffer taşması: {target}',
+  SSH_INVALID_PACKET_SIZE: 'Geçersiz SSH paket boyutu: {size}',
+  SSH_KEX_NEGOTIATED: 'Müzakere Edilen SSH KEX: {kex}',
+  SSH_SERVICE_REQUEST_RECEIVED: 'SSH Servis Talebi Alındı: {service}',
+  SSH_PUBKEY_READ_ERROR: 'Ed25519 açık anahtar okuma hatası: {error}',
+  SSH_UNREGISTERED_PUBKEY_WARN: '[GÜVENLİK] Kullanıcının sunduğu Ed25519 anahtarı bu hesapta kayıtlı değil: {user}',
+  SSH_VAULT_SEED_ERROR: 'Vault Seed türetim hatası: {error}',
+
+  // Post-Quantum & Kripto Hata Bildirimleri
+  CRYPTO_PQ_CRITICAL_BANNER: `
+\x1b[41;1;37m                                                                               \x1b[0m
+\x1b[41;1;37m   [KRİTİK GÜVENLİK UYARISI] KUANTUM SONRASI ŞİFRELEME (ML-KEM) AKTİF DEĞİL!   \x1b[0m
+\x1b[41;1;37m   Sistem klasik Eliptik Eğriye (X25519) düştü. Bu oturum KUANTUM GÜVENLİ       \x1b[0m
+\x1b[41;1;37m   DEĞİLDİR! Node.js >= 24.7 / 26 ortamında çalıştığınızdan emin olun.         \x1b[0m
+\x1b[41;1;37m                                                                               \x1b[0m`,
+  CRYPTO_STRICT_PQ_ABORT: '[HATA] STRICT_PQ=true ayarlandığı için klasik şifrelemeyle başlatma reddedildi.',
+  CRYPTO_FALLBACK_X25519_WARN: '[UYARI] Sistem ML-KEM üretemedi, klasik X25519 anahtarına düşülüyor!',
+  CRYPTO_INVALID_CLIENT_ED25519: 'Geçersiz istemci Ed25519 açık anahtarı! Kasa tohumu türetilemez.',
+  CRYPTO_INVALID_KEY_FORMAT: 'Geçersiz anahtar formatı!',
+  CRYPTO_ONLY_ED25519_SUPPORTED: 'Yalnızca ssh-ed25519 algoritmasına sahip anahtarlar desteklenir!',
+  CRYPTO_KEY_TOO_SHORT: 'Anahtar verisi çok kısa!',
+  CRYPTO_WIRE_FORMAT_ERROR: 'OpenSSH wire formatı çözümlenemedi!',
+  CRYPTO_ED25519_LENGTH_ERROR: 'Ed25519 açık anahtarı tam 32 bayt olmalıdır!',
+  CRYPTO_NOT_ED25519_TYPE: 'Anahtar Ed25519 türünde değil!',
+  CRYPTO_VERIFICATION_FAILED: 'Kriptografik açık anahtar doğrulanamadı: {error}',
 
   // E2EE & Güvenlik Bildirimleri
   E2EE_ACTIVE_BADGE: ' [🔒 E2EE] ',
   E2EE_INACTIVE_BADGE: ' [🔓 DÜZ METİN] ',
   E2EE_WARNING_TELNET_PEER: '[GÜVENLİK] {user} Telnet üzerinden bağlı olduğu için bu sohbette uçtan uca şifreleme (E2EE) devre dışıdır.',
   E2EE_ENABLED_NOTICE: '[GÜVENLİK] Uçtan uca şifreleme (E2EE - Kyber768 + AES-256-GCM) aktif.',
+  E2EE_DECRYPT_FAIL_PLACEHOLDER: '🔒 [DEŞİFRE HATASI: Anahtar Uyuşmazlığı]',
+  E2EE_ENCRYPT_ERROR_LOG: 'E2EE şifreleme hatası: {error}',
+  E2EE_ENCRYPT_ERROR_NOTICE: '[E2EE HATA] Mesaj şifrelenemedi: {error}',
+  E2EE_TELNET_BANNER_WARNING: '\x1b[1;41;37m UYARI! OTURUMUNUZ KİLİTLİ DEĞİL! \x1b[0m\r\n\x1b[1;31mBu oturuma güvensiz Telnet protokolü üzerinden bağlandınız.\x1b[0m\r\n\x1b[33mDonanım anahtarınız (id_ed25519) istemcide bulunmadığı için uçtan uca şifreli (E2EE) mesajlar çözülemez ve oturumunuz dinlenmeye açıktır.\x1b[0m',
 
   // Client Server Logs
   CLIENT_NEW_CONN: 'Yeni terminal bağlantısı açıldı: {addr}',
@@ -97,6 +129,8 @@ export default {
   TUI_PASSWORD_TOO_SHORT: '\r\n[HATA] Parola en az 4 karakter olmalıdır!\r\n',
   TUI_WRONG_PASSWORD: '\r\n[HATA] Hatalı parola! Kalan hak: {remaining}\r\n',
   TUI_MAX_LOGIN_ATTEMPTS: '\r\nÇok fazla hatalı deneme. Bağlantı kesildi.\r\n',
+  TUI_TELNET_BLOCKED_SSH_ONLY: '\r\n\x1b[1;31m[GÜVENLİK]\x1b[0m Bu hesap SSH Ed25519 donanım anahtarı ile mühürlenmiştir.\r\nTelnet erişimi kapalıdır. İzin vermek için SSH ile bağlanıp \x1b[1;33m/allowtelnet on\x1b[0m yazın.\r\n',
+  TUI_TELNET_NO_KEY_IN_PROFILE: '\r\n\x1b[1;31m[HATA]\x1b[0m Hesabınıza ait SSH anahtarı profilde bulunamadı. Lütfen önce bir kez SSH ile giriş yapın.\r\n',
   TUI_SESSION_CLOSED: '\r\nOturum kapatıldı.\r\n',
   TUI_SERVER_SHUTDOWN: '\r\n[SUNUCU] Sunucu kapatılıyor. Oturumunuz sonlandırıldı.\r\n',
   TUI_HINT_SIDEBAR_FOCUS: '[ODAK: LİSTE | Ok/Enter | Tab/Yaz: Giriş]',
@@ -112,6 +146,12 @@ export default {
   TUI_ME_SENDER_YOU: 'Sen',
   TUI_SYSTEM_SENDER: 'SİSTEM',
   TUI_SNIPPET_TITLE: '--- [YAPIŞTIRILAN METİN / KOD BLOĞU] ---',
+  TUI_SCREEN_TOO_SMALL: 'Terminal çok küçük! Lütfen büyütün (Min: 80x15). Şu an: {width}x{height}',
+  TUI_SYS_PANEL_TITLE: ' [Düğüm & Eşler] ',
+  TUI_SYS_PANEL_UPTIME: 'UPTIME :',
+  TUI_SYS_PANEL_RAM: 'RAM    :',
+  TUI_SYS_PANEL_PEERS: 'EŞLER ({count}):',
+  TUI_SYS_PANEL_NO_PEERS: '(Eş yok)',
 
   // System Messages & Notifications
   SYS_WELCOME: 'Mesh Terminale Hoş Geldin! Giriş yapıldı: {address}',
@@ -123,6 +163,7 @@ export default {
   SYS_JOINED_CHANNEL: '[BİLGİ] {channel} kanalına katıldınız.',
   SYS_LEFT_CHANNEL: '[BİLGİ] {channel} kanalından ayrıldınız ve mesaj geçmişiniz silindi.',
   SYS_REMOVED_DM: '[BİLGİ] {target} ile olan özel sohbet ve mesaj geçmişiniz silindi.',
+  SYS_PASTE_MODE_ON: '[BİLGİ] Manuel yapıştırma modu aktif. Göndermek için /paste tekrar yazın.',
 
   // Commands
   CMD_HELP_HEADER: '=== KULLANILABİLİR KOMUTLAR ===',
@@ -155,6 +196,33 @@ export default {
   CMD_STATUS_CLIENTS: 'Aktif Yerel Oturumlar   : {count} kullanıcı',
   CMD_STATUS_PEERS: 'Keşfedilen Eş Düğümler  : {count} adet ({peers})',
   CMD_STATUS_OUTBOX: 'Bekleyen İletim Kuyruğu : {count} mesaj',
+  CMD_PASTE_DESC: 'Manuel çok satırlı yapıştırma modunu açar/kapatır',
+
+  // Allowtelnet Command
+  CMD_ALLOWTELNET_DESC: 'SSH hesabının Telnet üzerinden güvensiz erişimine izin verir veya kapatır (on/off)',
+  CMD_ALLOWTELNET_USAGE: '/allowtelnet [on|off]',
+  CMD_ALLOWTELNET_ENABLED: '\x1b[1;33m[GÜVENLİK]\x1b[0m Bu hesap için Telnet üzerinden şifresiz giriş \x1b[1;32mAKTİF\x1b[0m edildi. Oturumunuz Telnet üzerinden açıldığında E2EE kasası çözülemeyecektir.',
+  CMD_ALLOWTELNET_DISABLED: '\x1b[1;32m[GÜVENLİK]\x1b[0m Bu hesap için Telnet erişimi \x1b[1;31mKAPATILDI\x1b[0m. Artık sadece SSH donanım anahtarı ile giriş yapılabilir.',
+  CMD_ALLOWTELNET_STATUS_OPEN: '\x1b[1;32mAÇIK\x1b[0m (Telnet ile girilebilir)',
+  CMD_ALLOWTELNET_STATUS_LOCKED: '\x1b[1;31mKAPALI\x1b[0m (Sadece SSH)',
+  CMD_ALLOWTELNET_CURRENT_STATUS: 'Mevcut Telnet Erişim Durumu: {status}',
+  CMD_ALLOWTELNET_HELP_TIP: 'Kullanım: /allowtelnet on  (Erişime izin ver) | /allowtelnet off (Kapat ve kilitle)',
+
+  // Keys Command
+  CMD_KEYS_DESC: 'SSH Ed25519 donanım açık anahtarlarını yönetir (list, add, del)',
+  CMD_KEYS_USAGE: '/keys [list | add <ssh-ed25519 ...> | del <parmak_izi_veya_sira>]',
+  CMD_KEYS_HEADER: '=== TANIMLI SSH ED25519 DONANIM ANAHTARLARINIZ ===',
+  CMD_KEYS_EMPTY: '(Tanımlı ek açık anahtar bulunmuyor)',
+  CMD_KEYS_ADD_PROMPT: 'Yeni anahtar eklemek için: /keys add ssh-ed25519 AAAAC3...',
+  CMD_KEYS_INPUT_REQUIRED: '[HATA] Lütfen eklenecek açık anahtarı girin.\r\nÖrnek: /keys add ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...',
+  CMD_KEYS_ALREADY_EXISTS: '[BİLGİ] Bu Ed25519 anahtarı zaten hesabınızda tanımlı.',
+  CMD_KEYS_ADDED_SUCCESS: '[BAŞARILI] Yeni SSH anahtarı hesabınıza eklendi!\r\nParmak İzi: SHA256:{fingerprint}\r\nArtık bu makineden de aynı parola ile hesabınıza bağlanabilirsiniz.',
+  CMD_KEYS_REJECTED: '[REDDEDİLDİ] Anahtar doğrulanamadı: {error}',
+  CMD_KEYS_DEL_INDEX_REQUIRED: '[HATA] Silinecek anahtarın sıra numarasını belirtin. (Örn: /keys del 2)',
+  CMD_KEYS_LAST_KEY_PROTECTION: '[ENGEL] Hesabınızdaki son anahtarı silemezsiniz! Önce yeni bir anahtar ekleyin.',
+  CMD_KEYS_NOT_FOUND: '[HATA] Belirtilen anahtar bulunamadı: {target}',
+  CMD_KEYS_DELETED_SUCCESS: '[BAŞARILI] Anahtar hesaptan kaldırıldı.',
+  CMD_KEYS_SYNTAX_HELP: 'Kullanım: /keys [list | add <ssh-ed25519 ...> | del <sıra>]',
 
   E2EE_ENCRYPTED_PLACEHOLDER: '🔒 [ŞİFRELİ METİN]',
 };

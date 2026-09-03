@@ -5,7 +5,7 @@ export default {
   name: 'msg',
   aliases: ['query', 'q', 'dm'],
   description: I18n.t('CMD_MSG_DESC'),
-  usage: '/msg @user:host[:port]',
+  usage: '/msg @user[:host:port]',
   execute({ args, session, db, federation, userAddress }) {
     if (!args[0]) {
       session.addSystemLog(I18n.t('CMD_MSG_USAGE_ERROR'));

@@ -150,18 +150,15 @@ class SecureChannel extends EventEmitter {
   handleFrame(frame) {
     // 1. HANDSHAKE_INIT
     if (frame.type === 'HANDSHAKE_INIT') {
-      // 1.1 Nonce Replay Kontrolü
-    // HANDSHAKE_INIT içinde:
-    const remoteIp = this.socket.remoteAddress || '';
-    if (!this.nonceTracker.track(frame.nonce, remoteIp)) {
-      log.warn(`[GÜVENLİK] Tekrarlanan (Replay) Nonce saptandı, bağlantı kesiliyor: ${frame.nodeAddress}`);
-      this.socket.destroy();
-      return;
-    }
+      const remoteIp = this.socket.remoteAddress || '';
+      if (!this.nonceTracker.track(frame.nonce, remoteIp)) {
+        log.warn(I18n.t('FED_REPLAY_NONCE_DETECTED', { node: frame.nodeAddress }));
+        this.socket.destroy();
+        return;
+      }
 
-      // 1.2 Sybil / IP Spoofing Doğrulaması
       if (!this.validatePeerIp(frame.nodeAddress)) {
-        log.warn(`[GÜVENLİK] IP Spoofing saptandı! İddia edilen: ${frame.nodeAddress}, Gerçek IP: ${this.socket.remoteAddress}`);
+        log.warn(I18n.t('FED_IP_SPOOFING_DETECTED', { declared: frame.nodeAddress, remote: this.socket.remoteAddress }));
         this.socket.destroy();
         return;
       }
@@ -272,11 +269,28 @@ class SecureChannel extends EventEmitter {
     const rawRemote = this.socket.remoteAddress || '';
     const cleanRemote = rawRemote.replace('::ffff:', '');
 
-    // Loopback ve yerel ağ toleransı
-    if (declaredHost === 'localhost' || declaredHost === '127.0.0.1' || declaredHost === '::1') {
-      return cleanRemote === '127.0.0.1' || cleanRemote === '::1';
+    // 1. Loopback toleransı
+    const isLoopback = (ip) => ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
+    if (isLoopback(declaredHost) && isLoopback(cleanRemote)) {
+      return true;
     }
 
+    // 2. Özel Ağ / Intranet (RFC 1918) & Docker Ağları Toleransı (10.x, 192.168.x, 172.16-31.x)
+    const isPrivateSubnet = (ip) => {
+      return /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(ip);
+    };
+
+    if (isPrivateSubnet(cleanRemote)) {
+      // Intranet/Docker/VPN ortamında iç IP'ler üzerinden gelen el sıkışmaları meşru kabul edilir
+      return true;
+    }
+
+    // 3. Reverse proxy / Güvenilen Proxy ortamı bayrağı
+    if (process.env.TRUST_PROXY === 'true') {
+      return true;
+    }
+
+    // 4. Doğrudan genel IP eşleşmesi
     return declaredHost === cleanRemote;
   }
 

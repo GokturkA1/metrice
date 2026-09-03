@@ -72,6 +72,7 @@ class SshClientConnection extends EventEmitter {
     this.keyLen = 16;
     this.ivLen = 16;
 
+    this.offeredClientPub = null;
     this.derivedE2eeSeed = null;
     this.authenticatedUser = null;
     this.channelRemoteId = null;
@@ -106,7 +107,14 @@ class SshClientConnection extends EventEmitter {
   processIncoming() {
     if (this.state === 'IDENT') {
       const idx = this.inBuffer.indexOf('\n');
-      if (idx === -1) return;
+      if (idx === -1) {
+        // ID satırı çok uzun sürerse veya saçma karakterler dolarsa kopar
+        if (this.inBuffer.length > 256) {
+          log.warn('Geçersiz SSH ID banner uzunluğu, bağlantı kesiliyor.');
+          this.socket.destroy();
+        }
+        return;
+      }
 
       const rawLine = this.inBuffer.subarray(0, idx + 1).toString('utf8');
       this.inBuffer = this.inBuffer.subarray(idx + 1);
@@ -119,9 +127,24 @@ class SshClientConnection extends EventEmitter {
 
     while (this.inBuffer.length > 0) {
       if (!this.isEncryptedIn) {
-        if (this.inBuffer.length < 5) return;
+        // 5 baytlık standart SSH paket başlığı gelmeden önce tampon aşırı şişerse saldırıdır
+        if (this.inBuffer.length < 5) {
+          if (this.inBuffer.length > 1024) {
+            log.warn('Şifresiz SSH başlık tamponu taştı, bağlantı sıfırlanıyor.');
+            this.socket.destroy();
+          }
+          return;
+        }
+
         const packetLength = this.inBuffer.readUInt32BE(0);
         const paddingLength = this.inBuffer.readUInt8(4);
+
+        // --- ANINDA FIN/RST (DOS & FUZZING KORUMASI) ---
+        if (packetLength > 65536 || packetLength < 4 || paddingLength >= packetLength) {
+          log.warn(I18n.t('SSH_INVALID_PACKET_SIZE', { size: packetLength }));
+          this.socket.destroy(); // Bağlantıyı anında koparır (FIN/RST)
+          return;
+        }
 
         if (this.inBuffer.length < 4 + packetLength) return;
 
@@ -140,7 +163,7 @@ class SshClientConnection extends EventEmitter {
           this.inBuffer = this.inBuffer.subarray(4);
 
           if (this.currentPacketLen > 65536 || this.currentPacketLen < 4) {
-            log.warn(`Geçersiz SSH paket boyutu: ${this.currentPacketLen}`);
+            log.warn(I18n.t('SSH_INVALID_PACKET_SIZE', { size: this.currentPacketLen }));
             this.socket.destroy();
             return;
           }
@@ -217,7 +240,6 @@ class SshClientConnection extends EventEmitter {
     const writer = new SshPacketWriter();
     writer.writeByte(SSH_MSG.KEXINIT);
     writer.writeRaw(crypto.randomBytes(16));
-    // 1. Post-Quantum mlkem768x25519-sha256 en başta, fallback olarak curve25519-sha256
     writer.writeNameList(['mlkem768x25519-sha256', 'curve25519-sha256', 'curve25519-sha256@libssh.org']);
     writer.writeNameList(['ssh-ed25519']);
     writer.writeNameList(['aes128-ctr', 'aes256-ctr']);
@@ -246,14 +268,14 @@ class SshClientConnection extends EventEmitter {
 
       case SSH_MSG.KEXINIT: {
         this.clientKexPayload = Buffer.from(payload);
-        reader.offset += 16; // Cookie atla
+        reader.offset += 16;
         const clientKexList = reader.readNameList();
         if (clientKexList.includes('mlkem768x25519-sha256') && CryptoHelper.HAS_ML_KEM) {
           this.selectedKex = 'mlkem768x25519-sha256';
         } else {
           this.selectedKex = 'curve25519-sha256';
         }
-        log.debug(`Müzakere Edilen SSH KEX: ${this.selectedKex}`);
+        log.debug(I18n.t('SSH_KEX_NEGOTIATED', { kex: this.selectedKex }));
         break;
       }
 
@@ -268,7 +290,7 @@ class SshClientConnection extends EventEmitter {
 
       case SSH_MSG.SERVICE_REQUEST: {
         const service = reader.readString();
-        log.debug(`SSH Servis Talebi Alındı: ${service}`);
+        log.debug(I18n.t('SSH_SERVICE_REQUEST_RECEIVED', { service }));
         if (service === 'ssh-userauth') {
           const w = new SshPacketWriter();
           w.writeByte(SSH_MSG.SERVICE_ACCEPT);
@@ -353,11 +375,9 @@ class SshClientConnection extends EventEmitter {
     let sharedSecretK = null;
 
     if (this.selectedKex === 'mlkem768x25519-sha256') {
-      // clientBlob: C_PK2 (ML-KEM-768 1184 bayt) || C_PK1 (X25519 32 bayt) = 1216 bayt
       const clientKemPubRaw = clientBlob.subarray(0, 1184);
       const clientX25519PubRaw = clientBlob.subarray(1184, 1216);
 
-      // 1. Klasik X25519 ECDH
       const serverX25519 = crypto.generateKeyPairSync('x25519');
       const serverX25519PubRaw = serverX25519.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
 
@@ -371,7 +391,6 @@ class SshClientConnection extends EventEmitter {
         publicKey: clientX25519PubKeyObj
       });
 
-      // 2. Post-Quantum ML-KEM-768 Encapsulation
       if (!SshClientConnection.kemSpkiPrefix) {
         const dummyKey = crypto.generateKeyPairSync('ml-kem-768');
         const dummyDer = dummyKey.publicKey.export({ type: 'spki', format: 'der' });
@@ -385,14 +404,9 @@ class SshClientConnection extends EventEmitter {
       });
 
       const { sharedKey: kPq, ciphertext: sCt2 } = crypto.encapsulate(clientKemPubKeyObj);
-
-      // serverBlob: S_CT2 (1088 bayt) || S_PK1 (32 bayt) = 1120 bayt
       serverBlob = Buffer.concat([sCt2, serverX25519PubRaw]);
-
-      // K = SHA256(K_PQ || K_CL) (draft-ietf-sshm-mlkem-hybrid-kex)
       sharedSecretK = crypto.createHash('sha256').update(kPq).update(kCl).digest();
     } else {
-      // curve25519-sha256 Fallback
       const serverEcdh = crypto.generateKeyPairSync('x25519');
       serverBlob = serverEcdh.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
 
@@ -415,7 +429,6 @@ class SshClientConnection extends EventEmitter {
     hostKeyBlob.writeBuffer(this.hostKey.rawEd25519Pub);
     const hostKeyBuffer = hostKeyBlob.toBuffer();
 
-    // Exchange Hash (H) Hesaplama
     const hashWriter = new SshPacketWriter();
     hashWriter.writeString(this.clientVersion);
     hashWriter.writeString(this.serverVersion);
@@ -425,7 +438,6 @@ class SshClientConnection extends EventEmitter {
     hashWriter.writeBuffer(clientBlob);
     hashWriter.writeBuffer(serverBlob);
 
-    // draft-ietf-sshm-mlkem-hybrid-kex: K değeri mpint DEĞİL, ham string buffer olarak hash'e girer
     if (this.selectedKex === 'mlkem768x25519-sha256') {
       hashWriter.writeBuffer(this.sharedSecret);
     } else {
@@ -437,7 +449,6 @@ class SshClientConnection extends EventEmitter {
       this.sessionIdentifier = this.exchangeHash;
     }
 
-    // Ed25519 ile H hash'inin imzalanması
     const sigRaw = crypto.sign(null, this.exchangeHash, this.hostKey.privateKey);
     const sigBlob = new SshPacketWriter();
     sigBlob.writeString('ssh-ed25519');
@@ -463,12 +474,10 @@ class SshClientConnection extends EventEmitter {
     let kBuffer;
 
     if (this.selectedKex === 'mlkem768x25519-sha256') {
-      // Hibrit KEX'te K 32 bayt string olarak işlenir
       const lenPrefix = Buffer.alloc(4);
       lenPrefix.writeUInt32BE(this.sharedSecret.length, 0);
       kBuffer = Buffer.concat([lenPrefix, this.sharedSecret]);
     } else {
-      // Klasik KEX mpint formatı
       let kMpint = this.sharedSecret;
       if (kMpint.length === 0 || (kMpint[0] & 0x80) !== 0) {
         const padded = Buffer.alloc(kMpint.length + 1);
@@ -536,63 +545,14 @@ class SshClientConnection extends EventEmitter {
       const algo = reader.readString();
       const pubKeyBlob = reader.readBuffer();
 
-      const profile = this.db.getUserProfile(formattedAddr);
-
-      if (!hasSig) {
-        if (profile.publicKey && profile.publicKey === pubKeyBlob.toString('base64')) {
-          const w = new SshPacketWriter();
-          w.writeByte(SSH_MSG.USERAUTH_PK_OK);
-          w.writeString(algo);
-          w.writeBuffer(pubKeyBlob);
-          this.sendPacket(w.toBuffer());
-          return;
-        }
-
-        const w = new SshPacketWriter();
-        w.writeByte(SSH_MSG.USERAUTH_FAILURE);
-        w.writeNameList(['password']);
-        w.writeBoolean(false);
-        this.sendPacket(w.toBuffer());
-        return;
-      }
-
-      const sigBlob = reader.readBuffer();
-      const sigReader = new SshPacketReader(sigBlob);
-      sigReader.readString();
-      const sigRaw = sigReader.readBuffer();
-
-      const signedData = Buffer.concat([
-        this.sessionIdentifier,
-        rawPayload.subarray(0, rawPayload.length - (4 + sigBlob.length))
-      ]);
-
-      let isValidSig = false;
-      try {
-        if (algo === 'ssh-ed25519') {
+      if (algo === 'ssh-ed25519') {
+        try {
           const edKeyReader = new SshPacketReader(pubKeyBlob);
           edKeyReader.readString();
-          const rawEdPub = edKeyReader.readBuffer();
-          const spkiKey = Buffer.concat([
-            Buffer.from('302a300506032b6570032100', 'hex'),
-            rawEdPub
-          ]);
-          const pubKeyObj = crypto.createPublicKey({ key: spkiKey, format: 'der', type: 'spki' });
-          isValidSig = crypto.verify(null, signedData, pubKeyObj, sigRaw);
+          this.offeredClientPub = edKeyReader.readBuffer();
+        } catch (err) {
+          log.warn(I18n.t('SSH_PUBKEY_READ_ERROR', { error: err.message }));
         }
-      } catch (err) {
-        log.warn(`Public Key imza doğrulama hatası: ${err.message}`);
-      }
-
-      if (isValidSig) {
-        this.authenticatedUser = formattedAddr;
-        // SIGN-TO-DERIVE: İmzadan deterministik 32-bayt E2EE Seed türet
-        this.derivedE2eeSeed = CryptoHelper.deriveSeedFromSshSignature(sigRaw, formattedAddr);
-
-        const w = new SshPacketWriter();
-        w.writeByte(SSH_MSG.USERAUTH_SUCCESS);
-        this.sendPacket(w.toBuffer());
-        log.info(`SSH Kullanıcı Public Key ile Giriş Yaptı: ${this.authenticatedUser}`);
-        return;
       }
 
       const w = new SshPacketWriter();
@@ -609,21 +569,78 @@ class SshClientConnection extends EventEmitter {
 
       const profile = this.db.getUserProfile(formattedAddr);
       let authOk = false;
+      let candidateSeed = null;
+
+      const registeredKeys = profile.publicKeys && profile.publicKeys.length > 0
+        ? profile.publicKeys
+        : (profile.publicKey ? [profile.publicKey] : []);
+
+      if (this.offeredClientPub) {
+        const offeredBase64 = this.offeredClientPub.toString('base64');
+
+        if (registeredKeys.length > 0 && !registeredKeys.includes(offeredBase64)) {
+          log.warn(I18n.t('SSH_UNREGISTERED_PUBKEY_WARN', { user: formattedAddr }));
+          const w = new SshPacketWriter();
+          w.writeByte(SSH_MSG.USERAUTH_FAILURE);
+          w.writeNameList(['publickey']);
+          w.writeBoolean(false);
+          this.sendPacket(w.toBuffer());
+          return;
+        }
+      }
+
+      // Hesaba eklenen 2. ve 3. anahtarlar da kasayı açabilsin diye
+      // Kasa tohumu ilk kayıtlı anahtar (kök açık anahtar) üzerinden türetilir:
+      let saltPub = registeredKeys.length > 0 
+        ? Buffer.from(registeredKeys[0], 'base64') 
+        : this.offeredClientPub;
+
+      if (!saltPub) {
+        saltPub = Buffer.from(`salt:${this.clientServer.federation.nodeAddress}`);
+      }
+
+      try {
+        candidateSeed = CryptoHelper.deriveVaultSeed(
+          password,
+          saltPub,
+          this.clientServer.federation.nodeAddress
+        );
+      } catch (seedErr) {
+        log.error(I18n.t('SSH_VAULT_SEED_ERROR', { error: seedErr.message }));
+        const w = new SshPacketWriter();
+        w.writeByte(SSH_MSG.USERAUTH_FAILURE);
+        w.writeNameList(['password']);
+        w.writeBoolean(false);
+        this.sendPacket(w.toBuffer());
+        return;
+      }
 
       if (!profile.passwordHash) {
-        const hash = await CryptoHelper.hashPassword(password);
-        this.db.updateUserPassword(formattedAddr, hash);
-        profile.passwordHash = hash;
+        const authToken = CryptoHelper.createVaultAuthToken(candidateSeed);
+        const tokenSerialized = JSON.stringify(authToken);
+        this.db.updateUserPassword(formattedAddr, tokenSerialized);
+        profile.passwordHash = tokenSerialized;
+
+        if (this.offeredClientPub) {
+          this.db.addUserPublicKey(formattedAddr, this.offeredClientPub.toString('base64'));
+        }
+
+        this.derivedE2eeSeed = candidateSeed;
         authOk = true;
       } else {
-        authOk = await CryptoHelper.verifyPassword(password, profile.passwordHash);
+        try {
+          const tokenEncrypted = JSON.parse(profile.passwordHash);
+          if (CryptoHelper.verifyVaultAuthToken(tokenEncrypted, candidateSeed)) {
+            this.derivedE2eeSeed = candidateSeed;
+            authOk = true;
+          }
+        } catch {
+          authOk = false;
+        }
       }
 
       if (authOk) {
         this.authenticatedUser = formattedAddr;
-        // Parola ile bağlanan SSH oturumu için deterministik seed
-        this.derivedE2eeSeed = CryptoHelper.deriveSeedFromPassword(password, formattedAddr);
-
         const w = new SshPacketWriter();
         w.writeByte(SSH_MSG.USERAUTH_SUCCESS);
         this.sendPacket(w.toBuffer());
@@ -672,14 +689,11 @@ class SshClientConnection extends EventEmitter {
       () => this.clientServer.commands.getAllUnique().map((c) => c.name)
     );
 
-    // SIGN-TO-DERIVE ZERO-KNOWLEDGE E2EE
     this.session.isSsh = true;
     this.session.isSecureE2EE = true;
 
     if (this.derivedE2eeSeed) {
-      // Deterministik X25519 E2EE Anahtar Çifti (Oturumlar arası kalıcı, diske yazılmaz)
       this.session.kemKeyPair = CryptoHelper.deriveDeterministicX25519(this.derivedE2eeSeed);
-      // Diğer eşlerin bana mesaj atabilmesi için açık anahtarı veritabanına ve ağa duyur
       this.db.updateUserKemKey(this.authenticatedUser, this.session.kemKeyPair.publicKey);
     }
 

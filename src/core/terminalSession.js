@@ -461,7 +461,7 @@ export class TerminalSession extends EventEmitter {
     try {
       if (this.width < 75 || this.height < 14) {
         let warn = ANSI.CLEAR + ANSI.CURSOR_MOVE(Math.floor(this.height / 2), 2);
-        warn += `${ANSI.FG_YELLOW}Terminal çok küçük! Lütfen büyütün (Min: 80x15). Şu an: ${this.width}x${this.height}${ANSI.RESET}`;
+        warn += `${ANSI.FG_YELLOW}${I18n.t('TUI_SCREEN_TOO_SMALL', { width: this.width, height: this.height })}${ANSI.RESET}`;
         this.screenBuffer = [];
         this.socket.write(warn);
         return;
@@ -482,13 +482,13 @@ export class TerminalSession extends EventEmitter {
 
       if (isSystemWindow) {
         const stats = this.getSystemStats ? this.getSystemStats() : { uptime: '-', rss: '-', peers: [] };
-        rightTitle = ' [Düğüm & Eşler] ';
-        rightPanelLines.push(`${ANSI.FG_CYAN}UPTIME :${ANSI.RESET} ${stats.uptime}`);
-        rightPanelLines.push(`${ANSI.FG_CYAN}RAM    :${ANSI.RESET} ${stats.rss}MB`);
+        rightTitle = I18n.t('TUI_SYS_PANEL_TITLE');
+        rightPanelLines.push(`${ANSI.FG_CYAN}${I18n.t('TUI_SYS_PANEL_UPTIME')}${ANSI.RESET} ${stats.uptime}`);
+        rightPanelLines.push(`${ANSI.FG_CYAN}${I18n.t('TUI_SYS_PANEL_RAM')}${ANSI.RESET} ${stats.rss}MB`);
         rightPanelLines.push(`${ANSI.FG_GRAY}----------------${ANSI.RESET}`);
-        rightPanelLines.push(`${ANSI.FG_YELLOW}EŞLER (${stats.peers.length}):${ANSI.RESET}`);
+        rightPanelLines.push(`${ANSI.FG_YELLOW}${I18n.t('TUI_SYS_PANEL_PEERS', { count: stats.peers.length })}${ANSI.RESET}`);
         if (stats.peers.length === 0) {
-          rightPanelLines.push(`${ANSI.FG_GRAY}(Eş yok)${ANSI.RESET}`);
+          rightPanelLines.push(`${ANSI.FG_GRAY}${I18n.t('TUI_SYS_PANEL_NO_PEERS')}${ANSI.RESET}`);
         } else {
           stats.peers.forEach((p) => {
             rightPanelLines.push(`${ANSI.FG_GREEN}●${ANSI.RESET} ${p}`);

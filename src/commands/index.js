@@ -11,6 +11,8 @@ import peersCmd from './modules/peers.js';
 import statusCmd from './modules/status.js';
 import clearCmd from './modules/clear.js';
 import quitCmd from './modules/quit.js';
+import allowtelnet from './modules/allowtelnet.js';
+import keys from './modules/keys.js';
 
 export function createCommandRegistry() {
   const registry = new CommandRegistry();
@@ -27,6 +29,8 @@ export function createCommandRegistry() {
   registry.register(statusCmd);
   registry.register(clearCmd);
   registry.register(quitCmd);
+  registry.register(allowtelnet)
+  registry.register(keys)
 
   return registry;
 }

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { I18n } from '../locales/i18n.js';
 
 export class CryptoHelper {
   static AES_ALGO = 'aes-256-gcm';
@@ -6,6 +7,22 @@ export class CryptoHelper {
   static AUTH_TAG_LENGTH = 16;
   static KEM_ALGO = 'ml-kem-768';
   static HAS_ML_KEM = typeof crypto.encapsulate === 'function' && typeof crypto.decapsulate === 'function';
+
+  static SENTINEL_TEXT = 'NODEMESH_VAULT_SENTINEL_V1';
+
+  // --- KUANTUM GÜVENLİK KONTROLÜ ---
+  static verifyQuantumSafePosture() {
+    if (!this.HAS_ML_KEM) {
+      console.error(I18n.t('CRYPTO_PQ_CRITICAL_BANNER'));
+
+      if (process.env.STRICT_PQ === 'true') {
+        console.error(`\x1b[31m${I18n.t('CRYPTO_STRICT_PQ_ABORT')}\x1b[0m`);
+        process.exit(1);
+      }
+      return false;
+    }
+    return true;
+  }
 
   // --- 1. ED25519 KİMLİK & İMZA YÖNETİMİ ---
   static generateIdentityKeyPair() {
@@ -30,12 +47,49 @@ export class CryptoHelper {
     }
   }
 
-  // --- 2. DETERMINISTIC X25519 E2EE KEYPAIR (SIGN-TO-DERIVE) ---
-  // 32-baytlık deterministik tohumdan doğrudan PKCS#8 DER ile X25519 anahtar çifti türetir
+  // --- 2. TWO-FACTOR EPHEMERAL VAULT DERIVATION ---
+  static deriveVaultSeed(passphrase, clientRawPub, nodeAddress) {
+    if (!Buffer.isBuffer(clientRawPub) || clientRawPub.length < 32) {
+      throw new Error(I18n.t('CRYPTO_INVALID_CLIENT_ED25519'));
+    }
+
+    const salt = clientRawPub.subarray(0, 32);
+
+    const scryptKey = crypto.scryptSync(passphrase, salt, 32, {
+      N: 16384,
+      r: 8,
+      p: 1,
+      maxmem: 64 * 1024 * 1024
+    });
+
+    const rawArrayBuffer = crypto.hkdfSync(
+      'sha256',
+      scryptKey,
+      Buffer.from(`nodemesh-vault-salt:${nodeAddress}`),
+      Buffer.from('nodemesh-vault-seed-v2'),
+      32
+    );
+
+    return Buffer.from(rawArrayBuffer);
+  }
+
+  static createVaultAuthToken(seedBuffer) {
+    return this.encrypt(this.SENTINEL_TEXT, seedBuffer);
+  }
+
+  static verifyVaultAuthToken(tokenEncrypted, seedBuffer) {
+    try {
+      const decrypted = this.decrypt(tokenEncrypted, seedBuffer);
+      return decrypted === this.SENTINEL_TEXT;
+    } catch {
+      return false;
+    }
+  }
+
   static deriveDeterministicX25519(seed32) {
-    // X25519 PKCS#8 ASN.1 DER Header: 302e020100300506032b656e04220420
+    const seedBuf = Buffer.isBuffer(seed32) ? seed32 : Buffer.from(seed32);
     const pkcs8Header = Buffer.from('302e020100300506032b656e04220420', 'hex');
-    const derPrivateKey = Buffer.concat([pkcs8Header, seed32]);
+    const derPrivateKey = Buffer.concat([pkcs8Header, seedBuf]);
 
     const privateKey = crypto.createPrivateKey({
       key: derPrivateKey,
@@ -51,22 +105,6 @@ export class CryptoHelper {
     };
   }
 
-  // Kullanıcının Ed25519 SSH imzasından 32-bayt kök tohum türetir
-  static deriveSeedFromSshSignature(signatureBytes, userAddress) {
-    return crypto.hkdfSync(
-      'sha256',
-      signatureBytes,
-      Buffer.from('NodeMesh-E2EE-Salt-v1'),
-      Buffer.from(`nodemesh-e2ee-seed:${userAddress}`),
-      32
-    );
-  }
-
-  // SSH Parola ile girenler için deterministik tohum
-  static deriveSeedFromPassword(password, userAddress) {
-    return crypto.scryptSync(password, `salt:${userAddress}`, 32);
-  }
-
   // --- 3. POST-QUANTUM KEM / X25519 KEM SARMALAMA ---
   static generateKemKeyPair() {
     if (this.HAS_ML_KEM) {
@@ -76,6 +114,7 @@ export class CryptoHelper {
       });
     }
 
+    console.warn(`\x1b[33m${I18n.t('CRYPTO_FALLBACK_X25519_WARN')}\x1b[0m`);
     return crypto.generateKeyPairSync('x25519', {
       publicKeyEncoding: { type: 'spki', format: 'pem' },
       privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
@@ -84,8 +123,6 @@ export class CryptoHelper {
 
   static encapsulateKey(remotePublicKeyPem) {
     const pubKey = crypto.createPublicKey(remotePublicKeyPem);
-
-    // Anahtar X25519 mu yoksa ML-KEM mi?
     const isX25519 = pubKey.asymmetricKeyType === 'x25519';
 
     if (!isX25519 && this.HAS_ML_KEM) {
@@ -96,7 +133,6 @@ export class CryptoHelper {
       };
     }
 
-    // X25519 Diffie-Hellman Encapsulation
     const ephemeral = crypto.generateKeyPairSync('x25519');
     const secret = crypto.diffieHellman({ privateKey: ephemeral.privateKey, publicKey: pubKey });
     const ephemPubDer = ephemeral.publicKey.export({ type: 'spki', format: 'der' });
@@ -114,7 +150,6 @@ export class CryptoHelper {
       return crypto.decapsulate(privKey, encBuf);
     }
 
-    // X25519 Diffie-Hellman Decapsulation
     const remotePubKey = crypto.createPublicKey({ key: encBuf, format: 'der', type: 'spki' });
     return crypto.diffieHellman({ privateKey: privKey, publicKey: remotePubKey });
   }
@@ -161,29 +196,116 @@ export class CryptoHelper {
     }
   }
 
-  // --- 5. PAROLA HASHLEME (SCRYPT) ---
+  // OpenSSH ssh-ed25519 formatını ayrıştırır ve test eder
+  static parseAndValidateOpenSshKey(keyString) {
+    if (!keyString || typeof keyString !== 'string') {
+      throw new Error(I18n.t('CRYPTO_INVALID_KEY_FORMAT'));
+    }
+
+    const normalized = keyString.replace(/\r?\n|\r/g, ' ').trim();
+    const parts = normalized.split(/\s+/);
+
+    let base64Blob = '';
+    if (parts[0] === 'ssh-ed25519' && parts[1]) {
+      base64Blob = parts[1];
+    } else if (parts[0].length > 40 && !parts[0].startsWith('ssh-')) {
+      base64Blob = parts[0];
+    } else {
+      throw new Error(I18n.t('CRYPTO_ONLY_ED25519_SUPPORTED'));
+    }
+
+    const rawBuffer = Buffer.from(base64Blob, 'base64');
+    if (rawBuffer.length < 32) {
+      throw new Error(I18n.t('CRYPTO_KEY_TOO_SHORT'));
+    }
+
+    let rawEdPub = null;
+    try {
+      if (rawBuffer.includes(Buffer.from('ssh-ed25519'))) {
+        const typeLen = rawBuffer.readUInt32BE(0);
+        const keyOffset = 4 + typeLen;
+        const keyLen = rawBuffer.readUInt32BE(keyOffset);
+        rawEdPub = rawBuffer.subarray(keyOffset + 4, keyOffset + 4 + keyLen);
+      } else if (rawBuffer.length === 32) {
+        rawEdPub = rawBuffer;
+      }
+    } catch {
+      throw new Error(I18n.t('CRYPTO_WIRE_FORMAT_ERROR'));
+    }
+
+    if (!rawEdPub || rawEdPub.length !== 32) {
+      throw new Error(I18n.t('CRYPTO_ED25519_LENGTH_ERROR'));
+    }
+
+    try {
+      const spkiHeader = Buffer.from('302a300506032b6570032100', 'hex');
+      const der = Buffer.concat([spkiHeader, rawEdPub]);
+      const pubKeyObj = crypto.createPublicKey({ key: der, format: 'der', type: 'spki' });
+
+      if (pubKeyObj.asymmetricKeyType !== 'ed25519') {
+        throw new Error(I18n.t('CRYPTO_NOT_ED25519_TYPE'));
+      }
+    } catch (err) {
+      throw new Error(I18n.t('CRYPTO_VERIFICATION_FAILED', { error: err.message }));
+    }
+
+    return {
+      algo: 'ssh-ed25519',
+      rawKey: rawEdPub,
+      saltPart: rawEdPub,
+      base64: rawEdPub.toString('base64'),
+      fingerprint: crypto.createHash('sha256').update(rawEdPub).digest('base64').replace(/=+$/, '')
+    };
+  }
+
   static async hashPassword(password) {
     const salt = crypto.randomBytes(16).toString('hex');
     return new Promise((resolve, reject) => {
-      crypto.scrypt(password, salt, 64, (err, derivedKey) => {
-        if (err) reject(err);
+      crypto.scrypt(password, salt, 64, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (err, derivedKey) => {
+        if (err) return reject(err);
         resolve(`${salt}:${derivedKey.toString('hex')}`);
       });
     });
   }
 
-  static async verifyPassword(password, storedHash) {
-    const [salt, key] = storedHash.split(':');
-    if (!salt || !key) return false;
+  // --- 5. PAROLA DOĞRULAMA (TELNET / FALLBACK) ---
+  static async verifyPassword(password, storedHash, clientRawPub = null, nodeAddress = '') {
+    if (!storedHash) return false;
 
-    return new Promise((resolve) => {
-      crypto.scrypt(password, salt, 64, (err, derivedKey) => {
-        if (err) return resolve(false);
-        const keyBuffer = Buffer.from(key, 'hex');
-        const match = crypto.timingSafeEqual(keyBuffer, derivedKey);
-        resolve(match);
+    if (storedHash.includes(':') && !storedHash.startsWith('{')) {
+      const [salt, key] = storedHash.split(':');
+      if (!salt || !key) return false;
+
+      return new Promise((resolve) => {
+        crypto.scrypt(password, salt, 64, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (err, derivedKey) => {
+          if (err) return resolve(false);
+          const keyBuffer = Buffer.from(key, 'hex');
+          const match = crypto.timingSafeEqual(keyBuffer, derivedKey);
+          resolve(match);
+        });
       });
-    });
+    }
+
+    if (storedHash.startsWith('{')) {
+      try {
+        let pubBuf = null;
+        if (Buffer.isBuffer(clientRawPub)) {
+          pubBuf = clientRawPub;
+        } else if (typeof clientRawPub === 'string' && clientRawPub.length > 0) {
+          pubBuf = Buffer.from(clientRawPub, 'base64');
+        }
+
+        if (!pubBuf || pubBuf.length < 32) return false;
+
+        const candidateSeed = this.deriveVaultSeed(password, pubBuf, nodeAddress);
+        const tokenEncrypted = JSON.parse(storedHash);
+        return this.verifyVaultAuthToken(tokenEncrypted, candidateSeed);
+      } catch {
+        return false;
+      }
+    }
+
+    return false;
   }
 
   static generateRandomKey(bytes = 32) {

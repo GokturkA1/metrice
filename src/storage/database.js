@@ -86,6 +86,27 @@ export class Database {
         if (!profileInfo.some((col) => col.name === 'kem_public_key')) {
           this.db.exec("ALTER TABLE profiles ADD COLUMN kem_public_key TEXT DEFAULT '';");
         }
+        if (!profileInfo.some((col) => col.name === 'allow_telnet')) {
+          this.db.exec("ALTER TABLE profiles ADD COLUMN allow_telnet INTEGER DEFAULT 0;");
+        }
+
+        if (!profileInfo.some((col) => col.name === 'public_keys')) {
+          this.db.exec("ALTER TABLE profiles ADD COLUMN public_keys TEXT DEFAULT '[]';");
+          this.db.exec(`
+            UPDATE profiles 
+            SET public_keys = json_array(public_key) 
+            WHERE public_key IS NOT NULL AND public_key != '' AND public_keys = '[]';
+          `);
+        }
+
+        // ML-DSA-44 Düğüm Kimliği Sütunları
+        const identityInfo = this.db.prepare('PRAGMA table_info(node_identity)').all();
+        if (!identityInfo.some((col) => col.name === 'mldsa_private_key')) {
+          this.db.exec("ALTER TABLE node_identity ADD COLUMN mldsa_private_key TEXT DEFAULT '';");
+        }
+        if (!identityInfo.some((col) => col.name === 'mldsa_public_key')) {
+          this.db.exec("ALTER TABLE node_identity ADD COLUMN mldsa_public_key TEXT DEFAULT '';");
+        }
       } catch (migErr) {
         log.warn(I18n.t('DB_MIGRATION_WARN', { error: migErr.message }));
       }
@@ -164,7 +185,7 @@ export class Database {
   }
 
   getUserProfile(userAddress) {
-    const stmt = this.db.prepare('SELECT contacts, history, password_hash, public_key, kem_public_key FROM profiles WHERE user_address = ?');
+    const stmt = this.db.prepare('SELECT contacts, history, password_hash, public_key, kem_public_key, allow_telnet, public_keys FROM profiles WHERE user_address = ?');
     const row = stmt.get(userAddress);
 
     const defaultChannel = I18n.t('DEFAULT_CHANNEL_NAME');
@@ -176,10 +197,22 @@ export class Database {
         history: [],
         passwordHash: '',
         publicKey: '',
-        kemPublicKey: ''
+        publicKeys: [],
+        kemPublicKey: '',
+        allowTelnet: false
       };
       this.updateUserProfile(userAddress, defaultProfile.contacts, defaultProfile.history);
       return defaultProfile;
+    }
+
+    let publicKeys = [];
+    try {
+      publicKeys = JSON.parse(row.public_keys || '[]');
+    } catch {
+      publicKeys = [];
+    }
+    if (publicKeys.length === 0 && row.public_key) {
+      publicKeys.push(row.public_key);
     }
 
     try {
@@ -188,11 +221,37 @@ export class Database {
         history: JSON.parse(row.history),
         passwordHash: row.password_hash || '',
         publicKey: row.public_key || '',
-        kemPublicKey: row.kem_public_key || ''
+        publicKeys,
+        kemPublicKey: row.kem_public_key || '',
+        allowTelnet: row.allow_telnet === 1
       };
     } catch {
-      return { contacts: [systemConsole, defaultChannel], history: [], passwordHash: '', publicKey: '', kemPublicKey: '' };
+      return { contacts: [systemConsole, defaultChannel], history: [], passwordHash: '', publicKey: '', publicKeys: [], kemPublicKey: '', allowTelnet: false };
     }
+  }
+
+  addUserPublicKey(userAddress, base64Key) {
+    const profile = this.getUserProfile(userAddress);
+    const keys = new Set(profile.publicKeys || []);
+    keys.add(base64Key);
+    const updated = Array.from(keys);
+
+    const stmt = this.db.prepare('UPDATE profiles SET public_keys = ?, public_key = ? WHERE user_address = ?');
+    stmt.run(JSON.stringify(updated), updated[0] || '', userAddress);
+  }
+
+  removeUserPublicKey(userAddress, base64Key) {
+    const profile = this.getUserProfile(userAddress);
+    const updated = (profile.publicKeys || []).filter((k) => k !== base64Key);
+
+    const stmt = this.db.prepare('UPDATE profiles SET public_keys = ?, public_key = ? WHERE user_address = ?');
+    stmt.run(JSON.stringify(updated), updated[0] || '', userAddress);
+    return updated.length < profile.publicKeys.length;
+  }
+
+  setUserTelnetAccess(userAddress, allow) {
+    const stmt = this.db.prepare('UPDATE profiles SET allow_telnet = ? WHERE user_address = ?');
+    stmt.run(allow ? 1 : 0, userAddress);
   }
 
   updateUserProfile(userAddress, contacts, history) {
