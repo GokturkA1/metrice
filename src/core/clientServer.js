@@ -200,7 +200,7 @@ export class ClientServer {
             const mem = process.memoryUsage();
             const rssMB = (mem.rss / 1024 / 1024).toFixed(1);
             const peers = this.federation.peerManager ? this.federation.peerManager.getAllPeers() : [];
-            return { uptime: `${mins}m`, rss: mem, peers };
+            return { uptime: `${mins}m`, rss: rssMB, peers };
           },
           () => this.commands.getAllUnique().map((c) => c.name)
         );

@@ -578,7 +578,7 @@ function createTelnetSession(host, port, username, password = SUITE_CONFIG.defau
         return;
       }
 
-      if (totalText.includes('MESH |') || totalText.includes('Konsol/Odalar') || totalText.includes('Pencere:')) {
+      if (totalText.includes('METRICE |') || totalText.includes('Konsol/Odalar') || totalText.includes('Pencere:')) {
         clearTimeout(timer);
         resolve({
           socket,

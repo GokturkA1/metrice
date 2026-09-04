@@ -1,22 +1,19 @@
-# Bağımlılıklar
-node_modules/
-
-# SQLite Veritabanı ve WAL dosyaları
-*.db
-*.db-wal
-*.db-shm
-
-# Dinamik Eş ve Durum JSON Dosyaları
+# Runtime and Database
+data_*.db*
 peers_*.json
-data_*.json
+*.db
+*.db-shm
+*.db-wal
+
+# Dump & Diagnostic Scripts
+dump.js
 project_dump.txt
 
-# Geçici Test Dosyaları
-data_test_*
-peers_test_*
+# Test Suites
+test_suite.js
+comprehensive_test_suite.js
+security_audit_suite.js
 
-# İşletim sistemi ve editör dosyaları
+# OS & Environment
 .DS_Store
-.vscode/
-.idea/
-*.log
+node_modules/

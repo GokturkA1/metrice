@@ -118,7 +118,7 @@ export default {
   ERR_OPERATION_FAILED: '[{context}] Hata yakalandı: {error}',
 
   // TUI Screen Texts & Prompts
-  TUI_WELCOME_BANNER: '=== NODE MESH TERMINAL ===\r\n',
+  TUI_WELCOME_BANNER: '=== METRICE TERMINAL ===\r\n',
   TUI_LOGIN_PROMPT: 'Kullanıcı adı girin (a-z, 0-9, _): ',
   TUI_INVALID_USERNAME: '\r\nGeçersiz ad! Sadece a-z, 0-9, _, - kullanın: ',
   TUI_USERNAME_TAKEN: '\r\nBu kullanıcı zaten bağlı! Başka bir ad seçin: ',
@@ -135,7 +135,7 @@ export default {
   TUI_SERVER_SHUTDOWN: '\r\n[SUNUCU] Sunucu kapatılıyor. Oturumunuz sonlandırıldı.\r\n',
   TUI_HINT_SIDEBAR_FOCUS: '[ODAK: LİSTE | Ok/Enter | Tab/Yaz: Giriş]',
   TUI_HINT_INPUT_FOCUS: '[Tab: Tamamla/Liste | PgUp/Dn: Kaydır]',
-  TUI_HEADER_TITLE: ' MESH | {address}',
+  TUI_HEADER_TITLE: ' METRICE | {address}',
   TUI_SIDEBAR_HEADER_FOCUSED: ' [Konsol/Odalar] ',
   TUI_SIDEBAR_HEADER_UNFOCUSED: ' Konsol/Odalar ',
   TUI_MEMBERS_HEADER: ' Üyeler ({count}) ',
@@ -154,7 +154,7 @@ export default {
   TUI_SYS_PANEL_NO_PEERS: '(Eş yok)',
 
   // System Messages & Notifications
-  SYS_WELCOME: 'Mesh Terminale Hoş Geldin! Giriş yapıldı: {address}',
+  SYS_WELCOME: 'Metrice Terminale Hoş Geldin! Giriş yapıldı: {address}',
   SYS_HELP_TIP: 'Komut listesi için /help yazabilirsin.',
   SYS_UNKNOWN_COMMAND: '[UYARI] Bilinmeyen komut: /{cmd}. Yardım için /help yazabilirsiniz.',
   SYS_COMMAND_ERROR: '[HATA] /{cmd} çalıştırılırken hata: {error}',

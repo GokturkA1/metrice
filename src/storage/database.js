@@ -98,15 +98,6 @@ export class Database {
             WHERE public_key IS NOT NULL AND public_key != '' AND public_keys = '[]';
           `);
         }
-
-        // ML-DSA-44 Düğüm Kimliği Sütunları
-        const identityInfo = this.db.prepare('PRAGMA table_info(node_identity)').all();
-        if (!identityInfo.some((col) => col.name === 'mldsa_private_key')) {
-          this.db.exec("ALTER TABLE node_identity ADD COLUMN mldsa_private_key TEXT DEFAULT '';");
-        }
-        if (!identityInfo.some((col) => col.name === 'mldsa_public_key')) {
-          this.db.exec("ALTER TABLE node_identity ADD COLUMN mldsa_public_key TEXT DEFAULT '';");
-        }
       } catch (migErr) {
         log.warn(I18n.t('DB_MIGRATION_WARN', { error: migErr.message }));
       }

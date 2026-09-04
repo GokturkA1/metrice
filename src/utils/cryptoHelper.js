@@ -8,7 +8,7 @@ export class CryptoHelper {
   static KEM_ALGO = 'ml-kem-768';
   static HAS_ML_KEM = typeof crypto.encapsulate === 'function' && typeof crypto.decapsulate === 'function';
 
-  static SENTINEL_TEXT = 'NODEMESH_VAULT_SENTINEL_V1';
+  static SENTINEL_TEXT = 'METRICE_VAULT_SENTINEL_V1';
 
   // --- KUANTUM GÜVENLİK KONTROLÜ ---
   static verifyQuantumSafePosture() {
@@ -65,8 +65,8 @@ export class CryptoHelper {
     const rawArrayBuffer = crypto.hkdfSync(
       'sha256',
       scryptKey,
-      Buffer.from(`nodemesh-vault-salt:${nodeAddress}`),
-      Buffer.from('nodemesh-vault-seed-v2'),
+      Buffer.from(`metrice-vault-salt:${nodeAddress}`),
+      Buffer.from('metrice-vault-seed-v2'),
       32
     );
 

@@ -100,7 +100,7 @@ function connectTelnetClient(host, port, username, timeoutMs = 3000) {
         socket.write(`${username}\r\n`);
       }
       // TUI çizimi başladığında giriş başarılıdır
-      if (incoming.includes('MESH |') || incoming.includes('Pencere:')) {
+      if (incoming.includes('METRICE |') || incoming.includes('Pencere:')) {
         clearTimeout(timer);
         resolve(socket);
       }

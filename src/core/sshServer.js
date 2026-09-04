@@ -50,7 +50,7 @@ class SshClientConnection extends EventEmitter {
     this.state = 'IDENT';
     this.inBuffer = Buffer.alloc(0);
     this.clientVersion = '';
-    this.serverVersion = 'SSH-2.0-NodeMesh_ZeroDep_1.0';
+    this.serverVersion = 'SSH-2.0-Metrice_1.0';
 
     this.clientKexPayload = null;
     this.serverKexPayload = null;
