@@ -574,10 +574,11 @@ export class ClientServer {
 
       socket.on('close', () => {
         if (userAddress && session) {
-          this.db.updateUserProfile(userAddress, session.contacts, session.history);
-          this.sessions.delete(userAddress);
+          const exitingUser = userAddress;
+          this.db.updateUserProfile(exitingUser, session.contacts, session.history);
+          this.sessions.delete(exitingUser);
           this.notifyAllSessionsRender();
-          this.federation.broadcastPresence();
+          this.federation.broadcastUserOffline(exitingUser);
         }
         log.info(I18n.t('CLIENT_CONN_CLOSED', { addr: clientAddr }));
       });

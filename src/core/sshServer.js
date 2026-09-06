@@ -363,6 +363,19 @@ class SshClientConnection extends EventEmitter {
         this.channelRemoteWindow += addBytes;
         break;
       }
+
+      case SSH_MSG.CHANNEL_EOF:
+      case SSH_MSG.CHANNEL_CLOSE: {
+        this.cleanup();
+        if (this.socket && !this.socket.destroyed) {
+          const w = new SshPacketWriter();
+          w.writeByte(SSH_MSG.CHANNEL_CLOSE);
+          w.writeUInt32(this.channelRemoteId || 0);
+          this.sendPacket(w.toBuffer());
+          this.socket.end();
+        }
+        break;
+      }
     }
   }
 
@@ -964,10 +977,11 @@ class SshClientConnection extends EventEmitter {
 
   cleanup() {
     if (this.authenticatedUser && this.session) {
-      this.db.updateUserProfile(this.authenticatedUser, this.session.contacts, this.session.history);
-      this.clientServer.sessions.delete(this.authenticatedUser);
+      const exitingUser = this.authenticatedUser;
+      this.db.updateUserProfile(exitingUser, this.session.contacts, this.session.history);
+      this.clientServer.sessions.delete(exitingUser);
       this.clientServer.notifyAllSessionsRender();
-      this.clientServer.federation.broadcastPresence();
+      this.clientServer.federation.broadcastUserOffline(exitingUser);
       this.session = null;
       this.authenticatedUser = null;
     }

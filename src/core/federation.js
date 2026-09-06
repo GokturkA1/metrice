@@ -101,8 +101,8 @@ class SecureChannel extends EventEmitter {
     }
   }
 
-  initSocketHandlers() {
-    this.socket.on('data', (chunk) => {
+  async initSocketHandlers() {
+    this.socket.on('data', async (chunk) => {
       this.buffer += chunk.toString();
       const lines = this.buffer.split('\n');
       this.buffer = lines.pop();
@@ -148,7 +148,7 @@ class SecureChannel extends EventEmitter {
     this.socket.write(JSON.stringify(payload) + '\n');
   }
 
-  handleFrame(frame) {
+  async handleFrame(frame) {
     // 1. HANDSHAKE_INIT
     if (frame.type === 'HANDSHAKE_INIT') {
       const remoteIp = this.socket.remoteAddress || '';
@@ -158,7 +158,7 @@ class SecureChannel extends EventEmitter {
         return;
       }
 
-      if (!(await validatePeerIp(frame.nodeAddress))) {
+      if (!(await this.validatePeerIp(frame.nodeAddress))) {
         log.warn(I18n.t('FED_IP_SPOOFING_DETECTED', { declared: frame.nodeAddress, remote: this.socket.remoteAddress }));
         this.socket.destroy();
         return;
@@ -191,6 +191,7 @@ class SecureChannel extends EventEmitter {
         type: 'HANDSHAKE_REPLY',
         nodeAddress: this.myIdentity.nodeAddress,
         identityPublicKey: this.myIdentity.identityKeyPair.publicKey,
+        kemPublicKey: this.myIdentity.kemKeyPair.publicKey,
         encapsulatedKey,
         nonce: frame.nonce
       });
@@ -201,6 +202,7 @@ class SecureChannel extends EventEmitter {
         type: 'HANDSHAKE_REPLY',
         nodeAddress: this.myIdentity.nodeAddress,
         identityPublicKey: this.myIdentity.identityKeyPair.publicKey,
+        kemPublicKey: this.myIdentity.kemKeyPair.publicKey,
         encapsulatedKey,
         nonce: frame.nonce,
         sig: replySig
@@ -217,6 +219,7 @@ class SecureChannel extends EventEmitter {
         type: 'HANDSHAKE_REPLY',
         nodeAddress: frame.nodeAddress,
         identityPublicKey: frame.identityPublicKey,
+        kemPublicKey: frame.kemPublicKey,
         encapsulatedKey: frame.encapsulatedKey,
         nonce: frame.nonce
       });
@@ -230,7 +233,8 @@ class SecureChannel extends EventEmitter {
 
       this.peerNodeAddress = frame.nodeAddress;
       this.peerIdentityKey = frame.identityPublicKey;
-      this.db.saveTrustedNodeKey(this.peerNodeAddress, this.peerIdentityKey, this.peerIdentityKey);
+      this.peerKemKey = frame.kemPublicKey;
+      this.db.saveTrustedNodeKey(this.peerNodeAddress, this.peerIdentityKey, this.peerKemKey);
 
       const sharedSecret = CryptoHelper.decapsulateKey(
         this.myIdentity.kemKeyPair.privateKey,
@@ -379,12 +383,17 @@ export class FederationEngine extends EventEmitter {
   getAllOnlineUsers() {
     const now = Date.now();
     const activeRemote = [];
+    let removedAny = false;
     for (const [userAddr, data] of this.remoteOnlineUsers.entries()) {
       if (now - data.lastSeen < 25000) {
         activeRemote.push(userAddr);
       } else {
         this.remoteOnlineUsers.delete(userAddr);
+        removedAny = true;
       }
+    }
+    if (removedAny) {
+      this.emit('presence_change');
     }
     const localState = this.getLocalStateFn ? this.getLocalStateFn() : { users: [] };
     return Array.from(new Set([...localState.users, ...activeRemote]));
@@ -461,14 +470,16 @@ export class FederationEngine extends EventEmitter {
       this.seenMessages.add(payload.id);
 
       if (payload.from && payload.from.startsWith('@')) {
-        const existing = this.remoteOnlineUsers.get(payload.from) || { channels: [] };
-        existing.lastSeen = Date.now();
-        this.remoteOnlineUsers.set(payload.from, existing);
-        this.emit('presence_change');
-
         const parsedSender = AddressHelper.parse(payload.from);
-        if (parsedSender && !parsedSender.isLocal && parsedSender.host && parsedSender.port) {
-          this.peerManager.addOrUpdate(`${parsedSender.host}:${parsedSender.port}`, true);
+        if (parsedSender && !parsedSender.isLocal) {
+          const existing = this.remoteOnlineUsers.get(payload.from) || { channels: [] };
+          existing.lastSeen = Date.now();
+          this.remoteOnlineUsers.set(payload.from, existing);
+          this.emit('presence_change');
+
+          if (parsedSender.host && parsedSender.port) {
+            this.peerManager.addOrUpdate(`${parsedSender.host}:${parsedSender.port}`, true);
+          }
         }
       }
 
@@ -512,28 +523,60 @@ export class FederationEngine extends EventEmitter {
     // 3. Yazıyor (Typing), Presence & Gossip
     else if (payload.type === 'TYPING') {
       if (payload.from && payload.from.startsWith('@')) {
-        const existing = this.remoteOnlineUsers.get(payload.from) || { channels: [] };
-        existing.lastSeen = Date.now();
-        this.remoteOnlineUsers.set(payload.from, existing);
+        const parsedSender = AddressHelper.parse(payload.from);
+        if (parsedSender && !parsedSender.isLocal) {
+          const existing = this.remoteOnlineUsers.get(payload.from) || { channels: [] };
+          existing.lastSeen = Date.now();
+          this.remoteOnlineUsers.set(payload.from, existing);
+        }
       }
       this.emit('typing', payload);
+    } else if (payload.type === 'USER_OFFLINE') {
+      if (payload.user && this.remoteOnlineUsers.has(payload.user)) {
+        this.remoteOnlineUsers.delete(payload.user);
+        this.emit('presence_change');
+      }
+      channel.writePayload({ status: 'ack', type: 'USER_OFFLINE', user: payload.user });
     } else if (payload.type === 'PRESENCE_SYNC') {
+      const sourceNode = payload.sourceNode || channel.peerNodeAddress;
+      const reportedUsers = new Set();
+
       if (Array.isArray(payload.memberships)) {
         payload.memberships.forEach((m) => {
           if (m.user) {
-            this.remoteOnlineUsers.set(m.user, {
-              lastSeen: Date.now(),
-              channels: m.channels || [],
-              isSsh: !!m.isSsh,
-              kemPublicKey: m.kemPublicKey || ''
-            });
+            const parsed = AddressHelper.parse(m.user);
+            if (parsed && !parsed.isLocal) {
+              reportedUsers.add(m.user);
+              this.remoteOnlineUsers.set(m.user, {
+                lastSeen: Date.now(),
+                channels: m.channels || [],
+                isSsh: !!m.isSsh,
+                kemPublicKey: m.kemPublicKey || ''
+              });
+            }
           }
         });
-        this.emit('presence_change');
       }
 
+      if (sourceNode) {
+        for (const [userAddr] of this.remoteOnlineUsers.entries()) {
+          const parsed = AddressHelper.parse(userAddr);
+          if (parsed && `${parsed.host}:${parsed.port}` === sourceNode) {
+            if (!reportedUsers.has(userAddr)) {
+              this.remoteOnlineUsers.delete(userAddr);
+            }
+          }
+        }
+      }
+
+      this.emit('presence_change');
+
       const myState = this.getLocalStateFn ? this.getLocalStateFn() : { memberships: [] };
-      channel.writePayload({ type: 'PRESENCE_ACK', memberships: myState.memberships });
+      channel.writePayload({
+        type: 'PRESENCE_ACK',
+        sourceNode: this.nodeAddress,
+        memberships: myState.memberships
+      });
     } else if (payload.type === 'GOSSIP_DISCOVERY') {
       if (payload.selfNode && payload.selfNode.includes(':')) this.peerManager.addOrUpdate(payload.selfNode, true);
       if (Array.isArray(payload.peers)) {
@@ -677,25 +720,67 @@ export class FederationEngine extends EventEmitter {
       try {
         const res = await this.sendPacket(host, port, {
           type: 'PRESENCE_SYNC',
+          sourceNode: this.nodeAddress,
           memberships: myState.memberships
         });
 
         if (res && res.type === 'PRESENCE_ACK' && Array.isArray(res.memberships)) {
+          const ackSourceNode = res.sourceNode || `${host}:${port}`;
+          const ackUsers = new Set();
+
           res.memberships.forEach((m) => {
             if (m.user) {
-              this.remoteOnlineUsers.set(m.user, {
-                lastSeen: Date.now(),
-                channels: m.channels || [],
-                isSsh: !!m.isSsh,
-                kemPublicKey: m.kemPublicKey || ''
-              });
+              const parsed = AddressHelper.parse(m.user);
+              if (parsed && !parsed.isLocal) {
+                ackUsers.add(m.user);
+                this.remoteOnlineUsers.set(m.user, {
+                  lastSeen: Date.now(),
+                  channels: m.channels || [],
+                  isSsh: !!m.isSsh,
+                  kemPublicKey: m.kemPublicKey || ''
+                });
+              }
             }
           });
+
+          if (ackSourceNode) {
+            for (const [userAddr] of this.remoteOnlineUsers.entries()) {
+              const parsed = AddressHelper.parse(userAddr);
+              if (parsed && `${parsed.host}:${parsed.port}` === ackSourceNode) {
+                if (!ackUsers.has(userAddr)) {
+                  this.remoteOnlineUsers.delete(userAddr);
+                }
+              }
+            }
+          }
+
           this.emit('presence_change');
         }
       } catch {
         this.peerManager.addOrUpdate(peer, false);
       }
+    }
+  }
+
+  async broadcastUserOffline(userAddress) {
+    if (!userAddress) return;
+    this.remoteOnlineUsers.delete(userAddress);
+    this.emit('presence_change');
+
+    const peers = this.peerManager.getAllPeers();
+    const payload = {
+      type: 'USER_OFFLINE',
+      user: userAddress,
+      nodeAddress: this.nodeAddress
+    };
+
+    for (const peer of peers) {
+      if (!peer || !peer.includes(':')) continue;
+      const [host, portStr] = peer.split(':');
+      const port = parseInt(portStr, 10);
+      if (!host || isNaN(port)) continue;
+
+      this.sendPacket(host, port, payload).catch(() => {});
     }
   }
 
