@@ -111,7 +111,7 @@ class SecureChannel extends EventEmitter {
         if (!line.trim()) continue;
         try {
           const frame = JSON.parse(line);
-          this.handleFrame(frame);
+          await this.handleFrame(frame);
         } catch (err) {
           log.warn(I18n.t('FED_SECURE_CHANNEL_PARSE_ERR', { error: err.message }));
         }
@@ -158,7 +158,7 @@ class SecureChannel extends EventEmitter {
         return;
       }
 
-      if (!this.validatePeerIp(frame.nodeAddress)) {
+      if (!(await validatePeerIp(frame.nodeAddress))) {
         log.warn(I18n.t('FED_IP_SPOOFING_DETECTED', { declared: frame.nodeAddress, remote: this.socket.remoteAddress }));
         this.socket.destroy();
         return;
@@ -264,7 +264,7 @@ class SecureChannel extends EventEmitter {
     }
   }
 
-  validatePeerIp(declaredNodeAddress) {
+  async validatePeerIp(declaredNodeAddress) {
     if (!declaredNodeAddress || !declaredNodeAddress.includes(':')) return false;
     const [declaredHost] = declaredNodeAddress.split(':');
     const rawRemote = this.socket.remoteAddress || '';
@@ -296,7 +296,17 @@ class SecureChannel extends EventEmitter {
     }
 
     // 5. Doğrudan IP eşleşmesi
-    return declaredHost === cleanRemote;
+    if (declaredHost === cleanRemote) {
+      return true;
+    }
+
+    // 6. DNS Çözümleme (Domain -> IP Eşleşmesi)
+    try {
+      const resolved = await dns.lookup(declaredHost, { all: true });
+      return resolved.some((entry) => entry.address === cleanRemote);
+    } catch {
+      return false;
+    }
   }
 
   markReady() {
