@@ -17,3 +17,5 @@ security_audit_suite.js
 # OS & Environment
 .DS_Store
 node_modules/
+
+ARCHITECT.md
