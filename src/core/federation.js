@@ -1,4 +1,5 @@
 import net from 'node:net';
+import dns from 'node:dns/promises';
 import EventEmitter from 'node:events';
 import { CONFIG } from '../config/index.js';
 import { Logger } from '../utils/logger.js';
@@ -269,28 +270,32 @@ class SecureChannel extends EventEmitter {
     const rawRemote = this.socket.remoteAddress || '';
     const cleanRemote = rawRemote.replace('::ffff:', '');
 
-    // 1. Loopback toleransı
+    // 1. Kendi adresi veya genel sunucu adı toleransı
+    if (declaredHost === CONFIG.serverName) {
+      return true;
+    }
+
+    // 2. Loopback toleransı
     const isLoopback = (ip) => ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
     if (isLoopback(declaredHost) && isLoopback(cleanRemote)) {
       return true;
     }
 
-    // 2. Özel Ağ / Intranet (RFC 1918) & Docker Ağları Toleransı (10.x, 192.168.x, 172.16-31.x)
+    // 3. Özel Ağ / Intranet (RFC 1918) toleransı
     const isPrivateSubnet = (ip) => {
       return /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(ip);
     };
 
     if (isPrivateSubnet(cleanRemote)) {
-      // Intranet/Docker/VPN ortamında iç IP'ler üzerinden gelen el sıkışmaları meşru kabul edilir
       return true;
     }
 
-    // 3. Reverse proxy / Güvenilen Proxy ortamı bayrağı
+    // 4. Reverse proxy bayrağı
     if (process.env.TRUST_PROXY === 'true') {
       return true;
     }
 
-    // 4. Doğrudan genel IP eşleşmesi
+    // 5. Doğrudan IP eşleşmesi
     return declaredHost === cleanRemote;
   }
 
@@ -609,6 +614,7 @@ export class FederationEngine extends EventEmitter {
       this.connectionPool.set(key, secureChannel);
 
       secureChannel.on('ready', () => {
+        rawSocket.setTimeout(0);
         log.info(I18n.t('FED_CONNECTED', { host, port }));
         resolve(secureChannel);
       });

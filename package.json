@@ -1,6 +1,6 @@
 {
-  "name": "terminal-mesh",
-  "version": "1.0.0",
+  "name": "metrice",
+  "version": "1.2.1",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

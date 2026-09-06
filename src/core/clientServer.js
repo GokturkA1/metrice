@@ -379,10 +379,29 @@ export class ClientServer {
             }
 
             if (action.type === 'PASTE_COMPLETE') {
-              const pastedText = action.content;
+              const rawText = action.content || '';
+              const trimmed = rawText.trim();
               const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
-              if (pastedText && session.activeTarget && session.activeTarget !== systemConsole) {
-                await this.handleOutboundMessage(session, userAddress, session.activeTarget, pastedText, false, true);
+
+              // 1. Komut veya tek satırlık metin yapıştırıldı
+              if (trimmed.startsWith('/') || !rawText.includes('\n')) {
+                const singleLine = trimmed.replace(/[\r\n]+/g, ' ');
+                if (session && session.focus === 'input') {
+                  session.inputBuffer += singleLine;
+                  session.cursorIndex = session.inputBuffer.length;
+                  session.renderInputOnly();
+                }
+              } 
+              // 2. Çok satırlı kod veya metin bloğu yapıştırıldı
+              else if (session && session.activeTarget && session.activeTarget !== systemConsole) {
+                await this.handleOutboundMessage(
+                  session,
+                  userAddress,
+                  session.activeTarget,
+                  rawText,
+                  false,
+                  true // isSnippet = true (girintileri ve satır sonlarını korur)
+                );
                 session.emit('request_render');
               }
               continue;

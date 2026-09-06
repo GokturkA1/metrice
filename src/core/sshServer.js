@@ -207,6 +207,11 @@ class SshClientConnection extends EventEmitter {
   }
 
   sendPacket(payload) {
+    // Soket kapanmış veya sonlandırılmışsa yazmaya çalışma
+    if (!this.socket || this.socket.destroyed || !this.socket.writable || this.socket.writableEnded) {
+      return;
+    }
+
     const blockSize = 16;
     let paddingLen = blockSize - ((4 + 1 + payload.length) % blockSize);
     if (paddingLen < 4) paddingLen += blockSize;
@@ -660,6 +665,10 @@ class SshClientConnection extends EventEmitter {
 
     const virtualSocket = new EventEmitter();
     virtualSocket.write = (data) => {
+      if (!this.socket || this.socket.destroyed || !this.socket.writable || this.socket.writableEnded) {
+        return false;
+      }
+
       const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
       const w = new SshPacketWriter();
       w.writeByte(SSH_MSG.CHANNEL_DATA);
@@ -668,8 +677,33 @@ class SshClientConnection extends EventEmitter {
       this.sendPacket(w.toBuffer());
       return true;
     };
-    virtualSocket.end = () => this.socket.end();
-    virtualSocket.destroy = () => this.socket.destroy();
+    
+    virtualSocket.end = (data) => {
+      if (!this.socket || this.socket.destroyed || !this.socket.writableEnded) {
+        // 1. Çıkış mesajını SSH paketi olarak gönder
+        if (data) {
+          virtualSocket.write(data);
+        }
+
+        // 2. Kopyalama modunu kapat ve temiz bir alt satıra geç
+        virtualSocket.write('\x1b[?2004l\r\n');
+
+        // 3. İstemcinin paketleri render etmesine fırsat verip soketi kapat
+        setTimeout(() => {
+          if (this.socket && !this.socket.destroyed) {
+            this.socket.end();
+          }
+        }, 50);
+      }
+    };
+
+    virtualSocket.destroy = () => {
+      if (this.socket && !this.socket.destroyed) {
+        this.socket.destroy();
+      }
+    };
+
+    virtualSocket.write('\x1b[?2004h');
 
     this.session = new TerminalSession(
       virtualSocket,
@@ -714,7 +748,7 @@ class SshClientConnection extends EventEmitter {
     this.clientServer.federation.broadcastPresence();
   }
 
-  handleChannelInput(buffer) {
+  async handleChannelInput(buffer) {
     if (!this.session) return;
     const actions = this.parser.parse(buffer);
 
@@ -725,10 +759,26 @@ class SshClientConnection extends EventEmitter {
       }
 
       if (action.type === 'PASTE_COMPLETE') {
-        const pastedText = action.content;
+        const rawText = action.content || '';
+        const trimmed = rawText.trim();
         const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
-        if (pastedText && this.session.activeTarget && this.session.activeTarget !== systemConsole) {
-          this.clientServer.handleOutboundMessage(this.session, this.authenticatedUser, this.session.activeTarget, pastedText, false, true);
+
+        if (trimmed.startsWith('/') || !rawText.includes('\n')) {
+          const singleLine = trimmed.replace(/[\r\n]+/g, ' ');
+          if (this.session.focus === 'input') {
+            this.session.inputBuffer += singleLine;
+            this.session.cursorIndex = this.session.inputBuffer.length;
+            this.session.renderInputOnly();
+          }
+        } else if (this.session.activeTarget && this.session.activeTarget !== systemConsole) {
+          await this.clientServer.handleOutboundMessage(
+            this.session,
+            this.authenticatedUser,
+            this.session.activeTarget,
+            rawText,
+            false,
+            true
+          );
           this.session.emit('request_render');
         }
         continue;
@@ -864,7 +914,7 @@ class SshClientConnection extends EventEmitter {
           this.session.pushHistory(input);
 
           if (input.startsWith('/')) {
-            this.clientServer.commands.execute(input, {
+            await this.clientServer.commands.execute(input, {
               session: this.session,
               socket: this.session.socket,
               db: this.db,
@@ -873,7 +923,12 @@ class SshClientConnection extends EventEmitter {
               registry: this.clientServer.commands,
               userAddress: this.authenticatedUser
             });
-            this.session.emit('request_render');
+
+            // Oturum /quit ile sonlandırıldıysa render isteme
+            if (this.socket && !this.socket.destroyed && !this.socket.writableEnded) {
+              this.session?.emit('request_render');
+            }
+
             break;
           }
 
@@ -884,7 +939,7 @@ class SshClientConnection extends EventEmitter {
           }
 
           if (this.session.activeTarget) {
-            this.clientServer.handleOutboundMessage(
+            await this.clientServer.handleOutboundMessage(
               this.session,
               this.authenticatedUser,
               this.session.activeTarget,
@@ -897,7 +952,11 @@ class SshClientConnection extends EventEmitter {
           break;
 
         case 'KEY_INTERRUPT':
-          this.socket.end(I18n.t('TUI_SESSION_CLOSED'));
+          if (this.session && this.session.socket) {
+            this.session.socket.end(I18n.t('TUI_SESSION_CLOSED'));
+          } else {
+            this.socket.end();
+          }
           break;
       }
     }
@@ -909,6 +968,8 @@ class SshClientConnection extends EventEmitter {
       this.clientServer.sessions.delete(this.authenticatedUser);
       this.clientServer.notifyAllSessionsRender();
       this.clientServer.federation.broadcastPresence();
+      this.session = null;
+      this.authenticatedUser = null;
     }
   }
 }

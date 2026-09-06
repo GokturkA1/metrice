@@ -1,5 +1,6 @@
 import dgram from 'node:dgram';
 import fs from 'node:fs';
+import os from 'node:os';
 import { CONFIG } from '../config/index.js';
 import { Logger } from '../utils/logger.js';
 import { I18n } from '../locales/i18n.js';
@@ -12,14 +13,54 @@ export class PeerManager {
     this.peers = new Map();
     this.udpSocket = null;
     this.broadcastPort = 41234;
+    this.selfNodeAddress = `${CONFIG.serverName}:${CONFIG.federationPort}`;
     this.loadPeers();
+  }
+
+  isSelfAddress(host, port) {
+    if (port !== CONFIG.federationPort) return false;
+
+    // 1. Alan adı, localhost ve döngüsel adresler
+    if (
+      host === CONFIG.serverName ||
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '::1' ||
+      host === '::ffff:127.0.0.1'
+    ) {
+      return true;
+    }
+
+    // 2. Makinenin tüm ağ kartlarındaki IP adresleri
+    try {
+      const interfaces = os.networkInterfaces();
+      for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name] || []) {
+          const clean = iface.address.replace('::ffff:', '');
+          if (clean === host || iface.address === host) {
+            return true;
+          }
+        }
+      }
+    } catch {}
+
+    return false;
   }
 
   loadPeers() {
     if (fs.existsSync(this.storagePath)) {
       try {
         const raw = JSON.parse(fs.readFileSync(this.storagePath, 'utf-8'));
-        raw.forEach(([addr, meta]) => this.peers.set(addr, meta));
+        raw.forEach(([addr, meta]) => {
+          if (!addr || !addr.includes(':')) return;
+          const [host, portStr] = addr.split(':');
+          const port = parseInt(portStr, 10);
+          
+          // Dosyada kalan eski kendi IP'lerini temizle
+          if (!this.isSelfAddress(host, port)) {
+            this.peers.set(addr, meta);
+          }
+        });
         log.info(I18n.t('PEER_CACHE_LOADED', { count: this.peers.size }));
       } catch {
         this.peers = new Map();
@@ -37,20 +78,19 @@ export class PeerManager {
   }
 
   addOrUpdate(peerAddr, success = true) {
-    const selfAddr = `${CONFIG.serverName}:${CONFIG.federationPort}`;
-    if (peerAddr === selfAddr || !peerAddr.includes(':')) return;
+    if (!peerAddr || !peerAddr.includes(':')) return;
 
-    // 1. Host & Port Validasyonu (Sybil ve Port Zehirleme Koruması)
     const [host, portStr] = peerAddr.split(':');
     const port = parseInt(portStr, 10);
     if (!host || isNaN(port) || port <= 0 || port > 65535) return;
 
-    // Ayrılmış veya yasaklı IP/broadcast adreslerini engelle
+    // Kendi IP veya domainimiz ise havuza ekleme (IP sızıntısını önler)
+    if (this.isSelfAddress(host, port)) return;
+
+    // Ayrılmış veya broadcast IP'leri engelle
     if (host === '0.0.0.0' || host === '255.255.255.255') return;
 
-    // 2. Maksimum Eş Havuzu Limiti (Sybil Flood Koruması - Max 250 Düğüm)
     if (this.peers.size >= 250 && !this.peers.has(peerAddr)) {
-      // En düşük skorlu eşi bul ve tahliye et
       let lowestKey = null;
       let minScore = Infinity;
       for (const [key, val] of this.peers.entries()) {
@@ -109,31 +149,38 @@ export class PeerManager {
     this.udpSocket.on('message', (msg, rinfo) => {
       try {
         const payload = JSON.parse(msg.toString());
+        // Kendi yaydığımız paketi geri aldığımızda yut
+        if (payload.nodeAddress === this.selfNodeAddress) {
+          return;
+        }
+
         if (payload.type === 'P2P_BEACON' && payload.port) {
-          const peerAddr = `${rinfo.address}:${payload.port}`;
-          this.addOrUpdate(peerAddr, true);
+          const cleanIp = rinfo.address.replace('::ffff:', '');
+          if (!this.isSelfAddress(cleanIp, payload.port)) {
+            const peerAddr = `${cleanIp}:${payload.port}`;
+            this.addOrUpdate(peerAddr, true);
+          }
         }
       } catch {}
     });
 
     this.udpSocket.bind(this.broadcastPort, () => {
-        try {
-            this.udpSocket.setBroadcast(true);
-        } catch {}
+      try {
+        this.udpSocket.setBroadcast(true);
+      } catch {}
 
-        log.info(I18n.t('PEER_LAN_ACTIVE', { port: this.broadcastPort }));
+      log.info(I18n.t('PEER_LAN_ACTIVE', { port: this.broadcastPort }));
 
-        // Açılışta hemen bir beacon at, ardından aralıklarla devam et
-        this.sendBeacon();
+      this.sendBeacon();
 
-        const scheduleBeacon = () => {
-            const interval = 3000 + Math.floor(Math.random() * 2000);
-            setTimeout(() => {
-                this.sendBeacon();
-                scheduleBeacon();
-            }, interval);
-        };
-        scheduleBeacon();
+      const scheduleBeacon = () => {
+        const interval = 4000 + Math.floor(Math.random() * 2000);
+        setTimeout(() => {
+          this.sendBeacon();
+          scheduleBeacon();
+        }, interval);
+      };
+      scheduleBeacon();
     });
   }
 
@@ -142,12 +189,12 @@ export class PeerManager {
     const payload = Buffer.from(
       JSON.stringify({
         type: 'P2P_BEACON',
+        nodeAddress: this.selfNodeAddress,
         port: CONFIG.federationPort,
         timestamp: Date.now()
       })
     );
 
-    // Hem LAN broadcast'e hem de yerel döngü portuna gönder
     this.udpSocket.send(payload, 0, payload.length, this.broadcastPort, '255.255.255.255', () => {});
     this.udpSocket.send(payload, 0, payload.length, this.broadcastPort, '127.0.0.1', () => {});
   }

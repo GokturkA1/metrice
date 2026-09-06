@@ -539,14 +539,16 @@ export class TerminalSession extends EventEmitter {
       const allFormattedLines = this.formatMessagesToLines(activeMessages, innerMidWidth - 2);
 
       const totalLines = allFormattedLines.length;
-      const maxScroll = Math.max(0, totalLines - (chatHeight - 2));
+      
+      const availableChatRows = this.height - 5; // Üst ve alt çerçeveler hariç net satır sayısı
+      const maxScroll = Math.max(0, totalLines - availableChatRows);
       this.scrollOffset = Math.min(this.scrollOffset, maxScroll);
 
       const endIdx = totalLines - this.scrollOffset;
       const startIdx = Math.max(0, endIdx - (chatHeight - 2));
       const visibleLines = allFormattedLines.slice(startIdx, endIdx);
 
-      for (let i = 1; i <= chatHeight - 2; i++) {
+      for (let i = 1; i <= availableChatRows; i++) {
         const frameIndex = 1 + i;
 
         let leftCell = ' '.repeat(innerLeftWidth);
