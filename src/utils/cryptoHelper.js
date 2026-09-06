@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { I18n } from '../locales/i18n.js';
+import { Base32 } from './base32.js';
 
 export class CryptoHelper {
   static AES_ALGO = 'aes-256-gcm';
@@ -30,6 +31,24 @@ export class CryptoHelper {
       publicKeyEncoding: { type: 'spki', format: 'pem' },
       privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
     });
+  }
+
+  /**
+   * Ed25519 açık anahtarından RFC 4648 Base32 türevi kalıcı NodeID üretir.
+   * NodeID = Base32(SHA256(Raw_Ed25519_PubKey))[0..16] (küçük harf, dolgusuz)
+   */
+  static deriveNodeId(publicKeyPemOrDer) {
+    let rawPub;
+    if (Buffer.isBuffer(publicKeyPemOrDer) && publicKeyPemOrDer.length === 32) {
+      rawPub = publicKeyPemOrDer;
+    } else {
+      const pubObj = typeof publicKeyPemOrDer === 'string'
+        ? crypto.createPublicKey(publicKeyPemOrDer)
+        : publicKeyPemOrDer;
+      rawPub = pubObj.export({ type: 'spki', format: 'der' }).subarray(-32);
+    }
+    const hash = crypto.createHash('sha256').update(rawPub).digest();
+    return Base32.encode(hash).slice(0, 16);
   }
 
   static sign(content, privateKeyPem) {
@@ -154,15 +173,27 @@ export class CryptoHelper {
     return crypto.diffieHellman({ privateKey: privKey, publicKey: remotePubKey });
   }
 
+  static normalizeKey(key) {
+    if (Buffer.isBuffer(key)) return key;
+    if (key instanceof ArrayBuffer || ArrayBuffer.isView(key)) return Buffer.from(key);
+    if (typeof key === 'string') {
+      if (key.length === 64) return Buffer.from(key, 'hex');
+      return Buffer.from(key, 'base64');
+    }
+    return Buffer.from(key);
+  }
+
   static deriveKey(sharedSecret, salt = 'mesh-default-salt', info = 'p2p-mesh-aes-key') {
     const saltBuf = Buffer.isBuffer(salt) ? salt : Buffer.from(salt);
-    return crypto.hkdfSync('sha256', sharedSecret, saltBuf, Buffer.from(info), 32);
+    const raw = crypto.hkdfSync('sha256', sharedSecret, saltBuf, Buffer.from(info), 32);
+    return Buffer.from(raw);
   }
 
   // --- 4. SİMETRİK ŞİFRELEME (AES-256-GCM) ---
   static encrypt(plaintext, keyBuffer) {
+    const key = this.normalizeKey(keyBuffer);
     const iv = crypto.randomBytes(this.IV_LENGTH);
-    const cipher = crypto.createCipheriv(this.AES_ALGO, keyBuffer, iv);
+    const cipher = crypto.createCipheriv(this.AES_ALGO, key, iv);
 
     const textBuffer = Buffer.from(plaintext, 'utf8');
     const encrypted = Buffer.concat([cipher.update(textBuffer), cipher.final()]);
@@ -177,9 +208,10 @@ export class CryptoHelper {
 
   static decrypt({ ciphertext, iv, authTag }, keyBuffer) {
     try {
+      const key = this.normalizeKey(keyBuffer);
       const decipher = crypto.createDecipheriv(
         this.AES_ALGO,
-        keyBuffer,
+        key,
         Buffer.from(iv, 'base64')
       );
 

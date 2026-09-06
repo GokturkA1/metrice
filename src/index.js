@@ -17,6 +17,7 @@ log.info(I18n.t('BOOTSTRAP_BANNER'));
 log.info(I18n.t('BOOTSTRAP_STARTING', { name: CONFIG.serverName }));
 log.info(I18n.t('BOOTSTRAP_FED_PORT', { port: CONFIG.federationPort }));
 log.info(I18n.t('BOOTSTRAP_CLIENT_PORT', { port: CONFIG.clientPort }));
+log.info(I18n.t('BOOTSTRAP_SSH_PORT', { port: `${CONFIG.sshPort} (${CONFIG.sshServerVersion})` }));
 log.info(I18n.t('BOOTSTRAP_LOG_LEVEL', { level: CONFIG.logLevel }));
 log.info(I18n.t('BOOTSTRAP_BANNER'));
 

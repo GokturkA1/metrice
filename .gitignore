@@ -19,3 +19,5 @@ security_audit_suite.js
 node_modules/
 
 ARCHITECT.md
+REPORT.txt
+v2_test_suite.js

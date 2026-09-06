@@ -1,69 +1,225 @@
-# Metrice
+# Metrice v2.0
 
-Metrice, harici paket bağımlılığı barındırmayan, tamamen Node.js çekirdek modülleri üzerine inşa edilmiş, kuantum sonrası kriptografi destekli P2P iletişim ve federasyon ağıdır. Sistem; terminal tabanlı çok panelli bir TUI, şifreli gossip federasyonu, yerel SSH-2 sunucusu ve WAL modunda çalışan SQLite veritabanı bileşenlerinden oluşur.
+Metrice, harici bağımlılık içermeyen (Zero External Dependencies), doğrudan Node.js çekirdek kütüphaneleri (`node:crypto`, `node:net`, `node:dgram`, `node:sqlite`, `node:dns`) üzerinde çalışan, kuantum sonrası kriptografi (Post-Quantum Cryptography) ve Tor benzeri çok katmanlı yönlendirme (Onion Routing) mimarisine sahip dağıtık eşler arası (P2P) ağ protokolüdür.
 
-## Temel Özellikler
+Sistem; NIST FIPS 203 ML-KEM-768 anahtar kapsülleme, Ed25519 tabanlı RFC 4648 Base32 düğüm kimliklendirmesi, AutoNAT konsensüsü, CGNAT arkasındaki uçlar için Rendezvous ters tünelleri ve yerleşik bellek içi SSH-2 sunucusu içermektedir.
 
-- Sıfır Bağımlılık: Harici npm paketi içermez. Yalnızca node:crypto, node:net, node:dgram ve node:sqlite gibi standart modüller kullanılır.
-- Post-Quantum Güvenlik: Federasyon katmanı ve SSH anahtar değişiminde ML-KEM-768 (Kyber) algoritması kullanılır.
-- Çift Katmanlı SSH-2 Sunucusu: Harici SSH sunucusu gerektirmeksizin yerel bellek üzerinde çalışan saf JavaScript SSH-2 uygulaması barındırır.
-- 2FA Ephemeral Vault: Scrypt ve HKDF ile donanım açık anahtarı ve parola üzerinden geçici oturum anahtarı türetimi sağlanır.
-- ACID Depolama: SQLite WAL modunda yerel mesajlaşma ve profil yönetimi sağlanır.
-- Çok Kanallı TUI: Telnet ve SSH üzerinden bağlanılabilen ANSI/VT100 uyumlu üç panelli konsol arayüzü sunar.
+---
+
+## Mimari ve Temel Bileşenler
+
+### 1. Düğüm Kimliği ve Kriptografik Adresleme
+- Her düğüm kalıcı bir Ed25519 anahtar çifti barındırır.
+- Açık anahtarın SHA-256 özetinin ilk 10 baytı (80 bit) RFC 4648 Base32 ile kodlanarak 16 karakterlik düğüm kimliği (`NodeID`) oluşturulur (`^[a-z2-7]{16}$`).
+- Ağ üzerindeki adresleme IP/Port bağımsız `.mesh` sanal alan adlarıyla sağlanır:
+  - Kullanıcı Adresi: `@kullanici:NodeID.mesh`
+  - Federe Kanal: `#kanal:NodeID.mesh`
+  - Küresel Ağ Kanalı: `#genel`
+
+### 2. AutoNAT ve Port Yönlendirme Tespiti
+- Düğümler el sıkışma esnasında karşı eşe gözlemlenen IP adresini (`observedAddress`) aktarır.
+- Farklı eşlerden en az iki tutarlı bildirim alındığında yansıtılan IP (Reflected IP) konsensüsü sağlanır.
+- Düğüm, eş düğümlerden birine rastgele nonce içeren `DIALBACK_REQUEST` paketi iletir.
+- Eş, gelen isteğin soket düzeyindeki IP adresine (`socket.remoteAddress`) geri bağlantı dener. Bağlantı başarılı ise düğüme `CAP_RELAY`, aksi durumda `CAP_EDGE` rolü atanır.
+- SSRF Koruması: `DIALBACK_REQUEST` gövdesindeki hedef IP adresi dikkate alınmaz; doğrudan TCP bağlantısının fiziksel adresi sabitlenir. RFC 1918 ve döngüsel (loopback) adreslere diyal-geri engellenir.
+
+### 3. Rendezvous ve CGNAT Ters Tünelleri
+- NAT veya güvenlik duvarı arkasındaki `EDGE` düğümleri, açık internete erişimi olan en az iki `RELAY` düğümüne kalıcı ters TCP tüneli açar.
+- Tünel bağlantısı, `RENDEZVOUS_BIND` paketi içerisindeki Ed25519 imzası ile doğrulanır.
+- Güvenlik duvarı oturum tablolarının açık tutulması için 30 saniye aralıklarla tek baytlık `0x09` (PING) ve `0x0A` (PONG) denetim paketleri iletilir.
+- Bir röle üzerinde açılabilecek aktif tünel sayısı kaynak kısıtı amacıyla en fazla 64 ile sınırlandırılmıştır.
+
+### 4. 3-Hop Teleskopik Post-Quantum Soğan Yönlendirme (Onion Routing)
+- Ağ topolojisi ve paket akışının gizlenmesi amacıyla 3 atlamalı (Giriş, Röle, Çıkış) anonim devreler kurulur.
+- Her atlamada NIST FIPS 203 uyumlu ML-KEM-768 (Kyber-768) algoritması ile anahtar kapsülleme gerçekleştirilir ve simetrik oturum anahtarları türetilir.
+- Trafik Analizi ve DPI Koruması: Tüm soğan hücreleri (`ONION_CELL`) sabit 1536 bayt boyutunda tutulur (Uniform Cell Padding).
+- Hücreler açık metin taşınmaz; taşıma katmanında AES-256-GCM ile şifrelenmiş `ENCRYPTED_FRAME` blokları içerisinde iletilir.
+
+### 5. Dağıtık Varlık (Presence) ve SQLite Yönlendirme
+- Düğümler varlık ve kanal aboneliklerini Ed25519 ile imzalanmış `PRESENCE_ANNOUNCE` paketleriyle dedikodu (gossip) mekanizması üzerinden yayar.
+- Düğümlerin ham IP adresleri gossip paketlerinde yer almaz; duyurular alan adı veya `.mesh` kimliği üzerinden yapılır.
+- Yönlendirme bilgileri bellekte önbelleğe alınır ve SQLite veritabanındaki `routing_table` tablosuna kaydedilir. 60 saniye boyunca yenilenmeyen kayıtlar temizlenir (TTL).
+
+### 6. Bellek İçi SSH-2 Sunucusu ve İki Faktörlü Kasa Doğrulaması (2FA Vault)
+- Harici SSH arka plan süreci (daemon) gerekmeksizin saf JavaScript ile yazılmış SSH-2 sunucusu barındırır.
+- Yapılandırılabilir Kimlik: Sunucu kimlik dizgesi (`sshServerVersion`) konfigürasyon üzerinden ayarlanabilir (varsayılan: `SSH-2.0-Metrice_1.0`).
+- Donanım Anahtarı Bağlama: Kullanıcı parolası, istemcinin Ed25519 açık anahtarı ile tuzlanarak Scrypt (N=16384, r=8, p=1) ve HKDF-SHA256 algoritmalarından geçirilir. Kayıtlı Ed25519 anahtarı olmaksızın doğru parola girilse dahi kimlik doğrulanamaz.
+
+---
 
 ## Kurulum ve Çalıştırma
 
-Gereksinim: Node.js sürüm 22.0.0 veya üzeri (ML-KEM-768 tam desteği için Node.js sürüm 24+ önerilir).
+### Gereksinimler
+- Node.js v22.0.0 veya üzeri (ML-KEM-768 tam donanım hızlandırması için Node.js v24+ önerilir).
+- İşletim Sistemi: Linux, macOS, BSD, Windows.
+- Harici paket bağımlılığı bulunmamaktadır (`npm install` gerekmez).
 
-Düğümü başlatmak için `node src/index.js` komutu kullanılır.
+```bash
+git clone git@github.com:GokturkA1/metrice.git
+cd metrice
+node src/index.js
+```
 
-Ortam değişkenleri ile yapılandırma örneği:
-`SERVER_NAME=127.0.0.1 CLIENT_PORT=2222 SSH_PORT=2224 FED_PORT=8001 node src/index.js`
+---
 
-Bağlantı yöntemleri:
-- SSH ile bağlantı: `ssh -p 2224 kullanici@127.0.0.1`
-- Telnet ile bağlantı: `telnet 127.0.0.1 2222`
+## Dağıtım Modelleri
 
-## Federasyon ve Ağ Mimarisi
+Metrice; VDS sunucuları, Docker/Podman konteynerleri, ters vekiller (Nginx, Traefik, HAProxy) ve tünelleme servisleri (Cloudflared, Ngrok) ile uyumludur.
 
-Metrice ağı, merkezi sunucu gerektirmeyen tam dağıtık (P2P) bir yapıya sahiptir. Düğümler kendi aralarında özel şifreli TCP kanalları üzerinden iletişim kurar.
+### 1. Genel IP Üzerinde RELAY Düğümü (VDS)
+```bash
+SERVER_NAME="relay1.metrice.network" \
+FED_PORT=8001 \
+SSH_PORT=2224 \
+CLIENT_PORT=2222 \
+MESH_ROLE=RELAY \
+node src/index.js
+```
 
-### 1. Dinamik Eş Keşfi (LAN UDP Beacon)
-Düğümler yerel ağdaki diğer düğümleri otomatik olarak tespit etmek için periyodik olarak 41234 portuna UDP broadcast yayını yapar.
-Gönderilen paket yapısı:
-`{"type":"P2P_BEACON","port":8001,"timestamp":1788535418}`
-Yayın alan düğüm, göndericinin IP adresini ve ilettiği federasyon portunu eş listesine ekler.
+### 2. Docker / Podman Konteyner Dağıtımı
+Konteyner içi ağ köprülerinde IP doğrulama toleransı sağlamak için `TRUST_PROXY=true` kullanılır:
+```bash
+docker run -d \
+  --name metrice-node \
+  -e SERVER_NAME="node.example.com" \
+  -e TRUST_PROXY=true \
+  -e FED_PORT=8001 \
+  -e SSH_PORT=2224 \
+  -p 8001:8001 \
+  -p 2224:2224 \
+  -v $(pwd)/data:/app/data \
+  node:24-alpine node src/index.js
+```
 
-### 2. Şifreli Federasyon El Sıkışması (Secure Channel)
-Düğümler arası bağlantı standart TLS yerine post-quantum KEM mekanizması ile korunur:
-- Düğüm A, Düğüm B'ye bağlanır ve rastgele tek kullanımlık bir nonce, kendi Ed25519 kimlik anahtarı ve ML-KEM-768 açık anahtarını içeren imzalı bir `HANDSHAKE_INIT` paketi gönderir.
-- Düğüm B, gelen imzayı doğrular, ML-KEM açık anahtarını kullanarak 32 baytlık ortak bir sır üretir ve bu sırrı kapsülleyerek `HANDSHAKE_REPLY` paketiyle geri döndürür.
-- Her iki düğüm de ortak sır ve nonce değerini HKDF-SHA256 algoritmasından geçirerek 256-bit oturum anahtarı elde eder.
-- Ardından akan tüm federasyon verisi AES-256-GCM modunda `ENCRYPTED_FRAME` paketleri halinde taşınır.
+### 3. Ters Vekil ve Tünelleme Arkasında Dağıtım (Cloudflared / Ngrok)
+```bash
+TRUST_PROXY=true \
+SERVER_NAME="mesh.domain.com" \
+SSH_SERVER_VERSION="SSH-2.0-SecureMesh_2.0" \
+node src/index.js
+```
 
-### 3. Gossip Protokolü ve Eş Havuzu Yönetimi
-Düğümler, ağ tablosunu güncel tutmak için rastgele seçilen eşlerle periyodik olarak haberleşir.
-- Paket türü: `GOSSIP_DISCOVERY`
-- Düğüm elindeki eş listesinden rastgele örneklem seçerek karşı tarafa iletir.
-- Yanıt olarak karşı düğüm kendi bildiği aktif eşleri `GOSSIP_RESPONSE` paketiyle döner.
-- Her eş için bir güven skoru tutulur. Başarılı iletişimler skoru artırırken, başarısız iletişimler skoru düşürür. Skoru sıfıra inen düğümler havuzdan çıkarılır.
-- Havuz boyutu 250 eş ile sınırlandırılmıştır.
+---
 
-### 4. Kanal Aboneliği ve Mesaj Yönlendirme
-- Genel kanallar (#genel) ağ genelinde yayılım gösterir (Broadcast Flood with Deduplication).
-- Mesaj paketlerinde döngüleri engellemek amacıyla mesaj kimliği TTL önbelleğinde saklanır. Aynı kimliğe sahip paketler tekrar iletilmez.
-- Atlama sınırı (hop) ve paket yaşam süresi (ttl) mekanizması ile ağ yükünün kontrolsüz büyümesi önlenir.
-- Özel sunucu kanallarında yalnızca ilgili odaya abone olan düğümlere hedefli dağıtım yapılır (`CHANNEL_SUBSCRIBE` / `CHANNEL_UNSUBSCRIBE`).
+## Yapılandırma Parametreleri
 
-## Dizin Yapısı
+Tüm parametreler ortam değişkenleri (`process.env`) veya `src/config/index.js` üzerinden yapılandırılabilir:
 
-- `src/commands/`: TUI içi komut modülleri (/join, /leave, /msg, /keys, /allowtelnet vb.).
-- `src/config/`: Port, dosya yolları ve çalışma zamanı yapılandırmaları.
-- `src/core/clientServer.js`: Telnet sunucusu ve terminal oturum yöneticisi.
-- `src/core/federation.js`: Düğümler arası şifreli iletişim ve paket dağıtım motoru.
-- `src/core/peerManager.js`: UDP broadcast ve gossip eş havuzu yönetimi.
-- `src/core/sshServer.js`: Saf JavaScript SSH-2 protokol motoru ve oturum yönetimi.
-- `src/core/terminalSession.js`: Çok panelli TUI render motoru ve girdi ayrıştırıcı.
-- `src/locales/`: Çoklu dil ve yerelleştirme desteği.
-- `src/storage/database.js`: SQLite WAL depolama ve CRUD sorguları.
-- `src/utils/`: ANSI, kriptografi, hata yönetimi ve SSH paket yardımcıları.
+| Parametre | Ortam Değişkeni | Varsayılan | Açıklama |
+| :--- | :--- | :--- | :--- |
+| `serverName` | `SERVER_NAME` | `'localhost'` | Düğümün genel alan adı veya ana makine adresi |
+| `clientPort` | `CLIENT_PORT` | `2222` | Telnet TUI dinleme TCP portu |
+| `sshPort` | `SSH_PORT` | `2224` | Post-Quantum SSH-2 sunucusu dinleme TCP portu |
+| `federationPort` | `FED_PORT` | `8001` | P2P Federasyon ve Onion dinleme TCP portu |
+| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_1.0'` | SSH sunucusu protokol kimlik dizgesi |
+| `meshRole` | `MESH_ROLE` | `'EDGE'` | Düğüm rolü (`'RELAY'` veya `'EDGE'`) |
+| `maxRendezvousTunnels`| `MAX_RENDEZVOUS_TUNNELS` | `64` | Bir RELAY düğümünün kabul edeceği azami ters tünel sayısı |
+| `rendezvousKeepaliveInterval` | `RENDEZVOUS_KEEPALIVE_MS` | `30000` | Ters tünel denetim aralığı (0x09/0x0A PING-PONG ms) |
+| `presenceTtl` | `PRESENCE_TTL_MS` | `60000` | Yönlendirme tablosu varlık süresi (ms) |
+| `circuitTtl` | `CIRCUIT_TTL_MS` | `600000` | Onion devreleri yaşam süresi (ms) |
+| `uniformCellSize` | `UNIFORM_CELL_SIZE` | `1536` | Sabit soğan hücresi boyutu (bayt) |
+| `secureBufferLimit` | `SECURE_BUFFER_LIMIT` | `65536` | Çerçeveleme tampon üst sınırı (64 KB) |
+| `trustProxy` | `TRUST_PROXY` | `false` | Vekil sunucu arkasında IP doğrulama toleransı |
+| `strictPq` | `STRICT_PQ` | `false` | Klasik algoritmaları tamamen engelleme modu |
+| `dbFile` | `DB_FILE` | `./data_<PORT>.db` | SQLite veritabanı dosya yolu |
+| `peerCacheFile` | `PEER_FILE` | `./peers_<PORT>.json` | Bilinen eşler önbellek dosya yolu |
+| `logLevel` | `LOG_LEVEL` | `'DEBUG'` | Günlük kayıt seviyesi (`DEBUG`, `INFO`, `WARN`, `ERROR`) |
+
+---
+
+## Kullanım ve Komut Arayüzü
+
+### 1. SSH Bağlantısı (Önerilen)
+```bash
+ssh -p 2224 kullanici_adi@sunucu_adresi
+```
+İlk bağlantıda yerel Ed25519 açık anahtarı hesaba otomatik olarak bağlanır.
+
+### 2. Telnet Bağlantısı (Yerel Testler)
+```bash
+telnet sunucu_adresi 2222
+```
+
+### 3. TUI Komutları
+Terminal arayüzünde komut satırından çalıştırılabilecek yönergeler:
+
+- `/join #kanal:NodeID.mesh`: Uzak düğüm kanalına abone olur.
+- `/leave #kanal`: Belirtilen kanaldan ayrılır.
+- `/remove @kullanici`: Seçili özel sohbet geçmişini siler.
+- `/msg @hedef <mesaj>`: Hedef kullanıcıya doğrudan şifreli mesaj iletir.
+- `/keys add <ssh-ed25519 ...>`: Hesaba ek Ed25519 açık anahtarı kaydeder.
+- `/keys list`: Kayıtlı açık anahtarları listeler.
+- `/status`: Düğüm rolü, kimlik ve tünel durumunu görüntüler.
+- `/help`: Kullanılabilir komutları listeler.
+- `/quit`: Oturumu sonlandırır.
+
+---
+
+## Protokol Paket Formatları
+
+### Handshake (`HANDSHAKE_INIT` / `HANDSHAKE_REPLY`)
+```json
+{
+  "type": "HANDSHAKE_INIT",
+  "nodeAddress": "host:port",
+  "identityPublicKey": "base64_ed25519_pubkey",
+  "kemPublicKey": "base64_kyber768_pubkey",
+  "nonce": "16_byte_hex",
+  "sig": "ed25519_signature"
+}
+```
+
+### AutoNAT Dialback (`DIALBACK_REQUEST` / `DIALBACK_CONFIRM`)
+```json
+{
+  "type": "DIALBACK_REQUEST",
+  "targetPort": 8001,
+  "nonce": "16_byte_hex"
+}
+```
+
+### Rendezvous Bağlantısı (`RENDEZVOUS_BIND` / `RENDEZVOUS_ACK`)
+```json
+{
+  "type": "RENDEZVOUS_BIND",
+  "nodeId": "16_char_base32",
+  "identityPublicKey": "base64_ed25519_pubkey",
+  "timestamp": 1788732000,
+  "nonce": "16_byte_hex",
+  "sig": "ed25519_signature"
+}
+```
+
+### Onion Devreleri (`CIRCUIT_CREATE`, `CIRCUIT_EXTEND`, `ONION_CELL`)
+```json
+{
+  "type": "ONION_CELL",
+  "circuitId": "16_byte_hex",
+  "iv": "base64_aes_gcm_iv",
+  "authTag": "base64_tag",
+  "ciphertext": "base64_encrypted_payload",
+  "pad": "000... (Toplam 1536 bayt)"
+}
+```
+
+---
+
+## Doğrulama ve Testler
+
+Sistem bütünlüğü iki kapsamlı test süiti ile doğrulanır:
+
+```bash
+# 1. Metrice v2.0 Spesifikasyon ve Güvenlik Süiti (25 Test)
+node v2_test_suite.js
+
+# 2. Protokol, Post-Quantum, SSH-2 ve Veritabanı Süiti (24 Test)
+node comprehensive_test_suite.js
+```
+
+Testler; Base32 türetimi, AutoNAT konsensüsü, DoS tampon limitleri, ML-KEM-768 soğan yönlendirmesi, SSRF önlemleri ve Two-Factor SSH kimlik doğrulamasını uçtan uca kapsar.
+
+---
+
+## Lisans
+
+Bu proje GNU General Public License v3.0 (GPLv3) altında lisanslanmıştır. Detaylar için [LICENSE](LICENSE) dosyasına bakınız.

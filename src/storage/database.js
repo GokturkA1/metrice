@@ -71,6 +71,23 @@ export class Database {
           next_retry INTEGER NOT NULL,
           timestamp TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS routing_table (
+          node_id TEXT PRIMARY KEY,
+          role TEXT NOT NULL,
+          rendezvous_nodes TEXT NOT NULL,
+          kem_public_key TEXT NOT NULL,
+          identity_public_key TEXT NOT NULL,
+          last_seen INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS active_circuits (
+          circuit_id TEXT PRIMARY KEY,
+          prev_hop TEXT,
+          next_hop TEXT,
+          symmetric_key TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
       `);
 
       try {
@@ -114,21 +131,22 @@ export class Database {
     const row = stmt.get();
 
     if (row) {
-      return {
-        identityKeyPair: {
-          privateKey: row.identity_private_key,
-          publicKey: row.identity_public_key
-        },
-        kemKeyPair: {
-          privateKey: row.kem_private_key,
-          publicKey: row.kem_public_key
-        }
+      const identityKeyPair = {
+        privateKey: row.identity_private_key,
+        publicKey: row.identity_public_key
       };
+      const kemKeyPair = {
+        privateKey: row.kem_private_key,
+        publicKey: row.kem_public_key
+      };
+      const nodeId = CryptoHelper.deriveNodeId(identityKeyPair.publicKey);
+      return { nodeId, identityKeyPair, kemKeyPair };
     }
 
     log.info(I18n.t('DB_GEN_IDENTITY_KEYS'));
     const identityKeyPair = CryptoHelper.generateIdentityKeyPair();
     const kemKeyPair = CryptoHelper.generateKemKeyPair();
+    const nodeId = CryptoHelper.deriveNodeId(identityKeyPair.publicKey);
 
     const insertStmt = this.db.prepare(`
       INSERT INTO node_identity (id, identity_private_key, identity_public_key, kem_private_key, kem_public_key, created_at)
@@ -143,7 +161,7 @@ export class Database {
       new Date().toISOString()
     );
 
-    return { identityKeyPair, kemKeyPair };
+    return { nodeId, identityKeyPair, kemKeyPair };
   }
 
   saveTrustedNodeKey(nodeAddress, identityPublicKey, kemPublicKey) {
@@ -303,6 +321,7 @@ export class Database {
 
   clearConversationForUser(userAddress, target) {
     if (target.startsWith('#')) {
+      const chanPrefix = target.split(':')[0];
       const stmt = this.db.prepare(`
         UPDATE messages 
         SET deleted_by = CASE 
@@ -310,10 +329,12 @@ export class Database {
           WHEN deleted_by NOT LIKE '%' || ? || '%' THEN deleted_by || ',' || ? 
           ELSE deleted_by 
         END
-        WHERE receiver = ?
+        WHERE receiver = ? OR receiver = ? OR receiver LIKE ? || ':%'
       `);
-      stmt.run(userAddress, userAddress, userAddress, target);
+      stmt.run(userAddress, userAddress, userAddress, target, chanPrefix, chanPrefix);
     } else {
+      const userPrefix = userAddress.split(':')[0];
+      const targetPrefix = target.split(':')[0];
       const stmt = this.db.prepare(`
         UPDATE messages 
         SET deleted_by = CASE 
@@ -321,9 +342,14 @@ export class Database {
           WHEN deleted_by NOT LIKE '%' || ? || '%' THEN deleted_by || ',' || ? 
           ELSE deleted_by 
         END
-        WHERE (sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?)
+        WHERE ((sender = ? OR sender LIKE ? || ':%') AND (receiver = ? OR receiver LIKE ? || ':%'))
+           OR ((sender = ? OR sender LIKE ? || ':%') AND (receiver = ? OR receiver LIKE ? || ':%'))
       `);
-      stmt.run(userAddress, userAddress, userAddress, userAddress, target, target, userAddress);
+      stmt.run(
+        userAddress, userAddress, userAddress,
+        userAddress, userPrefix, target, targetPrefix,
+        target, targetPrefix, userAddress, userPrefix
+      );
     }
   }
 
@@ -434,5 +460,89 @@ export class Database {
       isE2EE: r.is_e2ee === 1,
       timestamp: r.timestamp
     }));
+  }
+
+  // --- V2.0 ROUTING TABLE & RENDEZVOUS STORAGE ---
+
+  upsertRoute({ nodeId, role, rendezvousNodes = [], kemPublicKey, identityPublicKey, lastSeen = Date.now() }) {
+    const stmt = this.db.prepare(`
+      INSERT INTO routing_table (node_id, role, rendezvous_nodes, kem_public_key, identity_public_key, last_seen)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(node_id) DO UPDATE SET
+        role = excluded.role,
+        rendezvous_nodes = excluded.rendezvous_nodes,
+        kem_public_key = excluded.kem_public_key,
+        identity_public_key = excluded.identity_public_key,
+        last_seen = excluded.last_seen
+    `);
+    const nodesJson = typeof rendezvousNodes === 'string' ? rendezvousNodes : JSON.stringify(rendezvousNodes);
+    stmt.run(nodeId, role, nodesJson, kemPublicKey, identityPublicKey, lastSeen);
+  }
+
+  getRoute(nodeId) {
+    const stmt = this.db.prepare('SELECT * FROM routing_table WHERE node_id = ?');
+    const row = stmt.get(nodeId);
+    if (!row) return null;
+    let rendezvousNodes = [];
+    try { rendezvousNodes = JSON.parse(row.rendezvous_nodes); } catch {}
+    return {
+      nodeId: row.node_id,
+      role: row.role,
+      rendezvousNodes,
+      kemPublicKey: row.kem_public_key,
+      identityPublicKey: row.identity_public_key,
+      lastSeen: row.last_seen
+    };
+  }
+
+  getAllRoutes() {
+    const stmt = this.db.prepare('SELECT * FROM routing_table ORDER BY last_seen DESC');
+    const rows = stmt.all();
+    return rows.map((row) => {
+      let rendezvousNodes = [];
+      try { rendezvousNodes = JSON.parse(row.rendezvous_nodes); } catch {}
+      return {
+        nodeId: row.node_id,
+        role: row.role,
+        rendezvousNodes,
+        kemPublicKey: row.kem_public_key,
+        identityPublicKey: row.identity_public_key,
+        lastSeen: row.last_seen
+      };
+    });
+  }
+
+  deleteExpiredRoutes(ttlMs = 60000) {
+    const threshold = Date.now() - ttlMs;
+    const stmt = this.db.prepare('DELETE FROM routing_table WHERE last_seen < ?');
+    stmt.run(threshold);
+  }
+
+  // --- V2.0 ONION CIRCUITS STORAGE ---
+
+  saveCircuit({ circuitId, prevHop = null, nextHop = null, symmetricKey, createdAt = Date.now() }) {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO active_circuits (circuit_id, prev_hop, next_hop, symmetric_key, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    stmt.run(circuitId, prevHop, nextHop, symmetricKey, createdAt);
+  }
+
+  getCircuit(circuitId) {
+    const stmt = this.db.prepare('SELECT * FROM active_circuits WHERE circuit_id = ?');
+    const row = stmt.get(circuitId);
+    if (!row) return null;
+    return {
+      circuitId: row.circuit_id,
+      prevHop: row.prev_hop,
+      nextHop: row.next_hop,
+      symmetricKey: row.symmetric_key,
+      createdAt: row.created_at
+    };
+  }
+
+  deleteCircuit(circuitId) {
+    const stmt = this.db.prepare('DELETE FROM active_circuits WHERE circuit_id = ?');
+    stmt.run(circuitId);
   }
 }

@@ -483,6 +483,12 @@ export class TerminalSession extends EventEmitter {
       if (isSystemWindow) {
         const stats = this.getSystemStats ? this.getSystemStats() : { uptime: '-', rss: '-', peers: [] };
         rightTitle = I18n.t('TUI_SYS_PANEL_TITLE');
+        if (stats.nodeId) {
+          rightPanelLines.push(`${ANSI.FG_CYAN}Node:${ANSI.RESET} ${stats.nodeId.slice(0, 10)}`);
+        }
+        if (stats.role) {
+          rightPanelLines.push(`${ANSI.FG_CYAN}Rol:${ANSI.RESET} CAP_${stats.role}`);
+        }
         rightPanelLines.push(`${ANSI.FG_CYAN}${I18n.t('TUI_SYS_PANEL_UPTIME')}${ANSI.RESET} ${stats.uptime}`);
         rightPanelLines.push(`${ANSI.FG_CYAN}${I18n.t('TUI_SYS_PANEL_RAM')}${ANSI.RESET} ${stats.rss}MB`);
         rightPanelLines.push(`${ANSI.FG_GRAY}----------------${ANSI.RESET}`);

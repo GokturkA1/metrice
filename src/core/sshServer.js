@@ -8,6 +8,7 @@ import { AddressHelper } from '../utils/addressHelper.js';
 import { InputParser } from '../utils/inputParser.js';
 import { TerminalSession } from './terminalSession.js';
 import { I18n } from '../locales/i18n.js';
+import { CONFIG } from '../config/index.js';
 
 const log = new Logger('SSH_SRV');
 
@@ -40,17 +41,26 @@ const SSH_MSG = {
 };
 
 class SshClientConnection extends EventEmitter {
-  constructor(socket, hostKey, db, clientServer) {
+  constructor(socket, hostKey, db, clientServer, options = {}) {
     super();
     this.socket = socket;
     this.hostKey = hostKey;
     this.db = db;
     this.clientServer = clientServer;
+    this.options = options;
 
     this.state = 'IDENT';
     this.inBuffer = Buffer.alloc(0);
     this.clientVersion = '';
-    this.serverVersion = 'SSH-2.0-Metrice_1.0';
+
+    // SSH Sunucu Versiyon Dizgesi (Öncelik: options.serverVersion -> CONFIG.sshServerVersion -> Fallback)
+    const configuredVersion = (options && options.serverVersion) || (CONFIG && CONFIG.sshServerVersion);
+    if (typeof configuredVersion === 'string' && configuredVersion.trim().length > 0) {
+      const clean = configuredVersion.trim();
+      this.serverVersion = clean.startsWith('SSH-2.0-') ? clean : `SSH-2.0-${clean}`;
+    } else {
+      this.serverVersion = 'SSH-2.0-Metrice_1.0';
+    }
 
     this.clientKexPayload = null;
     this.serverKexPayload = null;
@@ -83,8 +93,18 @@ class SshClientConnection extends EventEmitter {
     this.termWidth = 110;
     this.termHeight = 24;
 
+    this.activeTimeouts = new Set();
     this.parser = new InputParser();
     this.initSocket();
+  }
+
+  setManagedTimeout(fn, ms) {
+    const timer = setTimeout(() => {
+      this.activeTimeouts.delete(timer);
+      fn();
+    }, ms);
+    this.activeTimeouts.add(timer);
+    return timer;
   }
 
   initSocket() {
@@ -678,36 +698,44 @@ class SshClientConnection extends EventEmitter {
 
     const virtualSocket = new EventEmitter();
     virtualSocket.write = (data) => {
-      if (!this.socket || this.socket.destroyed || !this.socket.writable || this.socket.writableEnded) {
+      if (!this.session || !this.socket || this.socket.destroyed || !this.socket.writable || this.socket.writableEnded) {
         return false;
       }
 
-      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      const w = new SshPacketWriter();
-      w.writeByte(SSH_MSG.CHANNEL_DATA);
-      w.writeUInt32(this.channelRemoteId);
-      w.writeBuffer(buf);
-      this.sendPacket(w.toBuffer());
-      return true;
+      try {
+        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        const w = new SshPacketWriter();
+        w.writeByte(SSH_MSG.CHANNEL_DATA);
+        w.writeUInt32(this.channelRemoteId);
+        w.writeBuffer(buf);
+        this.sendPacket(w.toBuffer());
+        return true;
+      } catch {
+        return false;
+      }
     };
     
     virtualSocket.end = (data) => {
-      if (!this.socket || this.socket.destroyed || !this.socket.writableEnded) {
-        // 1. Çıkış mesajını SSH paketi olarak gönder
-        if (data) {
-          virtualSocket.write(data);
-        }
-
-        // 2. Kopyalama modunu kapat ve temiz bir alt satıra geç
-        virtualSocket.write('\x1b[?2004l\r\n');
-
-        // 3. İstemcinin paketleri render etmesine fırsat verip soketi kapat
-        setTimeout(() => {
-          if (this.socket && !this.socket.destroyed) {
-            this.socket.end();
-          }
-        }, 50);
+      if (!this.socket || this.socket.destroyed || this.socket.writableEnded) {
+        return;
       }
+
+      // 1. Çıkış mesajını SSH paketi olarak gönder
+      if (data) {
+        virtualSocket.write(data);
+      }
+
+      // 2. Kopyalama modunu kapat ve temiz bir alt satıra geç
+      virtualSocket.write('\x1b[?2004l\r\n');
+
+      // 3. İstemcinin paketleri render etmesine fırsat verip soketi kapat
+      this.setManagedTimeout(() => {
+        if (this.socket && !this.socket.destroyed && this.socket.writable) {
+          try {
+            this.socket.end();
+          } catch {}
+        }
+      }, 50);
     };
 
     virtualSocket.destroy = () => {
@@ -731,7 +759,14 @@ class SshClientConnection extends EventEmitter {
       () => {
         const mins = Math.floor(process.uptime() / 60);
         const mem = (process.memoryUsage().rss / 1024 / 1024).toFixed(1);
-        return { uptime: `${mins}m`, rss: mem, peers: [] };
+        const peers = this.clientServer.federation.peerManager ? this.clientServer.federation.peerManager.getAllPeers() : [];
+        return {
+          uptime: `${mins}m`,
+          rss: mem,
+          peers,
+          role: this.clientServer.federation.role,
+          nodeId: this.clientServer.federation.nodeId
+        };
       },
       () => this.clientServer.commands.getAllUnique().map((c) => c.name)
     );
@@ -762,10 +797,11 @@ class SshClientConnection extends EventEmitter {
   }
 
   async handleChannelInput(buffer) {
-    if (!this.session) return;
+    if (!this.session || !this.socket || this.socket.destroyed) return;
     const actions = this.parser.parse(buffer);
 
     for (const action of actions) {
+      if (!this.session) return;
       if (action.type === 'RESIZE') {
         this.session.resize(action.width, action.height);
         continue;
@@ -976,22 +1012,33 @@ class SshClientConnection extends EventEmitter {
   }
 
   cleanup() {
+    for (const timer of this.activeTimeouts) {
+      clearTimeout(timer);
+    }
+    this.activeTimeouts.clear();
+
     if (this.authenticatedUser && this.session) {
       const exitingUser = this.authenticatedUser;
-      this.db.updateUserProfile(exitingUser, this.session.contacts, this.session.history);
-      this.clientServer.sessions.delete(exitingUser);
-      this.clientServer.notifyAllSessionsRender();
-      this.clientServer.federation.broadcastUserOffline(exitingUser);
+      const session = this.session;
       this.session = null;
       this.authenticatedUser = null;
+      try {
+        this.db.updateUserProfile(exitingUser, session.contacts, session.history);
+        this.clientServer.sessions.delete(exitingUser);
+        this.clientServer.notifyAllSessionsRender();
+        this.clientServer.federation.broadcastUserOffline(exitingUser);
+      } catch (err) {
+        log.error(`SSH cleanup error: ${err.message}`);
+      }
     }
   }
 }
 
 export class SshServer {
-  constructor(db, clientServer) {
+  constructor(db, clientServer, options = {}) {
     this.db = db;
     this.clientServer = clientServer;
+    this.options = options;
     this.server = null;
 
     const identity = this.db.getNodeIdentity();
@@ -1008,7 +1055,7 @@ export class SshServer {
 
   start(port) {
     this.server = net.createServer((socket) => {
-      new SshClientConnection(socket, this.hostKey, this.db, this.clientServer);
+      new SshClientConnection(socket, this.hostKey, this.db, this.clientServer, this.options);
     });
 
     this.server.listen(port, () => {
