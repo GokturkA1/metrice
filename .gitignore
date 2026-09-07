@@ -21,3 +21,4 @@ node_modules/
 ARCHITECT.md
 REPORT.txt
 v2_test_suite.js
+*.txt

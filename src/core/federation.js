@@ -602,23 +602,19 @@ export class FederationEngine extends EventEmitter {
 
       log.info(`AutoNAT: Inbound Dialback talebi alındı -> ${verifiedIp}:${numPort}`);
       const dialSocket = net.createConnection({ host: verifiedIp, port: numPort }, () => {
-        const confirmPayload = JSON.stringify({
+        // Sadece gerçekten bağlantı kurulabildiyse ana kanala teyit gönder
+        channel.writePayload({
           type: 'DIALBACK_CONFIRM',
           nonce,
           confirmed: true
-        }) + '\n';
-        dialSocket.write(confirmPayload, () => {
-          dialSocket.end();
         });
+        dialSocket.end();
       });
 
-      dialSocket.setTimeout(4000, () => dialSocket.destroy());
-      dialSocket.on('error', () => {});
-
-      channel.writePayload({
-        type: 'DIALBACK_CONFIRM',
-        nonce,
-        confirmed: true
+      dialSocket.setTimeout(3500, () => dialSocket.destroy());
+      dialSocket.on('error', () => {
+        // Bağlanamadıysa hiçbir şey yapma, karşı taraf timeout yiyip EDGE kalsın
+        dialSocket.destroy();
       });
       return;
     }
@@ -752,10 +748,14 @@ export class FederationEngine extends EventEmitter {
       if (!CryptoHelper.verify(dataToVerify, sig, identityPublicKey)) return;
       if (Math.abs(Date.now() - timestamp) > 120000) return;
 
+      // Zehirli adres koruması (Gossip Poisoning): 'localhost', '127.0.0.1', '0.0.0.0' içeren adresler rota tablosuna alınmaz
+      const isPoisoned = (addr) => typeof addr === 'string' && (addr.includes('localhost') || addr.includes('127.0.0.1') || addr.includes('0.0.0.0'));
+      const safeRendezvous = (rendezvousNodes || []).filter((addr) => !isPoisoned(addr));
+
       const record = {
         nodeId,
         role: role || 'EDGE',
-        rendezvousNodes: rendezvousNodes || [],
+        rendezvousNodes: safeRendezvous,
         kemPublicKey,
         identityPublicKey,
         channels: channels || [],
@@ -1250,6 +1250,12 @@ export class FederationEngine extends EventEmitter {
       this.emit('nat_consensus', ip);
 
       // Section 2.2 Inbound Dialback testi başlat (Mükerrer/çakışan testleri engelle)
+      if (CONFIG.meshRole === 'EDGE' || process.env.MESH_ROLE === 'EDGE') {
+        log.debug('AutoNAT: MESH_ROLE=EDGE açıkça yapılandırıldığından dialback atlandı, rol EDGE olarak korunuyor.');
+        this.setRole('EDGE');
+        return;
+      }
+
       if (!this.isDialbackRunning) {
         this.initiateDialback(ip).catch((err) => {
           this.isDialbackRunning = false;
@@ -1477,13 +1483,16 @@ export class FederationEngine extends EventEmitter {
     let relayAnnounceAddr;
     const serverHost = CONFIG.serverName;
     const isRawIp = net.isIP(serverHost) || /^(?:::ffff:)?\d+\.\d+\.\d+\.\d+$/.test(serverHost);
-    if (!isRawIp && serverHost && serverHost !== 'localhost' && !serverHost.startsWith('127.')) {
+    if (!isRawIp && serverHost && serverHost !== 'localhost' && !serverHost.startsWith('127.') && serverHost !== '0.0.0.0') {
       relayAnnounceAddr = `${serverHost}:${CONFIG.federationPort}`;
     } else {
       relayAnnounceAddr = `${this.nodeId}.mesh:${CONFIG.federationPort}`;
     }
 
-    const rendezvousNodes = this.isRelay() ? [relayAnnounceAddr] : Array.from(this.boundRendezvousRelays);
+    // Zehirli adres koruması (Gossip Poisoning): 'localhost', '127.0.0.1', '0.0.0.0' asla anons edilmez
+    const isPoisoned = (addr) => typeof addr === 'string' && (addr.includes('localhost') || addr.includes('127.0.0.1') || addr.includes('0.0.0.0'));
+    const safeBoundRelays = Array.from(this.boundRendezvousRelays).filter((addr) => !isPoisoned(addr));
+    const rendezvousNodes = this.isRelay() ? [relayAnnounceAddr] : safeBoundRelays;
 
     const dataToSign = JSON.stringify({
       nodeId: this.nodeId,
