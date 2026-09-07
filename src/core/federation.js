@@ -1399,6 +1399,28 @@ export class FederationEngine extends EventEmitter {
         this.boundRendezvousRelays.add(relayAddr);
         log.info(`Rendezvous tüneli bağlandı -> ${relayAddr}`);
 
+        if (channel.peerNodeAddress && channel.peerIdentityKey) {
+          const rNodeId = CryptoHelper.deriveNodeId(channel.peerIdentityKey);
+          this.presenceTable.set(rNodeId, {
+            nodeId: rNodeId,
+            role: 'RELAY',
+            rendezvousNodes: [relayAddr],
+            kemPublicKey: channel.peerKemKey,
+            identityPublicKey: channel.peerIdentityKey,
+            channels: [],
+            lastSeen: Date.now()
+          });
+          this.nodePhysicalAddresses.set(rNodeId, relayAddr);
+          this.db.upsertRoute({
+            nodeId: rNodeId,
+            role: 'RELAY',
+            rendezvousNodes: [relayAddr],
+            kemPublicKey: channel.peerKemKey,
+            identityPublicKey: channel.peerIdentityKey,
+            lastSeen: Date.now()
+          });
+        }
+
         if (!channel._hasRendezvousCloseHandler) {
           channel._hasRendezvousCloseHandler = true;
           channel.socket.once('close', () => {

@@ -56,8 +56,8 @@ export class PeerManager {
           const [host, portStr] = addr.split(':');
           const port = parseInt(portStr, 10);
           
-          // Dosyada kalan eski kendi IP'lerini temizle
-          if (!this.isSelfAddress(host, port)) {
+          // Dosyada kalan eski kendi IP'lerini ve loopback adreslerini temizle
+          if (!this.isSelfAddress(host, port) && host !== 'localhost' && host !== '127.0.0.1' && host !== '::1' && host !== '0.0.0.0' && host !== '255.255.255.255') {
             this.peers.set(addr, meta);
           }
         });
@@ -84,11 +84,11 @@ export class PeerManager {
     const port = parseInt(portStr, 10);
     if (!host || isNaN(port) || port <= 0 || port > 65535) return;
 
+    // Loopback, localhost ve broadcast adreslerini engelle (Gossip havuzunu kirletmeyi önler)
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0' || host === '255.255.255.255') return;
+
     // Kendi IP veya domainimiz ise havuza ekleme (IP sızıntısını önler)
     if (this.isSelfAddress(host, port)) return;
-
-    // Ayrılmış veya broadcast IP'leri engelle
-    if (host === '0.0.0.0' || host === '255.255.255.255') return;
 
     if (this.peers.size >= 250 && !this.peers.has(peerAddr)) {
       let lowestKey = null;

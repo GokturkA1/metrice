@@ -113,6 +113,24 @@ export class ClientServer {
     }
   }
 
+  findLocalSession(userAddressOrTarget) {
+    if (!userAddressOrTarget) return null;
+    if (this.sessions.has(userAddressOrTarget)) {
+      return this.sessions.get(userAddressOrTarget);
+    }
+    const parsedTarget = AddressHelper.parse(userAddressOrTarget);
+    if (!parsedTarget || !parsedTarget.name) return null;
+
+    for (const [addr, sess] of this.sessions.entries()) {
+      if (addr === userAddressOrTarget) return sess;
+      const parsedAddr = AddressHelper.parse(addr);
+      if (parsedAddr && parsedAddr.name === parsedTarget.name) {
+        return sess;
+      }
+    }
+    return null;
+  }
+
   getCurrentConversation(userAddress, activeTarget, systemLogs) {
     const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
     if (activeTarget === systemConsole) return systemLogs;
@@ -614,7 +632,7 @@ export class ClientServer {
             }
           }
         } else {
-          const recipientSession = this.sessions.get(msg.to);
+          const recipientSession = this.findLocalSession(msg.to);
           if (recipientSession) {
             recipientSession.addContact(msg.from);
             recipientSession.incrementUnread(msg.from);
@@ -629,7 +647,7 @@ export class ClientServer {
 
     this.federation.on('typing', (payload) => {
       try {
-        const recipientSession = this.sessions.get(payload.to);
+        const recipientSession = this.findLocalSession(payload.to);
         if (recipientSession && recipientSession.activeTarget === payload.from) {
           const rawName = payload.from.split(':')[0].replace('@', '');
           recipientSession.setTyping(rawName);
@@ -647,7 +665,7 @@ export class ClientServer {
 
     // --- E2EE ŞİFRELEME & GÜVENLİK POSTÜRÜ ---
     if (target.type === 'USER') {
-      const recipientSession = this.sessions.get(target.raw);
+      const recipientSession = this.findLocalSession(target.raw);
       const recipientProfile = this.db.getUserProfile(target.raw);
       const remoteSec = this.federation.getRemoteUserSecurity(target.raw);
 
@@ -733,7 +751,7 @@ export class ClientServer {
       }
     } else {
       if (target.isLocal) {
-        const recipientSession = this.sessions.get(target.raw);
+        const recipientSession = this.findLocalSession(target.raw);
         if (recipientSession) {
           recipientSession.addContact(from);
           recipientSession.incrementUnread(from);
