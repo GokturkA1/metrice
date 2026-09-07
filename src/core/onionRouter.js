@@ -100,7 +100,7 @@ export class OnionRouter extends EventEmitter {
 
       if (isExit) {
         currentPayload = {
-          type: 'CIRCUIT_EXTEND',
+          type: i === 0 ? 'CIRCUIT_CREATE' : 'CIRCUIT_EXTEND',
           circuitId,
           encapsulatedKey: encKeys[i],
           nextHop: null,

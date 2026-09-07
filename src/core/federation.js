@@ -81,6 +81,10 @@ class MessageTtlCache {
 export class SecureChannel extends EventEmitter {
   constructor(socket, isInitiator, myIdentity, db, nonceTracker) {
     super();
+    this.setMaxListeners(100);
+    if (socket && typeof socket.setMaxListeners === 'function') {
+      socket.setMaxListeners(100);
+    }
     this.socket = socket;
     this.isInitiator = isInitiator;
     this.myIdentity = myIdentity;
@@ -949,6 +953,12 @@ export class FederationEngine extends EventEmitter {
 
       this.sendPacket(host, port, payload).catch(() => {});
     }
+
+    for (const [, tunnel] of this.rendezvousTunnels.entries()) {
+      if (tunnel && tunnel.channel && tunnel.channel.socket && tunnel.channel.socket.writable) {
+        tunnel.channel.writePayload(payload);
+      }
+    }
   }
 
   async subscribeRemoteChannel(host, port, channel) {
@@ -1079,7 +1089,9 @@ export class FederationEngine extends EventEmitter {
   async sendPacket(host, port, data) {
     const channel = await this.getOrCreateSecureChannel(host, port);
     return new Promise((resolve) => {
+      let timer = null;
       const onPayload = (res) => {
+        if (timer) clearTimeout(timer);
         channel.off('payload', onPayload);
         resolve(res);
       };
@@ -1087,7 +1099,7 @@ export class FederationEngine extends EventEmitter {
       channel.once('payload', onPayload);
       channel.writePayload(data);
 
-      setTimeout(() => {
+      timer = setTimeout(() => {
         channel.off('payload', onPayload);
         resolve({ status: 'unacknowledged' });
       }, 3500);
@@ -1198,6 +1210,12 @@ export class FederationEngine extends EventEmitter {
       if (!host || isNaN(port)) continue;
 
       this.sendPacket(host, port, payload).catch(() => {});
+    }
+
+    for (const [, tunnel] of this.rendezvousTunnels.entries()) {
+      if (tunnel && tunnel.channel && tunnel.channel.socket && tunnel.channel.socket.writable) {
+        tunnel.channel.writePayload(payload);
+      }
     }
   }
 
@@ -1575,6 +1593,14 @@ export class FederationEngine extends EventEmitter {
   }
 
   async sendViaOnion(targetNodeId, payload) {
+    if (targetNodeId && this.rendezvousTunnels.has(targetNodeId)) {
+      const localTunnel = this.rendezvousTunnels.get(targetNodeId);
+      if (localTunnel && localTunnel.channel && localTunnel.channel.socket && localTunnel.channel.socket.writable) {
+        localTunnel.channel.writePayload(payload);
+        return { status: 'delivered' };
+      }
+    }
+
     let route = this.presenceTable.get(targetNodeId) || this.db.getRoute(targetNodeId);
     let exitRelayAddress = null;
 
