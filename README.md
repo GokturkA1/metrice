@@ -1,4 +1,4 @@
-# Metrice v2.1.3
+# Metrice v2.1.4
 
 Metrice, harici bağımlılık içermeyen (Zero External Dependencies), doğrudan Node.js çekirdek kütüphaneleri (`node:crypto`, `node:net`, `node:dgram`, `node:sqlite`, `node:dns`) üzerinde çalışan, kuantum sonrası kriptografi (Post-Quantum Cryptography) ve Tor benzeri çok katmanlı yönlendirme (Onion Routing) mimarisine sahip dağıtık eşler arası (P2P) ağ protokolüdür.
 
@@ -42,7 +42,7 @@ Sistem; NIST FIPS 203 ML-KEM-768 anahtar kapsülleme, Ed25519 tabanlı RFC 4648 
 
 ### 6. Bellek İçi SSH-2 Sunucusu ve İki Faktörlü Kasa Doğrulaması (2FA Vault)
 - Harici SSH arka plan süreci (daemon) gerekmeksizin saf JavaScript ile yazılmış SSH-2 sunucusu barındırır.
-- Yapılandırılabilir Kimlik: Sunucu kimlik dizgesi (`sshServerVersion`) konfigürasyon üzerinden ayarlanabilir (varsayılan: `SSH-2.0-Metrice_2.1.3`).
+- Yapılandırılabilir Kimlik: Sunucu kimlik dizgesi (`sshServerVersion`) konfigürasyon üzerinden ayarlanabilir (varsayılan: `SSH-2.0-Metrice_2.1.4`).
 - Donanım Anahtarı Bağlama: Kullanıcı parolası, istemcinin Ed25519 açık anahtarı ile tuzlanarak Scrypt (N=16384, r=8, p=1) ve HKDF-SHA256 algoritmalarından geçirilir. Kayıtlı Ed25519 anahtarı olmaksızın doğru parola girilse dahi kimlik doğrulanamaz.
 
 ---
@@ -111,7 +111,7 @@ Tüm parametreler ortam değişkenleri (`process.env`) veya `src/config/index.js
 | `clientPort` | `CLIENT_PORT` | `2222` | Telnet TUI dinleme TCP portu |
 | `sshPort` | `SSH_PORT` | `2224` | Post-Quantum SSH-2 sunucusu dinleme TCP portu |
 | `federationPort` | `FED_PORT` | `8001` | P2P Federasyon ve Onion dinleme TCP portu |
-| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.1.3'` | SSH sunucusu protokol kimlik dizgesi |
+| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.1.4'` | SSH sunucusu protokol kimlik dizgesi |
 | `meshRole` | `MESH_ROLE` | `'EDGE'` | Düğüm rolü (`'RELAY'` veya `'EDGE'`) |
 | `maxRendezvousTunnels`| `MAX_RENDEZVOUS_TUNNELS` | `64` | Bir RELAY düğümünün kabul edeceği azami ters tünel sayısı |
 | `rendezvousKeepaliveInterval` | `RENDEZVOUS_KEEPALIVE_MS` | `30000` | Ters tünel denetim aralığı (0x09/0x0A PING-PONG ms) |
@@ -209,7 +209,7 @@ Terminal arayüzünde komut satırından çalıştırılabilecek yönergeler:
 Sistem bütünlüğü iki kapsamlı test süiti ile doğrulanır:
 
 ```bash
-# 1. Metrice v2.1.3 Spesifikasyon ve Güvenlik Süiti
+# 1. Metrice v2.1.4 Spesifikasyon ve Güvenlik Süiti
 node v2_test_suite.js
 
 # 2. Protokol, Post-Quantum, SSH-2 ve Veritabanı Süiti (24 Test)

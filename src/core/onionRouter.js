@@ -59,7 +59,10 @@ export class OnionRouter extends EventEmitter {
     if (channel.peerNodeAddress) return channel.peerNodeAddress;
     const remoteIp = channel.socket?.remoteAddress ? channel.socket.remoteAddress.replace(/^::ffff:/, '') : null;
     const remotePort = channel.socket?.remotePort;
-    if (remoteIp && remotePort) return `${remoteIp}:${remotePort}`;
+    if (remoteIp && remotePort) {
+      const formattedIp = remoteIp.includes(':') ? `[${remoteIp}]` : remoteIp;
+      return `${formattedIp}:${remotePort}`;
+    }
     return remoteIp || 'unknown';
   }
 

@@ -438,6 +438,7 @@ export class FederationEngine extends EventEmitter {
     this.publicIp = null;
     this.observedAddressVotes = new Map(); // ip -> Set<peer>
     this.isDialbackRunning = false;
+    this.isMaintainingTunnels = false;
     this.nodePhysicalAddresses = new Map(); // nodeId -> 'host:port'
     this.pendingDialbacks = new Map(); // nonce -> { targetIp, timer, resolve }
     this.rendezvousTunnels = new Map(); // nodeId -> { socket, channel, boundAt }
@@ -1334,29 +1335,34 @@ export class FederationEngine extends EventEmitter {
   // --- V2.0 RENDEZVOUS & REVERSE TUNNELS METHODS ---
 
   async maintainRendezvousTunnels() {
-    if (this.role !== 'EDGE') return;
+    if (this.role !== 'EDGE' || this.isMaintainingTunnels) return;
     if (this.boundRendezvousRelays.size >= 2) return;
 
-    const routes = this.db.getAllRoutes();
-    const candidateRelays = routes.filter((r) => (r.role === 'RELAY' || r.role === 'CAP_RELAY') && r.nodeId !== this.nodeId);
+    this.isMaintainingTunnels = true;
+    try {
+      const routes = this.db.getAllRoutes();
+      const candidateRelays = routes.filter((r) => (r.role === 'RELAY' || r.role === 'CAP_RELAY') && r.nodeId !== this.nodeId);
 
-    const targets = [];
-    for (const r of candidateRelays) {
-      if (Array.isArray(r.rendezvousNodes)) {
-        targets.push(...r.rendezvousNodes);
+      const targets = [];
+      for (const r of candidateRelays) {
+        if (Array.isArray(r.rendezvousNodes)) {
+          targets.push(...r.rendezvousNodes);
+        }
       }
-    }
 
-    const knownPeers = this.peerManager.getAllPeers();
-    for (const p of knownPeers) {
-      if (!targets.includes(p)) targets.push(p);
-    }
+      const knownPeers = this.peerManager.getAllPeers();
+      for (const p of knownPeers) {
+        if (!targets.includes(p)) targets.push(p);
+      }
 
-    for (const relayAddr of targets) {
-      if (this.boundRendezvousRelays.size >= 2) break;
-      if (this.boundRendezvousRelays.has(relayAddr)) continue;
+      for (const relayAddr of targets) {
+        if (this.boundRendezvousRelays.size >= 2) break;
+        if (this.boundRendezvousRelays.has(relayAddr)) continue;
 
-      await this.bindToRendezvousRelay(relayAddr);
+        await this.bindToRendezvousRelay(relayAddr);
+      }
+    } finally {
+      this.isMaintainingTunnels = false;
     }
   }
 
@@ -1766,6 +1772,7 @@ export class FederationEngine extends EventEmitter {
     if (this.presenceCleanupInterval) clearInterval(this.presenceCleanupInterval);
 
     this.isDialbackRunning = false;
+    this.isMaintainingTunnels = false;
     for (const [, pending] of this.pendingDialbacks.entries()) {
       clearTimeout(pending.timer);
     }
