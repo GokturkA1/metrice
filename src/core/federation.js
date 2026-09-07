@@ -536,7 +536,18 @@ export class FederationEngine extends EventEmitter {
         }
       }
     }
-    if (!data) return null;
+    if (!data) {
+      if (this.db && typeof this.db.getUserProfile === 'function') {
+        const profile = this.db.getUserProfile(userAddress);
+        if (profile && profile.kemPublicKey) {
+          return {
+            isSsh: true,
+            kemPublicKey: profile.kemPublicKey
+          };
+        }
+      }
+      return null;
+    }
     return {
       isSsh: !!data.isSsh,
       kemPublicKey: data.kemPublicKey || ''
@@ -733,6 +744,7 @@ export class FederationEngine extends EventEmitter {
         status: 'bound',
         ttl: 3600
       });
+      setImmediate(() => this.processOutbox(true));
       return;
     }
 
@@ -740,6 +752,7 @@ export class FederationEngine extends EventEmitter {
       if (payload.status === 'bound') {
         const peerAddr = channel.peerNodeAddress || remotePeer;
         this.boundRendezvousRelays.add(peerAddr);
+        setImmediate(() => this.processOutbox(true));
       }
       return;
     }
@@ -808,7 +821,16 @@ export class FederationEngine extends EventEmitter {
         });
       }
 
+      if (Array.isArray(payload.memberships)) {
+        payload.memberships.forEach((m) => {
+          if (m && m.user && m.kemPublicKey) {
+            this.db.saveRemoteUserKemKey(m.user, m.kemPublicKey);
+          }
+        });
+      }
+
       this.emit('presence_change');
+      setImmediate(() => this.processOutbox(true));
       return;
     }
 
@@ -901,12 +923,16 @@ export class FederationEngine extends EventEmitter {
                 isSsh: !!m.isSsh,
                 kemPublicKey: m.kemPublicKey || ''
               });
+              if (m.kemPublicKey) {
+                this.db.saveRemoteUserKemKey(m.user, m.kemPublicKey);
+              }
             }
           }
         });
       }
 
       this.emit('presence_change');
+      setImmediate(() => this.processOutbox(true));
 
       const myState = this.getLocalStateFn ? this.getLocalStateFn() : { memberships: [] };
       channel.writePayload({
@@ -1162,11 +1188,15 @@ export class FederationEngine extends EventEmitter {
                   isSsh: !!m.isSsh,
                   kemPublicKey: m.kemPublicKey || ''
                 });
+                if (m.kemPublicKey) {
+                  this.db.saveRemoteUserKemKey(m.user, m.kemPublicKey);
+                }
               }
             }
           });
 
           this.emit('presence_change');
+          setImmediate(() => this.processOutbox(true));
         }
       } catch {
         this.peerManager.addOrUpdate(peer, false);
@@ -1482,6 +1512,7 @@ export class FederationEngine extends EventEmitter {
             setTimeout(() => this.maintainRendezvousTunnels(), 2000);
           });
         }
+        setImmediate(() => this.processOutbox(true));
         return true;
       }
     } catch (err) {
@@ -1750,8 +1781,8 @@ export class FederationEngine extends EventEmitter {
     }
   }
 
-  async processOutbox() {
-    const pending = this.db.getPendingOutbox();
+  async processOutbox(forceAll = false) {
+    const pending = this.db.getPendingOutbox(forceAll);
     for (const item of pending) {
       const target = AddressHelper.parse(item.to);
       if (!target) {

@@ -678,13 +678,13 @@ export class ClientServer {
       const recipientProfile = this.db.getUserProfile(target.raw);
       const remoteSec = this.federation.getRemoteUserSecurity(target.raw);
 
-      const recipientIsSSH = recipientSession 
-        ? recipientSession.isSsh 
-        : (remoteSec ? remoteSec.isSsh : !!recipientProfile.kemPublicKey);
-
       const recipientKemPub = recipientSession?.kemKeyPair?.publicKey 
         || remoteSec?.kemPublicKey 
-        || recipientProfile.kemPublicKey;
+        || recipientProfile?.kemPublicKey;
+
+      const recipientIsSSH = recipientSession 
+        ? recipientSession.isSsh 
+        : (remoteSec ? remoteSec.isSsh : Boolean(recipientKemPub));
 
       if (session.isSsh) {
         if (recipientIsSSH && recipientKemPub && session.kemKeyPair) {

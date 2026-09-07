@@ -202,6 +202,17 @@ export class Database {
     return stmt.get(nodeAddress);
   }
 
+  saveRemoteUserKemKey(userAddress, kemPublicKey) {
+    if (!userAddress || !kemPublicKey) return;
+    const stmt = this.db.prepare(`
+      INSERT INTO profiles (user_address, contacts, history, password_hash, public_key, kem_public_key)
+      VALUES (?, '[]', '[]', '', '', ?)
+      ON CONFLICT(user_address) DO UPDATE SET
+        kem_public_key = excluded.kem_public_key
+    `);
+    stmt.run(userAddress, kemPublicKey);
+  }
+
   close() {
     try {
       if (this.db) {
@@ -386,10 +397,12 @@ export class Database {
     stmt.run(outboxId, from, to, content, isAction ? 1 : 0, isSnippet ? 1 : 0, isE2EE ? 1 : 0, nextRetry, timestamp);
   }
 
-  getPendingOutbox() {
+  getPendingOutbox(forceAll = false) {
     const now = Date.now();
-    const stmt = this.db.prepare('SELECT * FROM outbox WHERE next_retry <= ? LIMIT 50');
-    const rows = stmt.all(now);
+    const stmt = forceAll
+      ? this.db.prepare('SELECT * FROM outbox LIMIT 50')
+      : this.db.prepare('SELECT * FROM outbox WHERE next_retry <= ? LIMIT 50');
+    const rows = forceAll ? stmt.all() : stmt.all(now);
 
     return rows.map((r) => ({
       id: r.id,
