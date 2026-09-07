@@ -53,21 +53,38 @@ export class AddressHelper {
       }
     }
 
-    // 3. IPv6 veya IPv4/domain: port ayrıştırması son iki nokta üst üsteye (lastIndexOf) göre yapılır
-    const lastColon = target.lastIndexOf(':');
+    // 3. IPv4 / domain veya köşeli parantezsiz IPv6
+    const colonCount = (target.match(/:/g) || []).length;
     let host = target;
     let port = CONFIG.federationPort;
 
-    if (lastColon !== -1) {
+    if (colonCount === 1) {
+      // Tek iki nokta üst üste: host:port (IPv4 veya domain adı)
+      const lastColon = target.lastIndexOf(':');
       const possiblePort = target.slice(lastColon + 1);
       const possibleHost = target.slice(0, lastColon);
       if (/^\d+$/.test(possiblePort)) {
         port = parseInt(possiblePort, 10);
         host = possibleHost || CONFIG.serverName;
       }
+    } else if (colonCount > 1) {
+      // Çoklu iki nokta üst üste: Köşeli parantezsiz IPv6
+      const lastColon = target.lastIndexOf(':');
+      const possiblePort = target.slice(lastColon + 1);
+      const possibleHost = target.slice(0, lastColon);
+
+      // Yalnızca IPv4 eşlemeli IPv6 adreslerinde (örn: ::ffff:127.0.0.1:8001) son kısım porttur
+      if (possibleHost.includes('.') && /^\d+$/.test(possiblePort)) {
+        port = parseInt(possiblePort, 10);
+        host = possibleHost;
+      } else {
+        // Saf IPv6 adresi (örn: 2001:db8::1): son hextet asla port kabul edilmez
+        host = target;
+        port = CONFIG.federationPort;
+      }
     }
 
-    const isIpv6 = host.includes(':');
+    const isIpv6 = colonCount > 1 || host.includes(':');
     return { isMesh: false, nodeId: null, host, port, isIpv6 };
   }
 

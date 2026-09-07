@@ -6,7 +6,8 @@ import { CONFIG } from '../config/index.js';
 
 const log = new Logger('ONION');
 
-export const UNIFORM_CELL_SIZE = (CONFIG && CONFIG.uniformCellSize) || 1536;
+export const UNIFORM_CELL_SIZE = (CONFIG && CONFIG.uniformCellSize) || 2048;
+export const MAX_ONION_PAYLOAD = 768;
 
 export class OnionRouter extends EventEmitter {
   constructor({ federation, db, myIdentity, rendezvousTunnels }) {
@@ -20,7 +21,7 @@ export class OnionRouter extends EventEmitter {
   }
 
   /**
-   * ONION_CELL nesnesini tam 1536 bayt (JSON formatında) olacak şekilde pad ile doldurur.
+   * ONION_CELL nesnesini tam UNIFORM_CELL_SIZE bayt (JSON formatında) olacak şekilde pad ile doldurur.
    */
   static getPaddedCellObject(cell) {
     const raw = {
@@ -36,6 +37,8 @@ export class OnionRouter extends EventEmitter {
     const diff = UNIFORM_CELL_SIZE - initialLen;
     if (diff > 0) {
       raw.pad = '0'.repeat(diff);
+    } else if (diff < 0) {
+      log.warn(`Onion hücresi boyutu uniform sınırı aştı (${initialLen} > ${UNIFORM_CELL_SIZE})`);
     }
     return raw;
   }
@@ -124,6 +127,12 @@ export class OnionRouter extends EventEmitter {
    * Verilen devre üzerinden hedef NodeID'ye katmanlı şifreli ONION_CELL gönderir.
    */
   async sendOnionCell(circuit, targetNodeId, payload) {
+    const payloadStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    const payloadBytes = Buffer.byteLength(payloadStr, 'utf-8');
+    if (payloadBytes > MAX_ONION_PAYLOAD) {
+      throw new Error(`Onion payload boyutu MAX_ONION_PAYLOAD (${MAX_ONION_PAYLOAD}) sınırını aştı: ${payloadBytes} bayt`);
+    }
+
     const { hops, keys, circuitId } = circuit;
     const numHops = hops.length;
 

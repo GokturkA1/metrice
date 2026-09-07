@@ -32,7 +32,7 @@ Sistem; NIST FIPS 203 ML-KEM-768 anahtar kapsülleme, Ed25519 tabanlı RFC 4648 
 ### 4. 3-Hop Teleskopik Post-Quantum Soğan Yönlendirme (Onion Routing)
 - Ağ topolojisi ve paket akışının gizlenmesi amacıyla 3 atlamalı (Giriş, Röle, Çıkış) anonim devreler kurulur.
 - Her atlamada NIST FIPS 203 uyumlu ML-KEM-768 (Kyber-768) algoritması ile anahtar kapsülleme gerçekleştirilir ve simetrik oturum anahtarları türetilir.
-- Trafik Analizi ve DPI Koruması: Tüm soğan hücreleri (`ONION_CELL`) sabit 1536 bayt boyutunda tutulur (Uniform Cell Padding).
+- Trafik Analizi ve DPI Koruması: Tüm soğan hücreleri (`ONION_CELL`) sabit 2048 bayt boyutunda tutulur (Uniform Cell Padding). Ham kullanıcı yükü azami 768 bayt (MAX_ONION_PAYLOAD) ile sınırlandırılır.
 - Hücreler açık metin taşınmaz; taşıma katmanında AES-256-GCM ile şifrelenmiş `ENCRYPTED_FRAME` blokları içerisinde iletilir.
 
 ### 5. Dağıtık Varlık (Presence) ve SQLite Yönlendirme
@@ -117,7 +117,7 @@ Tüm parametreler ortam değişkenleri (`process.env`) veya `src/config/index.js
 | `rendezvousKeepaliveInterval` | `RENDEZVOUS_KEEPALIVE_MS` | `30000` | Ters tünel denetim aralığı (0x09/0x0A PING-PONG ms) |
 | `presenceTtl` | `PRESENCE_TTL_MS` | `60000` | Yönlendirme tablosu varlık süresi (ms) |
 | `circuitTtl` | `CIRCUIT_TTL_MS` | `600000` | Onion devreleri yaşam süresi (ms) |
-| `uniformCellSize` | `UNIFORM_CELL_SIZE` | `1536` | Sabit soğan hücresi boyutu (bayt) |
+| `uniformCellSize` | `UNIFORM_CELL_SIZE` | `2048` | Sabit soğan hücresi boyutu (bayt) |
 | `secureBufferLimit` | `SECURE_BUFFER_LIMIT` | `65536` | Çerçeveleme tampon üst sınırı (64 KB) |
 | `trustProxy` | `TRUST_PROXY` | `false` | Vekil sunucu arkasında IP doğrulama toleransı |
 | `strictPq` | `STRICT_PQ` | `false` | Klasik algoritmaları tamamen engelleme modu |
@@ -198,7 +198,7 @@ Terminal arayüzünde komut satırından çalıştırılabilecek yönergeler:
   "iv": "base64_aes_gcm_iv",
   "authTag": "base64_tag",
   "ciphertext": "base64_encrypted_payload",
-  "pad": "000... (Toplam 1536 bayt)"
+  "pad": "000... (Toplam 2048 bayt)"
 }
 ```
 

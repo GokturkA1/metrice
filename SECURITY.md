@@ -25,7 +25,7 @@ Metrice, geleneksel ağ dinleme, kimlik sahteciliği, yönlendirme zehirleme, de
 - **Anonim Devreler**: Düğümler arasındaki iletişim doğrudan IP yerine en az 3 atlamalı (Giriş / Röle / Çıkış) anonim devreler üzerinden tünellenir.
 - **Ters Katmanlı Şifreleme**: Gönderici, paketi çıkıştan başlayarak geriye doğru her aktarım düğümünün açık anahtarıyla şifreler. Her düğüm yalnızca kendi katmanını soyabilir; bir önceki ve bir sonraki atlama haricinde devrenin başını ve sonunu bilemez.
 - **Trafik Analizi ve DPI Koruması (Uniform Cell Padding)**:
-  - Paket boyutu analizine dayalı parmak izi çıkarma saldırılarını engellemek için tüm Onion hücreleri sabit **1536 bayt** boyuta PKCS#7 benzeri rastgele dolgu (padding) ile hizalanır.
+  - Paket boyutu analizine dayalı parmak izi çıkarma saldırılarını engellemek için tüm Onion hücreleri sabit **2048 bayt** boyuta PKCS#7 benzeri rastgele dolgu (padding) ile hizalanır. Ham kullanıcı yükü azami 768 bayt ile sınırlandırılır.
   - Veri boyutu ne olursa olsun hat üzerindeki tüm paketler kriptografik olarak ayırt edilemez tek tip (uniform) bloklar halinde iletilir.
 - **Devre İzolasyonu & TTL Temizliği**: Devre durumları 10 dakikalık (600.000 ms) zaman aşımına tabidir. Süresi dolan anahtar materyali ve devre eşlemeleri bellekten güvenli biçimde silinir.
 

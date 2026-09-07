@@ -646,14 +646,26 @@ export class FederationEngine extends EventEmitter {
         return;
       }
 
-      const expectedData = `${nodeId}${this.nodeAddress}${timestamp}${nonce}`;
-      const altData = `${nodeId}${this.meshAddress}${timestamp}${nonce}`;
-      let isSigValid = CryptoHelper.verify(expectedData, sig, identityPublicKey);
-      if (!isSigValid) {
-        isSigValid = CryptoHelper.verify(altData, sig, identityPublicKey);
+      const cleanLocal = (channel?.socket?.localAddress || '').replace(/^::ffff:/, '');
+      const localSockAddr = cleanLocal ? `${cleanLocal}:${channel.socket.localPort}` : null;
+      const hostAddr = this.nodeAddress;
+      const meshAddr = this.meshAddress;
+      const ipAddr = this.publicIp ? `${this.publicIp}:${CONFIG.federationPort}` : null;
+      const localhostAddr = this.nodeAddress && this.nodeAddress.startsWith('localhost:')
+        ? this.nodeAddress.replace('localhost:', '127.0.0.1:')
+        : null;
+
+      let isSigValid = CryptoHelper.verify(`${nodeId}${hostAddr}${timestamp}${nonce}`, sig, identityPublicKey) ||
+                       CryptoHelper.verify(`${nodeId}${meshAddr}${timestamp}${nonce}`, sig, identityPublicKey);
+
+      if (!isSigValid && localSockAddr) {
+        isSigValid = CryptoHelper.verify(`${nodeId}${localSockAddr}${timestamp}${nonce}`, sig, identityPublicKey);
       }
-      if (!isSigValid && payload.relayAddress) {
-        isSigValid = CryptoHelper.verify(`${nodeId}${payload.relayAddress}${timestamp}${nonce}`, sig, identityPublicKey);
+      if (!isSigValid && ipAddr) {
+        isSigValid = CryptoHelper.verify(`${nodeId}${ipAddr}${timestamp}${nonce}`, sig, identityPublicKey);
+      }
+      if (!isSigValid && localhostAddr) {
+        isSigValid = CryptoHelper.verify(`${nodeId}${localhostAddr}${timestamp}${nonce}`, sig, identityPublicKey);
       }
 
       if (!isSigValid) {
@@ -958,15 +970,30 @@ export class FederationEngine extends EventEmitter {
     let targetPort = port;
 
     // Alt ağ seviyesinde fiziksel IP çözümlemesi (.mesh veya NodeID)
-    if (targetHost.endsWith('.mesh') || AddressHelper.isValidNodeId(targetHost)) {
+    if (typeof targetHost === 'string' && (targetHost.endsWith('.mesh') || AddressHelper.isValidNodeId(targetHost))) {
       const nid = targetHost.replace('.mesh', '').toLowerCase();
-      const resolved = this.nodePhysicalAddresses.get(nid);
+      let resolved = this.nodePhysicalAddresses.get(nid);
+      if (!resolved) {
+        resolved = this.presenceTable.get(nid)?.rendezvousNodes?.[0];
+      }
+      if (!resolved) {
+        resolved = this.db.getRoute(nid)?.rendezvousNodes?.[0];
+      }
+
       if (resolved) {
-        const [rHost, rPortStr] = resolved.split(':');
-        targetHost = rHost;
-        if (rPortStr && (!targetPort || isNaN(targetPort))) {
-          targetPort = parseInt(rPortStr, 10);
+        const parsed = AddressHelper.parseTarget(resolved);
+        if (parsed && parsed.host) {
+          targetHost = parsed.host;
+          targetPort = parsed.port || targetPort || CONFIG.federationPort;
+        } else {
+          const [rHost, rPortStr] = resolved.split(':');
+          targetHost = rHost;
+          if (rPortStr && (!targetPort || isNaN(targetPort))) {
+            targetPort = parseInt(rPortStr, 10);
+          }
         }
+      } else {
+        return Promise.reject(new Error(`Target node ${targetHost} cannot be resolved to a physical address`));
       }
     }
 
@@ -1443,6 +1470,7 @@ export class FederationEngine extends EventEmitter {
     for (const [nodeId, rec] of this.presenceTable.entries()) {
       if (now - rec.lastSeen > presenceTtl) {
         this.presenceTable.delete(nodeId);
+        this.nodePhysicalAddresses.delete(nodeId);
       }
     }
     this.db.deleteExpiredRoutes(presenceTtl);
