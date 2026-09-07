@@ -122,7 +122,12 @@ export class TerminalSession extends EventEmitter {
   }
 
   incrementUnread(target) {
+    if (!target) return;
     if (this.activeTarget === target) return;
+    const targetNick = target.split(':')[0];
+    const activeNick = this.activeTarget ? this.activeTarget.split(':')[0] : null;
+    if (activeNick && targetNick && activeNick === targetNick) return;
+
     const current = this.unreadCounts.get(target) || 0;
     this.unreadCounts.set(target, current + 1);
   }
@@ -132,6 +137,15 @@ export class TerminalSession extends EventEmitter {
     this.addContact(target);
     this.selectedContactIdx = this.contacts.indexOf(target);
     this.unreadCounts.delete(target);
+    const targetNick = target ? target.split(':')[0] : null;
+    if (targetNick) {
+      this.unreadCounts.delete(targetNick);
+      for (const k of this.unreadCounts.keys()) {
+        if (k.split(':')[0] === targetNick) {
+          this.unreadCounts.delete(k);
+        }
+      }
+    }
     this.scrollOffset = 0;
     this.emit('request_render');
   }
@@ -563,7 +577,8 @@ export class TerminalSession extends EventEmitter {
           const contact = this.contacts[contactIdx];
           const isCurrent = contact === this.activeTarget;
           const isSelected = this.focus === 'sidebar' && contactIdx === this.selectedContactIdx;
-          const isOnline = onlineList.includes(contact);
+          const isOnline = onlineList.includes(contact) || 
+            onlineList.some((u) => u === contact || (contact.startsWith('@') && u.split(':')[0] === contact.split(':')[0]));
           const unread = this.unreadCounts.get(contact) || 0;
 
           let statusChar = '○';

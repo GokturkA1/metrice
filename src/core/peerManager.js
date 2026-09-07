@@ -48,7 +48,7 @@ export class PeerManager {
   }
 
   loadPeers() {
-    if (fs.existsSync(this.storagePath)) {
+    if (this.storagePath && typeof this.storagePath === 'string' && fs.existsSync(this.storagePath)) {
       try {
         const raw = JSON.parse(fs.readFileSync(this.storagePath, 'utf-8'));
         raw.forEach(([addr, meta]) => {
@@ -69,9 +69,10 @@ export class PeerManager {
   }
 
   savePeers() {
+    if (!this.storagePath || typeof this.storagePath !== 'string') return;
     try {
       const data = Array.from(this.peers.entries());
-      fs.promises.writeFile(this.storagePath, JSON.stringify(data, null, 2), 'utf-8');
+      fs.promises.writeFile(this.storagePath, JSON.stringify(data, null, 2), 'utf-8').catch(() => {});
     } catch (err) {
       log.error(I18n.t('PEER_CACHE_SAVE_ERROR', { error: err.message }));
     }

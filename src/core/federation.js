@@ -446,6 +446,7 @@ export class FederationEngine extends EventEmitter {
     this.nodePhysicalAddresses = new Map(); // nodeId -> 'host:port'
     this.pendingDialbacks = new Map(); // nonce -> { targetIp, timer, resolve }
     this.rendezvousTunnels = new Map(); // nodeId -> { socket, channel, boundAt }
+    this.rendezvousRelays = new Map(); // relayAddr -> { channel, socket }
     this.boundRendezvousRelays = new Set(); // EDGE'in bağlı olduğu RELAY'ler
     this.presenceTable = new Map(); // nodeId -> PresenceRecord
     this.rendezvousHeartbeatInterval = null;
@@ -517,7 +518,22 @@ export class FederationEngine extends EventEmitter {
   }
 
   getRemoteUserSecurity(userAddress) {
-    const data = this.remoteOnlineUsers.get(userAddress);
+    if (!userAddress) return null;
+    let data = this.remoteOnlineUsers.get(userAddress);
+    if (!data) {
+      const parsed = AddressHelper.parse(userAddress);
+      const nick = parsed && parsed.name ? parsed.name : userAddress.split(':')[0].replace('@', '');
+      if (nick) {
+        for (const [addr, d] of this.remoteOnlineUsers.entries()) {
+          const p = AddressHelper.parse(addr);
+          const userNick = p && p.name ? p.name : addr.split(':')[0].replace('@', '');
+          if (userNick === nick) {
+            data = d;
+            break;
+          }
+        }
+      }
+    }
     if (!data) return null;
     return {
       isSsh: !!data.isSsh,
@@ -1029,7 +1045,28 @@ export class FederationEngine extends EventEmitter {
       if (existing.isReady) {
         return Promise.resolve(existing);
       }
-      return new Promise((resolve) => existing.once('ready', () => resolve(existing)));
+      return new Promise((resolve, reject) => {
+        const onReady = () => {
+          cleanup();
+          resolve(existing);
+        };
+        const onError = (err) => {
+          cleanup();
+          reject(err);
+        };
+        const onClose = () => {
+          cleanup();
+          reject(new Error('Connection closed before ready'));
+        };
+        const cleanup = () => {
+          existing.off('ready', onReady);
+          existing.off('error', onError);
+          existing.off('close', onClose);
+        };
+        existing.once('ready', onReady);
+        existing.once('error', onError);
+        existing.once('close', onClose);
+      });
     }
 
     return new Promise((resolve, reject) => {
@@ -1114,11 +1151,11 @@ export class FederationEngine extends EventEmitter {
     const peers = this.peerManager.getAllPeers();
     const myState = this.getLocalStateFn ? this.getLocalStateFn() : { memberships: [] };
 
-    for (const peer of peers) {
-      if (!peer || !peer.includes(':')) continue;
+    await Promise.allSettled(peers.map(async (peer) => {
+      if (!peer || !peer.includes(':')) return;
       const [host, portStr] = peer.split(':');
       const port = parseInt(portStr, 10);
-      if (!host || isNaN(port)) continue;
+      if (!host || isNaN(port)) return;
 
       try {
         const res = await this.sendPacket(host, port, {
@@ -1161,6 +1198,28 @@ export class FederationEngine extends EventEmitter {
         }
       } catch {
         this.peerManager.addOrUpdate(peer, false);
+      }
+    }));
+
+    const presenceSyncPayload = {
+      type: 'PRESENCE_SYNC',
+      sourceNode: this.nodeAddress,
+      memberships: myState.memberships
+    };
+
+    if (this.rendezvousRelays) {
+      for (const [, relay] of this.rendezvousRelays.entries()) {
+        if (relay && relay.channel && relay.channel.socket && relay.channel.socket.writable) {
+          relay.channel.writePayload(presenceSyncPayload);
+        }
+      }
+    }
+
+    if (this.rendezvousTunnels) {
+      for (const [, tunnel] of this.rendezvousTunnels.entries()) {
+        if (tunnel && tunnel.channel && tunnel.channel.socket && tunnel.channel.socket.writable) {
+          tunnel.channel.writePayload(presenceSyncPayload);
+        }
       }
     }
   }
@@ -1220,6 +1279,7 @@ export class FederationEngine extends EventEmitter {
   }
 
   async performRandomGossip() {
+    if (!this.peerManager || typeof this.peerManager.getRandomSample !== 'function') return;
     const sample = this.peerManager.getRandomSample(3);
     for (const peer of sample) {
       if (!peer || !peer.includes(':')) continue;
@@ -1415,6 +1475,7 @@ export class FederationEngine extends EventEmitter {
       const res = await this.sendPacket(host, port, bindPayload);
       if (res && res.status === 'bound') {
         this.boundRendezvousRelays.add(relayAddr);
+        this.rendezvousRelays.set(relayAddr, { channel, socket: channel.socket });
         log.info(`Rendezvous tüneli bağlandı -> ${relayAddr}`);
 
         if (channel.peerNodeAddress && channel.peerIdentityKey) {
@@ -1444,6 +1505,7 @@ export class FederationEngine extends EventEmitter {
           channel.socket.once('close', () => {
             channel._hasRendezvousCloseHandler = false;
             this.boundRendezvousRelays.delete(relayAddr);
+            this.rendezvousRelays.delete(relayAddr);
             log.warn(`Rendezvous bağlantısı kesildi -> ${relayAddr}, yenileniyor...`);
             setTimeout(() => this.maintainRendezvousTunnels(), 2000);
           });
@@ -1564,6 +1626,22 @@ export class FederationEngine extends EventEmitter {
       const port = parseInt(portStr, 10);
       if (!host || isNaN(port)) continue;
       this.sendPacket(host, port, payload).catch(() => {});
+    }
+
+    if (this.rendezvousRelays) {
+      for (const [, relay] of this.rendezvousRelays.entries()) {
+        if (relay && relay.channel && relay.channel.socket && relay.channel.socket.writable) {
+          relay.channel.writePayload(payload);
+        }
+      }
+    }
+
+    if (this.rendezvousTunnels) {
+      for (const [, tunnel] of this.rendezvousTunnels.entries()) {
+        if (tunnel && tunnel.channel && tunnel.channel.socket && tunnel.channel.socket.writable) {
+          tunnel.channel.writePayload(payload);
+        }
+      }
     }
   }
 

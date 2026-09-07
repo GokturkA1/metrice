@@ -43,8 +43,63 @@ export class ClientServer {
       memberships: this.getLocalMemberships()
     }));
 
+    this.initFederationListeners();
+  }
+
+  initFederationListeners() {
     this.federation.on('presence_change', () => {
       this.notifyAllSessionsRender();
+    });
+
+    this.federation.on('message', (msg) => {
+      try {
+        if (msg.to.startsWith('#')) {
+          for (const [addr, userSession] of this.sessions.entries()) {
+            if (msg.from !== addr) {
+              if (userSession.isMemberOf(msg.to)) {
+                userSession.incrementUnread(msg.to);
+                const isMentioned = userSession.isUserMentioned(msg.content);
+                if (userSession.activeTarget !== msg.to || isMentioned) {
+                  userSession.notifyNewMessage();
+                }
+                userSession.emit('request_render');
+              }
+            }
+          }
+        } else {
+          const recipientSession = this.findLocalSession(msg.to);
+          if (recipientSession) {
+            const parsedFrom = AddressHelper.parse(msg.from);
+            const rawNick = parsedFrom && parsedFrom.name ? parsedFrom.name : (msg.from ? msg.from.split(':')[0].replace('@', '') : '');
+            const plainFrom = rawNick ? `@${rawNick}` : msg.from;
+
+            recipientSession.addContact(msg.from);
+            if (plainFrom && plainFrom !== msg.from) {
+              recipientSession.addContact(plainFrom);
+            }
+
+            recipientSession.incrementUnread(msg.from);
+            if (plainFrom && plainFrom !== msg.from) {
+              recipientSession.incrementUnread(plainFrom);
+            }
+
+            recipientSession.notifyNewMessage();
+            recipientSession.emit('request_render');
+          }
+        }
+      } catch (err) {
+        log.error(I18n.t('CLIENT_MSG_DISPATCH_ERROR', { error: err.message }));
+      }
+    });
+
+    this.federation.on('typing', (payload) => {
+      try {
+        const recipientSession = this.findLocalSession(payload.to);
+        if (recipientSession && recipientSession.activeTarget === payload.from) {
+          const rawName = payload.from.split(':')[0].replace('@', '');
+          recipientSession.setTyping(rawName);
+        }
+      } catch {}
     });
   }
 
@@ -151,7 +206,9 @@ export class ClientServer {
             const authTag = parts[5];
             const ciphertext = parts[6];
 
-            const isSender = m.from === userAddress;
+            const senderNick = m.from ? m.from.split(':')[0].replace('@', '') : '';
+            const myNick = userAddress ? userAddress.split(':')[0].replace('@', '') : '';
+            const isSender = senderNick === myNick;
             const chosen = isSender ? sCombined : rCombined;
 
             const sharedSecret = CryptoHelper.decapsulateKey(session.kemKeyPair.privateKey, chosen[0]);
@@ -615,45 +672,6 @@ export class ClientServer {
     this.server.listen(CONFIG.clientPort, () => {
       log.info(I18n.t('CLIENT_LISTENING', { port: CONFIG.clientPort }));
     });
-
-    this.federation.on('message', (msg) => {
-      try {
-        if (msg.to.startsWith('#')) {
-          for (const [addr, userSession] of this.sessions.entries()) {
-            if (msg.from !== addr) {
-              if (userSession.isMemberOf(msg.to)) {
-                userSession.incrementUnread(msg.to);
-                const isMentioned = userSession.isUserMentioned(msg.content);
-                if (userSession.activeTarget !== msg.to || isMentioned) {
-                  userSession.notifyNewMessage();
-                }
-                userSession.emit('request_render');
-              }
-            }
-          }
-        } else {
-          const recipientSession = this.findLocalSession(msg.to);
-          if (recipientSession) {
-            recipientSession.addContact(msg.from);
-            recipientSession.incrementUnread(msg.from);
-            recipientSession.notifyNewMessage();
-            recipientSession.emit('request_render');
-          }
-        }
-      } catch (err) {
-        log.error(I18n.t('CLIENT_MSG_DISPATCH_ERROR', { error: err.message }));
-      }
-    });
-
-    this.federation.on('typing', (payload) => {
-      try {
-        const recipientSession = this.findLocalSession(payload.to);
-        if (recipientSession && recipientSession.activeTarget === payload.from) {
-          const rawName = payload.from.split(':')[0].replace('@', '');
-          recipientSession.setTyping(rawName);
-        }
-      } catch {}
-    });
   }
 
   async handleOutboundMessage(session, from, to, content, isAction = false, isSnippet = false) {
@@ -753,8 +771,20 @@ export class ClientServer {
       if (target.isLocal) {
         const recipientSession = this.findLocalSession(target.raw);
         if (recipientSession) {
+          const parsedFrom = AddressHelper.parse(from);
+          const rawNick = parsedFrom && parsedFrom.name ? parsedFrom.name : (from ? from.split(':')[0].replace('@', '') : '');
+          const plainFrom = rawNick ? `@${rawNick}` : from;
+
           recipientSession.addContact(from);
+          if (plainFrom && plainFrom !== from) {
+            recipientSession.addContact(plainFrom);
+          }
+
           recipientSession.incrementUnread(from);
+          if (plainFrom && plainFrom !== from) {
+            recipientSession.incrementUnread(plainFrom);
+          }
+
           recipientSession.notifyNewMessage();
           recipientSession.emit('request_render');
         }
