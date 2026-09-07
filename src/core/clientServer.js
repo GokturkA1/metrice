@@ -69,19 +69,8 @@ export class ClientServer {
         } else {
           const recipientSession = this.findLocalSession(msg.to);
           if (recipientSession) {
-            const parsedFrom = AddressHelper.parse(msg.from);
-            const rawNick = parsedFrom && parsedFrom.name ? parsedFrom.name : (msg.from ? msg.from.split(':')[0].replace('@', '') : '');
-            const plainFrom = rawNick ? `@${rawNick}` : msg.from;
-
             recipientSession.addContact(msg.from);
-            if (plainFrom && plainFrom !== msg.from) {
-              recipientSession.addContact(plainFrom);
-            }
-
             recipientSession.incrementUnread(msg.from);
-            if (plainFrom && plainFrom !== msg.from) {
-              recipientSession.incrementUnread(plainFrom);
-            }
 
             recipientSession.notifyNewMessage();
             recipientSession.emit('request_render');
@@ -126,7 +115,7 @@ export class ClientServer {
     for (const [userAddr, session] of this.sessions.entries()) {
       list.push({
         user: userAddr,
-        channels: session.getMyChannels(),
+        channels: typeof session.getMyChannels === 'function' ? session.getMyChannels() : [],
         isSsh: !!session.isSsh,
         kemPublicKey: session.kemKeyPair ? session.kemKeyPair.publicKey : ''
       });
@@ -164,7 +153,9 @@ export class ClientServer {
 
   notifyAllSessionsRender() {
     for (const session of this.sessions.values()) {
-      session.emit('request_render');
+      if (session && typeof session.emit === 'function') {
+        session.emit('request_render');
+      }
     }
   }
 
@@ -771,19 +762,8 @@ export class ClientServer {
       if (target.isLocal) {
         const recipientSession = this.findLocalSession(target.raw);
         if (recipientSession) {
-          const parsedFrom = AddressHelper.parse(from);
-          const rawNick = parsedFrom && parsedFrom.name ? parsedFrom.name : (from ? from.split(':')[0].replace('@', '') : '');
-          const plainFrom = rawNick ? `@${rawNick}` : from;
-
           recipientSession.addContact(from);
-          if (plainFrom && plainFrom !== from) {
-            recipientSession.addContact(plainFrom);
-          }
-
           recipientSession.incrementUnread(from);
-          if (plainFrom && plainFrom !== from) {
-            recipientSession.incrementUnread(plainFrom);
-          }
 
           recipientSession.notifyNewMessage();
           recipientSession.emit('request_render');

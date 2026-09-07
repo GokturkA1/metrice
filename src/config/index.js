@@ -7,10 +7,11 @@ export const CONFIG = {
   defaultFedPort: 8001,
 
   // SSH-2 Sunucu Ayarları
-  sshServerVersion: process.env.SSH_SERVER_VERSION || 'SSH-2.0-Metrice_2.1.8',
+  sshServerVersion: process.env.SSH_SERVER_VERSION || 'SSH-2.0-Metrice_2.1.9',
 
   // Metrice v2.0 P2P-Mesh, AutoNAT ve Buluşma Noktası (Rendezvous) Ayarları
   meshRole: process.env.MESH_ROLE || 'EDGE', // 'RELAY' veya 'EDGE'
+  bootstrapPeers: (process.env.BOOTSTRAP_PEERS || '').split(',').map(p => p.trim()).filter(Boolean),
   maxRendezvousTunnels: parseInt(process.env.MAX_RENDEZVOUS_TUNNELS || '64', 10),
   rendezvousKeepaliveInterval: parseInt(process.env.RENDEZVOUS_KEEPALIVE_MS || '30000', 10),
   presenceTtl: parseInt(process.env.PRESENCE_TTL_MS || '60000', 10),

@@ -114,7 +114,9 @@ export class PeerManager {
       current.failures += 1;
     }
 
-    if (current.score <= 0 || current.failures >= 5) {
+    const isBootstrap = Array.isArray(CONFIG && CONFIG.bootstrapPeers) && CONFIG.bootstrapPeers.includes(peerAddr);
+
+    if (!isBootstrap && (current.score <= 0 || current.failures >= 10)) {
       this.peers.delete(peerAddr);
       log.debug(I18n.t('PEER_EVICTED', { peer: peerAddr }));
     } else {

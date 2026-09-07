@@ -491,7 +491,7 @@ export class FederationEngine extends EventEmitter {
     const activeRemote = [];
     let removedAny = false;
     for (const [userAddr, data] of this.remoteOnlineUsers.entries()) {
-      if (now - data.lastSeen < 25000) {
+      if (now - data.lastSeen < ((CONFIG && CONFIG.presenceTtl) || 60000)) {
         activeRemote.push(userAddr);
       } else {
         this.remoteOnlineUsers.delete(userAddr);
@@ -510,7 +510,7 @@ export class FederationEngine extends EventEmitter {
     const now = Date.now();
 
     for (const [userAddr, data] of this.remoteOnlineUsers.entries()) {
-      if (now - data.lastSeen < 25000 && Array.isArray(data.channels) && data.channels.includes(channelName)) {
+      if (now - data.lastSeen < ((CONFIG && CONFIG.presenceTtl) || 60000) && Array.isArray(data.channels) && data.channels.includes(channelName)) {
         members.push(userAddr);
       }
     }
