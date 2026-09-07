@@ -95,6 +95,7 @@ export class SecureChannel extends EventEmitter {
 
     this.pendingQueue = [];
     this.buffer = '';
+    this.lastPong = Date.now();
 
     this.initSocketHandlers();
     if (this.isInitiator) {
@@ -111,6 +112,7 @@ export class SecureChannel extends EventEmitter {
           return;
         }
         if (chunk[0] === 0x0A) {
+          this.lastPong = Date.now();
           this.emit('pong');
           return;
         }
@@ -1405,16 +1407,39 @@ export class FederationEngine extends EventEmitter {
   sendRendezvousHeartbeat() {
     if (this.role !== 'EDGE' || this.boundRendezvousRelays.size === 0) return;
 
+    const now = Date.now();
+    let needsMaintenance = false;
+
     for (const relayAddr of this.boundRendezvousRelays) {
       const [host, portStr] = relayAddr.split(':');
       const port = parseInt(portStr, 10);
       const key = `${host}:${port}`;
       const channel = this.connectionPool.get(key);
-      if (channel && channel.socket && !channel.socket.destroyed && channel.socket.writable) {
-        try {
-          channel.socket.write(Buffer.from([0x09]));
-        } catch {}
+
+      if (channel && channel.socket && !channel.socket.destroyed) {
+        // Zombi tünel tespiti: 60 saniyeden uzun süredir PONG alınmadıysa soketi kapat ve tüneli yenile
+        if (channel.lastPong && (now - channel.lastPong > 60000)) {
+          log.warn(`Rendezvous zombi tünel tespit edildi (PONG zaman aşımı): ${relayAddr}`);
+          channel.socket.destroy();
+          this.connectionPool.delete(key);
+          this.boundRendezvousRelays.delete(relayAddr);
+          needsMaintenance = true;
+          continue;
+        }
+
+        if (channel.socket.writable) {
+          try {
+            channel.socket.write(Buffer.from([0x09]));
+          } catch {}
+        }
+      } else {
+        this.boundRendezvousRelays.delete(relayAddr);
+        needsMaintenance = true;
       }
+    }
+
+    if (needsMaintenance) {
+      this.maintainRendezvousTunnels().catch(() => {});
     }
   }
 

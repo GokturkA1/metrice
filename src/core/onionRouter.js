@@ -44,7 +44,7 @@ export class OnionRouter extends EventEmitter {
   }
 
   /**
-   * ONION_CELL formatını tam 1536 bayt (trailing newline dahil) olacak şekilde biçimlendirir.
+   * ONION_CELL formatını tam UNIFORM_CELL_SIZE bayt (varsayılan 2048 bayt, trailing newline dahil) olacak şekilde biçimlendirir.
    */
   static formatPaddedCell(cell) {
     const raw = this.getPaddedCellObject(cell);

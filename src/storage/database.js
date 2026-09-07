@@ -89,6 +89,9 @@ export class Database {
           symmetric_key TEXT NOT NULL,
           created_at INTEGER NOT NULL
         );
+
+        CREATE INDEX IF NOT EXISTS idx_circuits_cid ON active_circuits(circuit_id);
+        CREATE INDEX IF NOT EXISTS idx_routing_seen ON routing_table(last_seen);
       `);
 
       try {
@@ -105,6 +108,7 @@ export class Database {
               symmetric_key TEXT NOT NULL,
               created_at INTEGER NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS idx_circuits_cid ON active_circuits(circuit_id);
           `);
         }
 
