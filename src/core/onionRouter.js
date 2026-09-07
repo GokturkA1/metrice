@@ -166,6 +166,20 @@ export class OnionRouter extends EventEmitter {
   }
 
   /**
+   * Belirtilen atlama adresini (Guard veya ara relay) kullanan tüm istemci devrelerini havuzdan siler.
+   * @param {string} hopAddress
+   */
+  removeCircuitsForHop(hopAddress) {
+    if (!hopAddress) return;
+    for (const [circuitId, circuit] of this.clientCircuits.entries()) {
+      if (circuit.hops && circuit.hops.some((h) => h.address === hopAddress)) {
+        this.clientCircuits.delete(circuitId);
+        log.debug(`Kopan soket ilişkili istemci devresi havuzdan düşürüldü: ${circuitId} (${hopAddress})`);
+      }
+    }
+  }
+
+  /**
    * Verilen devre üzerinden hedef NodeID'ye katmanlı şifreli ONION_CELL gönderir.
    */
   async sendOnionCell(circuit, targetNodeId, payload) {

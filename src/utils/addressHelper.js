@@ -49,7 +49,7 @@ export class AddressHelper {
         if (rest.startsWith(':') && /^\d+$/.test(rest.slice(1))) {
           port = parseInt(rest.slice(1), 10);
         }
-        return { isMesh: false, nodeId: null, host, port, isIpv6: true };
+        return { isMesh: false, nodeId: null, host, port, isIpv6: true, bracketWarning: false };
       }
     }
 
@@ -85,7 +85,8 @@ export class AddressHelper {
     }
 
     const isIpv6 = colonCount > 1 || host.includes(':');
-    return { isMesh: false, nodeId: null, host, port, isIpv6 };
+    const bracketWarning = colonCount > 1 && !target.startsWith('[') && /^\d+$/.test(target.slice(target.lastIndexOf(':') + 1)) && !target.slice(0, target.lastIndexOf(':')).includes('.');
+    return { isMesh: false, nodeId: null, host, port, isIpv6, bracketWarning: !!bracketWarning };
   }
 
   static parse(rawAddress) {
@@ -151,7 +152,8 @@ export class AddressHelper {
           host: parsed.host,
           port: parsed.port,
           isGlobalChannel: false,
-          isLocal
+          isLocal,
+          bracketWarning: !!parsed.bracketWarning
         };
       }
 
@@ -208,7 +210,8 @@ export class AddressHelper {
         nodeId: null,
         host: parsed.host,
         port: parsed.port,
-        isLocal
+        isLocal,
+        bracketWarning: !!parsed.bracketWarning
       };
     }
 

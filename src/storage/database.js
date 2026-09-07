@@ -94,6 +94,7 @@ export class Database {
       try {
         const circuitTableInfo = this.db.prepare('PRAGMA table_info(active_circuits)').all();
         if (circuitTableInfo.length > 0 && !circuitTableInfo.some((c) => c.name === 'circuit_key')) {
+          log.warn('Legacy active_circuits schema detected and upgraded to composite circuit_key.');
           this.db.exec('DROP TABLE IF EXISTS active_circuits;');
           this.db.exec(`
             CREATE TABLE active_circuits (

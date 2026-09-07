@@ -14,6 +14,10 @@ export default {
 
     const parsed = AddressHelper.parse(args[0]);
     if (parsed && parsed.type === 'USER') {
+      if (parsed.bracketWarning) {
+        session.addSystemLog('Uyarı: IPv6 adreslerinde port belirtmek için [IPv6]:Port sözdizimi kullanılmalıdır.');
+      }
+
       // Opportunistic Peering: Dış bir sunucuysa anında peer havuzuna ekle
       if (!parsed.isLocal && parsed.host && parsed.port && federation?.peerManager) {
         federation.peerManager.addOrUpdate(`${parsed.host}:${parsed.port}`, true);

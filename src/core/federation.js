@@ -648,6 +648,9 @@ export class FederationEngine extends EventEmitter {
 
       const cleanLocal = (channel?.socket?.localAddress || '').replace(/^::ffff:/, '');
       const localSockAddr = cleanLocal ? `${cleanLocal}:${channel.socket.localPort}` : null;
+      const bracketSockAddr = cleanLocal && cleanLocal.includes(':')
+        ? `[${cleanLocal}]:${channel.socket.localPort}`
+        : null;
       const hostAddr = this.nodeAddress;
       const meshAddr = this.meshAddress;
       const ipAddr = this.publicIp ? `${this.publicIp}:${CONFIG.federationPort}` : null;
@@ -660,6 +663,9 @@ export class FederationEngine extends EventEmitter {
 
       if (!isSigValid && localSockAddr) {
         isSigValid = CryptoHelper.verify(`${nodeId}${localSockAddr}${timestamp}${nonce}`, sig, identityPublicKey);
+      }
+      if (!isSigValid && bracketSockAddr) {
+        isSigValid = CryptoHelper.verify(`${nodeId}${bracketSockAddr}${timestamp}${nonce}`, sig, identityPublicKey);
       }
       if (!isSigValid && ipAddr) {
         isSigValid = CryptoHelper.verify(`${nodeId}${ipAddr}${timestamp}${nonce}`, sig, identityPublicKey);
@@ -693,10 +699,12 @@ export class FederationEngine extends EventEmitter {
         boundAt: Date.now()
       });
 
-      channel.socket.once('close', () => {
-        this.rendezvousTunnels.delete(nodeId);
-        log.info(`Rendezvous tüneli kapandı: ${nodeId}`);
-      });
+      if (channel?.socket && typeof channel.socket.once === 'function') {
+        channel.socket.once('close', () => {
+          this.rendezvousTunnels.delete(nodeId);
+          log.info(`Rendezvous tüneli kapandı: ${nodeId}`);
+        });
+      }
 
       log.info(`Rendezvous tüneli başarıyla bağlandı: ${nodeId} (Aktif tüneller: ${this.rendezvousTunnels.size}/64)`);
       channel.writePayload({
@@ -1044,11 +1052,17 @@ export class FederationEngine extends EventEmitter {
 
       secureChannel.on('error', (err) => {
         this.connectionPool.delete(key);
+        if (this.onionRouter && typeof this.onionRouter.removeCircuitsForHop === 'function') {
+          this.onionRouter.removeCircuitsForHop(key);
+        }
         reject(err);
       });
 
       secureChannel.on('close', () => {
         this.connectionPool.delete(key);
+        if (this.onionRouter && typeof this.onionRouter.removeCircuitsForHop === 'function') {
+          this.onionRouter.removeCircuitsForHop(key);
+        }
       });
 
       rawSocket.setTimeout(6000, () => {
