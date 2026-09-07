@@ -8,6 +8,7 @@ Metrice, geleneksel ağ dinleme, kimlik sahteciliği, yönlendirme zehirleme, de
 
 | Sürüm | Destek Durumu | Güvenlik Düzeltmeleri |
 | :--- | :--- | :--- |
+| **2.1.x** | :white_check_mark: Aktif Destek | Tam Güvenlik Yamaları (PQ, Onion, AutoNAT) |
 | **2.0.x** | :white_check_mark: Aktif Destek | Tam Güvenlik Yamaları (PQ, Onion, AutoNAT) |
 | < 2.0.0 | :x: Kullanım Dışı | Desteklenmiyor (v2.0'a yükseltme zorunludur) |
 

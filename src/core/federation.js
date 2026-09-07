@@ -1293,6 +1293,11 @@ export class FederationEngine extends EventEmitter {
 
       this.sendPacket(peerHost, peerPort, payload).catch((err) => {
         log.warn(`Dialback paket gönderim hatası: ${err.message}`);
+        clearTimeout(timer);
+        this.pendingDialbacks.delete(nonce);
+        this.isDialbackRunning = false;
+        this.setRole('EDGE');
+        resolve('EDGE');
       });
     });
   }
@@ -1561,22 +1566,36 @@ export class FederationEngine extends EventEmitter {
       return { status: 'queued' };
     }
 
-    const intermediaries = relayPool.filter((r) => r.address !== exitHop.address);
-    const hops = [];
-
-    if (intermediaries.length >= 2) {
-      hops.push(intermediaries[0]);
-      hops.push(intermediaries[1]);
-      hops.push(exitHop);
-    } else if (intermediaries.length === 1) {
-      hops.push(intermediaries[0]);
-      hops.push(exitHop);
-    } else {
-      hops.push(exitHop);
+    let circuit = this.onionRouter.getActiveCircuitForTarget(targetNodeId);
+    if (circuit && circuit.hops[circuit.hops.length - 1]?.address !== exitHop.address) {
+      this.onionRouter.removeClientCircuit(circuit.circuitId);
+      circuit = null;
     }
 
-    const circuit = await this.onionRouter.buildCircuit(hops);
-    return await this.onionRouter.sendOnionCell(circuit, targetNodeId, payload);
+    if (!circuit) {
+      const intermediaries = relayPool.filter((r) => r.address !== exitHop.address);
+      const hops = [];
+
+      if (intermediaries.length >= 2) {
+        hops.push(intermediaries[0]);
+        hops.push(intermediaries[1]);
+        hops.push(exitHop);
+      } else if (intermediaries.length === 1) {
+        hops.push(intermediaries[0]);
+        hops.push(exitHop);
+      } else {
+        hops.push(exitHop);
+      }
+
+      circuit = await this.onionRouter.buildCircuit(hops, targetNodeId);
+    }
+
+    try {
+      return await this.onionRouter.sendOnionCell(circuit, targetNodeId, payload);
+    } catch (err) {
+      this.onionRouter.removeClientCircuit(circuit.circuitId);
+      throw err;
+    }
   }
 
   async processOutbox() {

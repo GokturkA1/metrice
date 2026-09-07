@@ -52,10 +52,23 @@ export class OnionRouter extends EventEmitter {
   }
 
   /**
+   * Soket veya güvenli kanal düzeyinde tutarlı önceki atlama (prevHop) kimliği üretir.
+   */
+  static getHopIdentifier(channel) {
+    if (!channel) return 'unknown';
+    if (channel.peerNodeAddress) return channel.peerNodeAddress;
+    const remoteIp = channel.socket?.remoteAddress ? channel.socket.remoteAddress.replace(/^::ffff:/, '') : null;
+    const remotePort = channel.socket?.remotePort;
+    if (remoteIp && remotePort) return `${remoteIp}:${remotePort}`;
+    return remoteIp || 'unknown';
+  }
+
+  /**
    * Belirtilen 1-3 RELAY düğümü boyunca teleskopik devre (telescoping circuit) kurar.
    * @param {Array<{ address: string, kemPublicKey: string, nodeId: string }>} hops
+   * @param {string|null} targetNodeId
    */
-  async buildCircuit(hops) {
+  async buildCircuit(hops, targetNodeId = null) {
     if (!hops || hops.length === 0) {
       throw new Error('Circuit requires at least 1 relay hop');
     }
@@ -116,11 +129,40 @@ export class OnionRouter extends EventEmitter {
       circuitId,
       hops,
       keys,
+      targetNodeId: targetNodeId || null,
       createdAt: Date.now()
     };
 
     this.clientCircuits.set(circuitId, circuitRecord);
     return circuitRecord;
+  }
+
+  /**
+   * Hedef NodeID için süresi dolmamış aktif devreyi getirir.
+   * Süresi dolan devreleri temizler.
+   */
+  getActiveCircuitForTarget(targetNodeId) {
+    if (!targetNodeId) return null;
+    const now = Date.now();
+    for (const [circuitId, circuit] of this.clientCircuits.entries()) {
+      if (now - circuit.createdAt > this.circuitTtl) {
+        this.clientCircuits.delete(circuitId);
+        continue;
+      }
+      if (circuit.targetNodeId === targetNodeId) {
+        return circuit;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * İletim hatası veya sonlanma durumunda istemci devresini havuzdan siler.
+   */
+  removeClientCircuit(circuitId) {
+    if (circuitId) {
+      this.clientCircuits.delete(circuitId);
+    }
   }
 
   /**
@@ -197,7 +239,7 @@ export class OnionRouter extends EventEmitter {
       );
       const symmetricKey = CryptoHelper.deriveKey(sharedSecret, circuitId, 'p2p-mesh-onion-v2');
 
-      const prevHop = channel.peerNodeAddress || 'unknown';
+      const prevHop = OnionRouter.getHopIdentifier(channel);
       this.db.saveCircuit({
         circuitId,
         prevHop,
@@ -247,7 +289,7 @@ export class OnionRouter extends EventEmitter {
       return;
     }
 
-    const prevHop = channel?.peerNodeAddress || channel?.socket?.remoteAddress || 'unknown';
+    const prevHop = OnionRouter.getHopIdentifier(channel);
     const circuit = this.db.getCircuit(circuitId, prevHop);
     if (!circuit || !circuit.symmetricKey) {
       log.warn(`Bilinmeyen devre hücresi alındı, düşürülüyor: ${circuitId} (Önceki: ${prevHop})`);

@@ -336,35 +336,35 @@ export class Database {
   }
 
   clearConversationForUser(userAddress, target) {
+    const userPrefix = userAddress.split(':')[0];
     if (target.startsWith('#')) {
       const chanPrefix = target.split(':')[0];
       const stmt = this.db.prepare(`
         UPDATE messages 
         SET deleted_by = CASE 
           WHEN deleted_by = '' THEN ? 
-          WHEN deleted_by NOT LIKE '%' || ? || '%' THEN deleted_by || ',' || ? 
+          WHEN deleted_by NOT LIKE '%' || ? || '%' AND deleted_by NOT LIKE '%' || ? || '%' THEN deleted_by || ',' || ? 
           ELSE deleted_by 
         END
         WHERE receiver = ? OR receiver = ? OR receiver LIKE ? || ':%'
       `);
-      stmt.run(userAddress, userAddress, userAddress, target, chanPrefix, chanPrefix);
+      stmt.run(userAddress, userAddress, userPrefix, userAddress, target, chanPrefix, chanPrefix);
     } else {
-      const userPrefix = userAddress.split(':')[0];
       const targetPrefix = target.split(':')[0];
       const stmt = this.db.prepare(`
         UPDATE messages 
         SET deleted_by = CASE 
           WHEN deleted_by = '' THEN ? 
-          WHEN deleted_by NOT LIKE '%' || ? || '%' THEN deleted_by || ',' || ? 
+          WHEN deleted_by NOT LIKE '%' || ? || '%' AND deleted_by NOT LIKE '%' || ? || '%' THEN deleted_by || ',' || ? 
           ELSE deleted_by 
         END
-        WHERE ((sender = ? OR sender LIKE ? || ':%') AND (receiver = ? OR receiver LIKE ? || ':%'))
-           OR ((sender = ? OR sender LIKE ? || ':%') AND (receiver = ? OR receiver LIKE ? || ':%'))
+        WHERE ((sender = ? OR sender = ? OR sender LIKE ? || ':%') AND (receiver = ? OR receiver = ? OR receiver LIKE ? || ':%'))
+           OR ((sender = ? OR sender = ? OR sender LIKE ? || ':%') AND (receiver = ? OR receiver = ? OR receiver LIKE ? || ':%'))
       `);
       stmt.run(
-        userAddress, userAddress, userAddress,
-        userAddress, userPrefix, target, targetPrefix,
-        target, targetPrefix, userAddress, userPrefix
+        userAddress, userAddress, userPrefix, userAddress,
+        userAddress, userPrefix, userPrefix, target, targetPrefix, targetPrefix,
+        target, targetPrefix, targetPrefix, userAddress, userPrefix, userPrefix
       );
     }
   }
@@ -440,30 +440,42 @@ export class Database {
     if (!targetB) return [];
 
     let rows = [];
+    const userAPrefix = targetA.split(':')[0];
 
     if (targetB.startsWith('#')) {
+      const chanPrefix = targetB.split(':')[0];
       const stmt = this.db.prepare(`
         SELECT * FROM (
           SELECT id, sender, receiver, content, is_action, is_snippet, is_e2ee, timestamp 
           FROM messages 
-          WHERE receiver = ? AND (deleted_by NOT LIKE '%' || ? || '%')
+          WHERE (receiver = ? OR receiver = ? OR receiver LIKE ? || ':%')
+            AND (deleted_by NOT LIKE '%' || ? || '%' AND deleted_by NOT LIKE '%' || ? || '%')
           ORDER BY timestamp DESC 
           LIMIT ?
         ) ORDER BY timestamp ASC
       `);
-      rows = stmt.all(targetB, targetA, limit);
+      rows = stmt.all(targetB, chanPrefix, chanPrefix, targetA, userAPrefix, limit);
     } else {
+      const userBPrefix = targetB.split(':')[0];
       const stmt = this.db.prepare(`
         SELECT * FROM (
           SELECT id, sender, receiver, content, is_action, is_snippet, is_e2ee, timestamp 
           FROM messages 
-          WHERE ((sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?))
-            AND (deleted_by NOT LIKE '%' || ? || '%')
+          WHERE (
+            ((sender = ? OR sender = ? OR sender LIKE ? || ':%') AND (receiver = ? OR receiver = ? OR receiver LIKE ? || ':%'))
+            OR
+            ((sender = ? OR sender = ? OR sender LIKE ? || ':%') AND (receiver = ? OR receiver = ? OR receiver LIKE ? || ':%'))
+          )
+          AND (deleted_by NOT LIKE '%' || ? || '%' AND deleted_by NOT LIKE '%' || ? || '%')
           ORDER BY timestamp DESC 
           LIMIT ?
         ) ORDER BY timestamp ASC
       `);
-      rows = stmt.all(targetA, targetB, targetB, targetA, targetA, limit);
+      rows = stmt.all(
+        targetA, userAPrefix, userAPrefix, targetB, userBPrefix, userBPrefix,
+        targetB, userBPrefix, userBPrefix, targetA, userAPrefix, userAPrefix,
+        targetA, userAPrefix, limit
+      );
     }
 
     return rows.map((r) => ({
