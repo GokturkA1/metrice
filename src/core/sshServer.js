@@ -59,7 +59,7 @@ class SshClientConnection extends EventEmitter {
       const clean = configuredVersion.trim();
       this.serverVersion = clean.startsWith('SSH-2.0-') ? clean : `SSH-2.0-${clean}`;
     } else {
-      this.serverVersion = 'SSH-2.0-Metrice_2.1.9';
+      this.serverVersion = 'SSH-2.0-Metrice_2.2.0';
     }
 
     this.clientKexPayload = null;
@@ -124,6 +124,19 @@ class SshClientConnection extends EventEmitter {
     });
   }
 
+  destroySocket(forceReset = false) {
+    if (!this.socket) return;
+    try {
+      if (forceReset && typeof this.socket.resetAndDestroy === 'function') {
+        this.socket.resetAndDestroy();
+      } else {
+        this.socket.destroy();
+      }
+    } catch {
+      try { this.socket.destroy(); } catch {}
+    }
+  }
+
   processIncoming() {
     if (this.state === 'IDENT') {
       const idx = this.inBuffer.indexOf('\n');
@@ -131,7 +144,7 @@ class SshClientConnection extends EventEmitter {
         // ID satırı çok uzun sürerse veya saçma karakterler dolarsa kopar
         if (this.inBuffer.length > 256) {
           log.warn('Geçersiz SSH ID banner uzunluğu, bağlantı kesiliyor.');
-          this.socket.destroy();
+          this.destroySocket(true);
         }
         return;
       }
@@ -151,7 +164,7 @@ class SshClientConnection extends EventEmitter {
         if (this.inBuffer.length < 5) {
           if (this.inBuffer.length > 1024) {
             log.warn('Şifresiz SSH başlık tamponu taştı, bağlantı sıfırlanıyor.');
-            this.socket.destroy();
+            this.destroySocket(true);
           }
           return;
         }
@@ -162,7 +175,7 @@ class SshClientConnection extends EventEmitter {
         // --- ANINDA FIN/RST (DOS & FUZZING KORUMASI) ---
         if (packetLength > 65536 || packetLength < 4 || paddingLength >= packetLength) {
           log.warn(I18n.t('SSH_INVALID_PACKET_SIZE', { size: packetLength }));
-          this.socket.destroy(); // Bağlantıyı anında koparır (FIN/RST)
+          this.destroySocket(true); // Bağlantıyı anında koparır (FIN/RST)
           return;
         }
 
@@ -184,7 +197,7 @@ class SshClientConnection extends EventEmitter {
 
           if (this.currentPacketLen > 65536 || this.currentPacketLen < 4) {
             log.warn(I18n.t('SSH_INVALID_PACKET_SIZE', { size: this.currentPacketLen }));
-            this.socket.destroy();
+            this.destroySocket(true);
             return;
           }
         }
@@ -210,7 +223,7 @@ class SshClientConnection extends EventEmitter {
 
         if (!crypto.timingSafeEqual(macReceived, expectedMac)) {
           log.warn(I18n.t('SSH_HMAC_FAIL'));
-          this.socket.destroy();
+          this.destroySocket(true);
           return;
         }
 

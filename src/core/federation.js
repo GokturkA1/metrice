@@ -488,10 +488,11 @@ export class FederationEngine extends EventEmitter {
 
   getAllOnlineUsers() {
     const now = Date.now();
+    const ttl = (CONFIG && CONFIG.presenceTtl) || 60000;
     const activeRemote = [];
     let removedAny = false;
     for (const [userAddr, data] of this.remoteOnlineUsers.entries()) {
-      if (now - data.lastSeen < ((CONFIG && CONFIG.presenceTtl) || 60000)) {
+      if (now - data.lastSeen < ttl) {
         activeRemote.push(userAddr);
       } else {
         this.remoteOnlineUsers.delete(userAddr);
@@ -508,9 +509,10 @@ export class FederationEngine extends EventEmitter {
   getChannelMembers(channelName) {
     const members = [];
     const now = Date.now();
+    const ttl = (CONFIG && CONFIG.presenceTtl) || 60000;
 
     for (const [userAddr, data] of this.remoteOnlineUsers.entries()) {
-      if (now - data.lastSeen < ((CONFIG && CONFIG.presenceTtl) || 60000) && Array.isArray(data.channels) && data.channels.includes(channelName)) {
+      if (now - data.lastSeen < ttl && Array.isArray(data.channels) && data.channels.includes(channelName)) {
         members.push(userAddr);
       }
     }
@@ -888,15 +890,11 @@ export class FederationEngine extends EventEmitter {
       }
       channel.writePayload({ status: 'ack', type: 'USER_OFFLINE', user: payload.user });
     } else if (payload.type === 'PRESENCE_SYNC') {
-      const sourceNode = payload.sourceNode || channel.peerNodeAddress;
-      const reportedUsers = new Set();
-
       if (Array.isArray(payload.memberships)) {
         payload.memberships.forEach((m) => {
           if (m.user) {
             const parsed = AddressHelper.parse(m.user);
             if (parsed && !parsed.isLocal) {
-              reportedUsers.add(m.user);
               this.remoteOnlineUsers.set(m.user, {
                 lastSeen: Date.now(),
                 channels: m.channels || [],
@@ -906,17 +904,6 @@ export class FederationEngine extends EventEmitter {
             }
           }
         });
-      }
-
-      if (sourceNode) {
-        for (const [userAddr] of this.remoteOnlineUsers.entries()) {
-          const parsed = AddressHelper.parse(userAddr);
-          if (parsed && `${parsed.host}:${parsed.port}` === sourceNode) {
-            if (!reportedUsers.has(userAddr)) {
-              this.remoteOnlineUsers.delete(userAddr);
-            }
-          }
-        }
       }
 
       this.emit('presence_change');
@@ -1165,14 +1152,10 @@ export class FederationEngine extends EventEmitter {
         });
 
         if (res && res.type === 'PRESENCE_ACK' && Array.isArray(res.memberships)) {
-          const ackSourceNode = res.sourceNode || `${host}:${port}`;
-          const ackUsers = new Set();
-
           res.memberships.forEach((m) => {
             if (m.user) {
               const parsed = AddressHelper.parse(m.user);
               if (parsed && !parsed.isLocal) {
-                ackUsers.add(m.user);
                 this.remoteOnlineUsers.set(m.user, {
                   lastSeen: Date.now(),
                   channels: m.channels || [],
@@ -1182,17 +1165,6 @@ export class FederationEngine extends EventEmitter {
               }
             }
           });
-
-          if (ackSourceNode) {
-            for (const [userAddr] of this.remoteOnlineUsers.entries()) {
-              const parsed = AddressHelper.parse(userAddr);
-              if (parsed && `${parsed.host}:${parsed.port}` === ackSourceNode) {
-                if (!ackUsers.has(userAddr)) {
-                  this.remoteOnlineUsers.delete(userAddr);
-                }
-              }
-            }
-          }
 
           this.emit('presence_change');
         }
