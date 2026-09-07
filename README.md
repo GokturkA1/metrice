@@ -1,4 +1,4 @@
-# Metrice v2.0
+# Metrice v2.1
 
 Metrice, harici bağımlılık içermeyen (Zero External Dependencies), doğrudan Node.js çekirdek kütüphaneleri (`node:crypto`, `node:net`, `node:dgram`, `node:sqlite`, `node:dns`) üzerinde çalışan, kuantum sonrası kriptografi (Post-Quantum Cryptography) ve Tor benzeri çok katmanlı yönlendirme (Onion Routing) mimarisine sahip dağıtık eşler arası (P2P) ağ protokolüdür.
 
@@ -111,7 +111,7 @@ Tüm parametreler ortam değişkenleri (`process.env`) veya `src/config/index.js
 | `clientPort` | `CLIENT_PORT` | `2222` | Telnet TUI dinleme TCP portu |
 | `sshPort` | `SSH_PORT` | `2224` | Post-Quantum SSH-2 sunucusu dinleme TCP portu |
 | `federationPort` | `FED_PORT` | `8001` | P2P Federasyon ve Onion dinleme TCP portu |
-| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_1.0'` | SSH sunucusu protokol kimlik dizgesi |
+| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.1'` | SSH sunucusu protokol kimlik dizgesi |
 | `meshRole` | `MESH_ROLE` | `'EDGE'` | Düğüm rolü (`'RELAY'` veya `'EDGE'`) |
 | `maxRendezvousTunnels`| `MAX_RENDEZVOUS_TUNNELS` | `64` | Bir RELAY düğümünün kabul edeceği azami ters tünel sayısı |
 | `rendezvousKeepaliveInterval` | `RENDEZVOUS_KEEPALIVE_MS` | `30000` | Ters tünel denetim aralığı (0x09/0x0A PING-PONG ms) |
@@ -209,7 +209,7 @@ Terminal arayüzünde komut satırından çalıştırılabilecek yönergeler:
 Sistem bütünlüğü iki kapsamlı test süiti ile doğrulanır:
 
 ```bash
-# 1. Metrice v2.0 Spesifikasyon ve Güvenlik Süiti (25 Test)
+# 1. Metrice v2.1 Spesifikasyon ve Güvenlik Süiti
 node v2_test_suite.js
 
 # 2. Protokol, Post-Quantum, SSH-2 ve Veritabanı Süiti (24 Test)

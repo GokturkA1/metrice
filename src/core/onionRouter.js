@@ -247,9 +247,10 @@ export class OnionRouter extends EventEmitter {
       return;
     }
 
-    const circuit = this.db.getCircuit(circuitId);
+    const prevHop = channel?.peerNodeAddress || channel?.socket?.remoteAddress || 'unknown';
+    const circuit = this.db.getCircuit(circuitId, prevHop);
     if (!circuit || !circuit.symmetricKey) {
-      log.warn(`Bilinmeyen devre hücresi alındı, düşürülüyor: ${circuitId}`);
+      log.warn(`Bilinmeyen devre hücresi alındı, düşürülüyor: ${circuitId} (Önceki: ${prevHop})`);
       return;
     }
 

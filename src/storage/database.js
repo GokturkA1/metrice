@@ -82,7 +82,8 @@ export class Database {
         );
 
         CREATE TABLE IF NOT EXISTS active_circuits (
-          circuit_id TEXT PRIMARY KEY,
+          circuit_key TEXT PRIMARY KEY,
+          circuit_id TEXT NOT NULL,
           prev_hop TEXT,
           next_hop TEXT,
           symmetric_key TEXT NOT NULL,
@@ -91,6 +92,21 @@ export class Database {
       `);
 
       try {
+        const circuitTableInfo = this.db.prepare('PRAGMA table_info(active_circuits)').all();
+        if (circuitTableInfo.length > 0 && !circuitTableInfo.some((c) => c.name === 'circuit_key')) {
+          this.db.exec('DROP TABLE IF EXISTS active_circuits;');
+          this.db.exec(`
+            CREATE TABLE active_circuits (
+              circuit_key TEXT PRIMARY KEY,
+              circuit_id TEXT NOT NULL,
+              prev_hop TEXT,
+              next_hop TEXT,
+              symmetric_key TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+          `);
+        }
+
         const tableInfo = this.db.prepare('PRAGMA table_info(messages)').all();
         if (!tableInfo.some((col) => col.name === 'deleted_by')) {
           this.db.exec("ALTER TABLE messages ADD COLUMN deleted_by TEXT DEFAULT '';");
@@ -184,7 +200,7 @@ export class Database {
   close() {
     try {
       if (this.db) {
-        this.db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+        try { this.db.exec('PRAGMA wal_checkpoint(PASSIVE);'); } catch {}
         this.db.close();
         log.info(I18n.t('DB_WAL_CLOSED'));
       }
@@ -521,15 +537,30 @@ export class Database {
   // --- V2.0 ONION CIRCUITS STORAGE ---
 
   saveCircuit({ circuitId, prevHop = null, nextHop = null, symmetricKey, createdAt = Date.now() }) {
+    const circuitKey = prevHop ? `${circuitId}_${prevHop}` : circuitId;
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO active_circuits (circuit_id, prev_hop, next_hop, symmetric_key, created_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO active_circuits (circuit_key, circuit_id, prev_hop, next_hop, symmetric_key, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(circuitId, prevHop, nextHop, symmetricKey, createdAt);
+    stmt.run(circuitKey, circuitId, prevHop, nextHop, symmetricKey, createdAt);
   }
 
-  getCircuit(circuitId) {
-    const stmt = this.db.prepare('SELECT * FROM active_circuits WHERE circuit_id = ?');
+  getCircuit(circuitId, prevHop = null) {
+    if (prevHop) {
+      const circuitKey = `${circuitId}_${prevHop}`;
+      const stmt = this.db.prepare('SELECT * FROM active_circuits WHERE circuit_key = ?');
+      const row = stmt.get(circuitKey);
+      if (row) {
+        return {
+          circuitId: row.circuit_id,
+          prevHop: row.prev_hop,
+          nextHop: row.next_hop,
+          symmetricKey: row.symmetric_key,
+          createdAt: row.created_at
+        };
+      }
+    }
+    const stmt = this.db.prepare('SELECT * FROM active_circuits WHERE circuit_id = ? ORDER BY created_at DESC LIMIT 1');
     const row = stmt.get(circuitId);
     if (!row) return null;
     return {
@@ -541,8 +572,14 @@ export class Database {
     };
   }
 
-  deleteCircuit(circuitId) {
-    const stmt = this.db.prepare('DELETE FROM active_circuits WHERE circuit_id = ?');
-    stmt.run(circuitId);
+  deleteCircuit(circuitId, prevHop = null) {
+    if (prevHop) {
+      const circuitKey = `${circuitId}_${prevHop}`;
+      const stmt = this.db.prepare('DELETE FROM active_circuits WHERE circuit_key = ?');
+      stmt.run(circuitKey);
+    } else {
+      const stmt = this.db.prepare('DELETE FROM active_circuits WHERE circuit_id = ?');
+      stmt.run(circuitId);
+    }
   }
 }

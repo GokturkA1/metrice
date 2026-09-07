@@ -7,7 +7,7 @@ export const CONFIG = {
   defaultFedPort: 8001,
 
   // SSH-2 Sunucu Ayarları
-  sshServerVersion: process.env.SSH_SERVER_VERSION || 'SSH-2.0-Metrice_1.0',
+  sshServerVersion: process.env.SSH_SERVER_VERSION || 'SSH-2.0-Metrice_2.1',
 
   // Metrice v2.0 P2P-Mesh, AutoNAT ve Buluşma Noktası (Rendezvous) Ayarları
   meshRole: process.env.MESH_ROLE || 'EDGE', // 'RELAY' veya 'EDGE'

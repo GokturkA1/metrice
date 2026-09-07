@@ -1366,11 +1366,15 @@ export class FederationEngine extends EventEmitter {
         this.boundRendezvousRelays.add(relayAddr);
         log.info(`Rendezvous tüneli bağlandı -> ${relayAddr}`);
 
-        channel.socket.once('close', () => {
-          this.boundRendezvousRelays.delete(relayAddr);
-          log.warn(`Rendezvous bağlantısı kesildi -> ${relayAddr}, yenileniyor...`);
-          this.maintainRendezvousTunnels();
-        });
+        if (!channel._hasRendezvousCloseHandler) {
+          channel._hasRendezvousCloseHandler = true;
+          channel.socket.once('close', () => {
+            channel._hasRendezvousCloseHandler = false;
+            this.boundRendezvousRelays.delete(relayAddr);
+            log.warn(`Rendezvous bağlantısı kesildi -> ${relayAddr}, yenileniyor...`);
+            setTimeout(() => this.maintainRendezvousTunnels(), 2000);
+          });
+        }
         return true;
       }
     } catch (err) {
@@ -1498,7 +1502,15 @@ export class FederationEngine extends EventEmitter {
     } else if (route && (route.role === 'RELAY' || route.role === 'CAP_RELAY')) {
       if (route.rendezvousNodes && route.rendezvousNodes[0]) {
         exitRelayAddress = route.rendezvousNodes[0];
+      } else if (this.nodePhysicalAddresses.has(targetNodeId)) {
+        exitRelayAddress = this.nodePhysicalAddresses.get(targetNodeId);
       }
+    }
+
+    if (targetNodeId && (!exitRelayAddress || exitRelayAddress.length === 0)) {
+      log.info(`Hedef EDGE ${targetNodeId} için aktif buluşma noktası bulunamadı, mesaj Outbox kuyruğuna alındı`);
+      this.db.queueOutbox(payload);
+      return { status: 'queued' };
     }
 
     const allRoutes = this.db.getAllRoutes();
@@ -1543,12 +1555,10 @@ export class FederationEngine extends EventEmitter {
       }
     }
 
-    if (!exitHop && relayPool.length > 0) {
-      exitHop = relayPool[relayPool.length - 1];
-    }
-
     if (!exitHop) {
-      throw new Error(`Hedef ${targetNodeId} için uygun Exit/Rendezvous düğümü bulunamadı`);
+      log.info(`Hedef ${targetNodeId} (${exitRelayAddress}) için uygun Exit düğümü bulunamadı, Outbox kuyruğuna alındı`);
+      this.db.queueOutbox(payload);
+      return { status: 'queued' };
     }
 
     const intermediaries = relayPool.filter((r) => r.address !== exitHop.address);
