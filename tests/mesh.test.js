@@ -688,7 +688,7 @@ async function runV2TestSuite() {
     });
     CONFIG.sshServerVersion = prevVersion;
 
-    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.2.5' && customIdent === 'SSH-2.0-MyCustomNode';
+    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.2.6' && customIdent === 'SSH-2.0-MyCustomNode';
     record('7.8 [YAPILANDIRMA] SSH Sunucu Version String Özelleştirme & Fallback Uyumu', versionTestValid, `Fallback: ${fallbackIdent}, Custom: ${customIdent}`);
 
     // Test 7.9: RENDEZVOUS_BIND Yabancı relayAddress İmzası Reddi (Bypass & Reflection Önlemi)
@@ -1650,6 +1650,63 @@ async function runV2TestSuite() {
 
     const test745Ok = deRouteOk && routeUpdateAnnounced && trCrossRouteOk && onionCircuitBuiltWithDeExit;
     record('7.45 [REVİZYON 17] Kross-Röle Buluşma Noktası Anonsu (ROUTE_UPDATE) & Cross-Relay Onion Exit Hop Çözümlemesi', !!test745Ok);
+
+    // Test 7.46: [REVİZYON 19] Dinamik Port Çözümleme ve Routing Adres Bütünlüğü (Özel Port 3157 Koruması)
+    const customKp = CryptoHelper.generateIdentityKeyPair();
+    const customNodeId = CryptoHelper.deriveNodeId(customKp.publicKey);
+    const customTimestamp = Date.now();
+    const customRdv = ['custom.relay.org:3157'];
+
+    const customAnnounceData = JSON.stringify({
+      nodeId: customNodeId,
+      role: 'RELAY',
+      rendezvousNodes: customRdv,
+      kemPublicKey: customKp.publicKey,
+      channels: [],
+      timestamp: customTimestamp
+    });
+    const customAnnounceSig = CryptoHelper.sign(customAnnounceData, customKp.privateKey);
+
+    fedAutoNat.handleIncoming({
+      type: 'PRESENCE_ANNOUNCE',
+      nodeId: customNodeId,
+      role: 'RELAY',
+      rendezvousNodes: customRdv,
+      kemPublicKey: customKp.publicKey,
+      identityPublicKey: customKp.publicKey,
+      channels: [],
+      timestamp: customTimestamp,
+      sig: customAnnounceSig
+    }, { socket: { remoteAddress: '198.51.100.99' } }, '198.51.100.99:54321');
+
+    const mappedPhysicalAddr = fedAutoNat.nodePhysicalAddresses.get(customNodeId);
+    const presencePreservedPort = mappedPhysicalAddr === 'custom.relay.org:3157';
+
+    // getOrCreateSecureChannel çözümleme doğrulaması
+    let dialedHost = null;
+    let dialedPort = null;
+    const origCreateConnection = net.createConnection;
+    net.createConnection = ({ host, port }) => {
+      dialedHost = host;
+      dialedPort = port;
+      const fakeSock = new EventEmitter();
+      fakeSock.destroyed = false;
+      fakeSock.writable = true;
+      fakeSock.setTimeout = () => {};
+      fakeSock.destroy = () => {};
+      fakeSock.write = () => {};
+      return fakeSock;
+    };
+
+    try {
+      fedAutoNat.getOrCreateSecureChannel(`${customNodeId}.mesh`, CONFIG.federationPort).catch(() => {});
+    } finally {
+      net.createConnection = origCreateConnection;
+    }
+
+    const channelResolvedCustomPort = dialedHost === 'custom.relay.org' && dialedPort === 3157;
+    const test746Ok = presencePreservedPort && channelResolvedCustomPort;
+    record('7.46 [REVİZYON 19] Dinamik Port Çözümleme ve Özel Port (3157) Bütünlüğü Koruması', !!test746Ok);
 
     // Temiz Kapanış
     relayEngine.close();
