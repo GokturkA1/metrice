@@ -161,9 +161,14 @@ export class SecureChannel extends EventEmitter {
       this.nonceTracker.track(nonce);
     }
 
-    const canonicalAddress = (this.myIdentity && this.myIdentity.nodeId)
-      ? `${this.myIdentity.nodeId}.mesh:${CONFIG.federationPort}`
-      : this.myIdentity.nodeAddress;
+    const isRelay = (typeof this.myIdentity?.role === 'function' ? this.myIdentity.role() : this.myIdentity?.role) === 'RELAY' ||
+                    (typeof this.myIdentity?.role === 'function' ? this.myIdentity.role() : this.myIdentity?.role) === 'CAP_RELAY';
+    let canonicalAddress;
+    if (isRelay && typeof this.myIdentity?.getRelayAnnounceAddress === 'function') {
+      canonicalAddress = this.myIdentity.getRelayAnnounceAddress();
+    } else {
+      canonicalAddress = this.myIdentity?.nodeAddress || null;
+    }
 
     const dataToSign = JSON.stringify({
       type: 'HANDSHAKE_INIT',
@@ -430,12 +435,15 @@ export class FederationEngine extends EventEmitter {
 
     AddressHelper.setLocalNodeId(this.nodeId);
 
+    const self = this;
     this.myIdentity = {
       nodeId: this.nodeId,
       meshAddress: this.meshAddress,
       nodeAddress: this.nodeAddress,
       identityKeyPair: this.identityKeyPair,
-      kemKeyPair: this.kemKeyPair
+      kemKeyPair: this.kemKeyPair,
+      get role() { return self.role; },
+      getRelayAnnounceAddress: () => self.getRelayAnnounceAddress()
     };
 
     this.remoteOnlineUsers = new Map();
@@ -818,8 +826,12 @@ export class FederationEngine extends EventEmitter {
       if (!CryptoHelper.verify(dataToVerify, sig, identityPublicKey)) return;
       if (Math.abs(Date.now() - timestamp) > 120000) return;
 
-      // Zehirli adres koruması (Gossip Poisoning): 'localhost', '127.0.0.1', '0.0.0.0' içeren adresler rota tablosuna alınmaz
-      const isPoisoned = (addr) => typeof addr === 'string' && (addr.includes('localhost') || addr.includes('127.0.0.1') || addr.includes('0.0.0.0'));
+      // Zehirli adres koruması (Gossip Poisoning): 'localhost', '127.0.0.1', '0.0.0.0' ve sahte '.mesh' adresleri rota tablosuna alınmaz
+      const isPoisoned = (addr) => {
+        if (typeof addr !== 'string' || !addr.includes(':')) return true;
+        const [host] = addr.split(':');
+        return host.endsWith('.mesh') || host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
+      };
       const safeRendezvous = (rendezvousNodes || []).filter((addr) => !isPoisoned(addr));
 
       const record = {
@@ -932,10 +944,18 @@ export class FederationEngine extends EventEmitter {
       if (!CryptoHelper.verify(dataToVerify, sig, relayIdentityPublicKey)) return;
       if (Math.abs(Date.now() - timestamp) > 120000) return;
 
-      const isPoisoned = (addr) => typeof addr === 'string' && (addr.includes('localhost') || addr.includes('127.0.0.1') || addr.includes('0.0.0.0'));
+      const isPoisoned = (addr) => {
+        if (typeof addr !== 'string' || !addr.includes(':')) return true;
+        const [host] = addr.split(':');
+        return host.endsWith('.mesh') || host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
+      };
       let safeRdv = (rendezvousNodes || []).filter((addr) => !isPoisoned(addr));
       if (safeRdv.length === 0 && Array.isArray(rendezvousNodes) && rendezvousNodes.length > 0 && (process.env.NODE_ENV === 'test' || CONFIG.serverName === 'localhost')) {
-        safeRdv = rendezvousNodes;
+        safeRdv = rendezvousNodes.filter((addr) => {
+          if (typeof addr !== 'string' || !addr.includes(':')) return false;
+          const [host] = addr.split(':');
+          return !host.endsWith('.mesh');
+        });
       }
       if (safeRdv.length === 0) return;
 
@@ -1786,11 +1806,14 @@ export class FederationEngine extends EventEmitter {
 
   getRelayAnnounceAddress() {
     const serverHost = CONFIG.serverName;
-    const isRawIp = net.isIP(serverHost) || /^(?:::ffff:)?\d+\.\d+\.\d+\.\d+$/.test(serverHost);
-    if (!isRawIp && serverHost && serverHost !== 'localhost' && !serverHost.startsWith('127.') && serverHost !== '0.0.0.0') {
-      return `${serverHost}:${CONFIG.federationPort}`;
+    const isLoopbackOrLocal = !serverHost || serverHost === 'localhost' || serverHost.startsWith('127.') || serverHost === '0.0.0.0';
+    
+    // Genel IP konsensüsü varsa ve serverName yerelse genel IP'yi önceliklendir
+    if (isLoopbackOrLocal && this.publicIp) {
+      return `${this.publicIp}:${CONFIG.federationPort}`;
     }
-    return `${this.nodeId}.mesh:${CONFIG.federationPort}`;
+    
+    return `${serverHost || '127.0.0.1'}:${CONFIG.federationPort}`;
   }
 
   broadcastRouteUpdate(nodeId, rendezvousAddr, kemPublicKey, identityPublicKey) {
@@ -1841,11 +1864,19 @@ export class FederationEngine extends EventEmitter {
     const channels = this.getLocalChannels();
     const relayAnnounceAddr = this.getRelayAnnounceAddress();
 
-    // Zehirli adres koruması (Gossip Poisoning): 'localhost', '127.0.0.1', '0.0.0.0' asla anons edilmez
-    const isPoisoned = (addr) => typeof addr === 'string' && (addr.includes('localhost') || addr.includes('127.0.0.1') || addr.includes('0.0.0.0'));
+    // Zehirli adres koruması (Gossip Poisoning): 'localhost', '127.0.0.1', '0.0.0.0' ve '.mesh' asla anons edilmez
+    const isPoisoned = (addr) => {
+      if (typeof addr !== 'string' || !addr.includes(':')) return true;
+      const [host] = addr.split(':');
+      return host.endsWith('.mesh') || host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
+    };
     let safeBoundRelays = Array.from(this.boundRendezvousRelays).filter((addr) => !isPoisoned(addr));
     if (safeBoundRelays.length === 0 && this.boundRendezvousRelays.size > 0 && (process.env.NODE_ENV === 'test' || CONFIG.serverName === 'localhost')) {
-      safeBoundRelays = Array.from(this.boundRendezvousRelays);
+      safeBoundRelays = Array.from(this.boundRendezvousRelays).filter((addr) => {
+        if (typeof addr !== 'string' || !addr.includes(':')) return false;
+        const [host] = addr.split(':');
+        return !host.endsWith('.mesh');
+      });
     }
     const rendezvousNodes = this.isRelay() ? [relayAnnounceAddr] : safeBoundRelays;
 

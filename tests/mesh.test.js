@@ -562,7 +562,9 @@ async function runV2TestSuite() {
     const onionEncapsulated = payloadSentViaWritePayload && payloadTypeSent === 'ONION_CELL';
     record('7.3 [PROTOKOL] ONION_CELL Hücrelerinin Şifreli Tünelde (writePayload) Taşınması', onionEncapsulated);
 
-    // Test 7.4: Presence Anonsunda Ham IP Sızıntısı Engeli
+    // Test 7.4: [REVİZYON 18] Presence Anonsunda Fiziksel Taşıma Adresi Doğrulaması (.mesh Engeli)
+    const prevServerName = CONFIG.serverName;
+    CONFIG.serverName = 'relay.metrice.network';
     let capturedAnnouncePayload = null;
     const origSendPacket = fedAutoNat.sendPacket.bind(fedAutoNat);
     fedAutoNat.sendPacket = async (h, p, payload) => {
@@ -573,17 +575,11 @@ async function runV2TestSuite() {
     fedAutoNat.setRole('RELAY');
     fedAutoNat.broadcastPresenceAnnounce();
     fedAutoNat.sendPacket = origSendPacket;
+    CONFIG.serverName = prevServerName;
 
-    let leaksRawIp = false;
-    if (capturedAnnouncePayload && Array.isArray(capturedAnnouncePayload.rendezvousNodes)) {
-      for (const nodeAddr of capturedAnnouncePayload.rendezvousNodes) {
-        if (/^\d+\.\d+\.\d+\.\d+/.test(nodeAddr)) {
-          leaksRawIp = true;
-        }
-      }
-    }
-    const privacyPreserved = capturedAnnouncePayload && !leaksRawIp && capturedAnnouncePayload.rendezvousNodes[0].includes('.mesh');
-    record('7.4 [GİZLİLİK] PRESENCE_ANNOUNCE Ham IP Sızıntısı Engeli (NodeID.mesh Kullanımı)', privacyPreserved, `Duyurulan: ${capturedAnnouncePayload?.rendezvousNodes?.[0]}`);
+    const announcedAddr = capturedAnnouncePayload?.rendezvousNodes?.[0];
+    const isPhysicalTransport = announcedAddr === 'relay.metrice.network:8001' && !announcedAddr.endsWith('.mesh:8001');
+    record('7.4 [MİMARİ] PRESENCE_ANNOUNCE Fiziksel Taşıma Adresi (FQDN/IP, .mesh Engeli)', isPhysicalTransport, `Duyurulan: ${announcedAddr}`);
 
     // Test 7.5: initiateDialback Eşzamanlılık ve Çakışma Kilidi (isDialbackRunning)
     fedAutoNat.isDialbackRunning = true;
@@ -692,7 +688,7 @@ async function runV2TestSuite() {
     });
     CONFIG.sshServerVersion = prevVersion;
 
-    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.2.4' && customIdent === 'SSH-2.0-MyCustomNode';
+    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.2.5' && customIdent === 'SSH-2.0-MyCustomNode';
     record('7.8 [YAPILANDIRMA] SSH Sunucu Version String Özelleştirme & Fallback Uyumu', versionTestValid, `Fallback: ${fallbackIdent}, Custom: ${customIdent}`);
 
     // Test 7.9: RENDEZVOUS_BIND Yabancı relayAddress İmzası Reddi (Bypass & Reflection Önlemi)
@@ -1053,7 +1049,7 @@ async function runV2TestSuite() {
     const poisonKp = CryptoHelper.generateIdentityKeyPair();
     const poisonNodeId = CryptoHelper.deriveNodeId(poisonKp.publicKey);
     const poisonTimestamp = Date.now();
-    const poisonedRdvNodes = ['127.0.0.1:8001', 'localhost:8001', '0.0.0.0:8001', 'safe.mesh:8001'];
+    const poisonedRdvNodes = ['127.0.0.1:8001', 'localhost:8001', '0.0.0.0:8001', 'fake.mesh:8001', 'safe.relay.org:8001'];
     const poisonData = JSON.stringify({
       nodeId: poisonNodeId,
       role: 'RELAY',
@@ -1079,8 +1075,8 @@ async function runV2TestSuite() {
     const storedRecord = fedAutoNat.presenceTable.get(poisonNodeId);
     const poisoningBlocked = storedRecord &&
       storedRecord.rendezvousNodes.length === 1 &&
-      storedRecord.rendezvousNodes[0] === 'safe.mesh:8001';
-    record('7.30 [GÜVENLİK/GOSSIP] PRESENCE_ANNOUNCE Zehirli Adres (localhost, 127.0.0.1) Filtreleme', poisoningBlocked);
+      storedRecord.rendezvousNodes[0] === 'safe.relay.org:8001';
+    record('7.30 [GÜVENLİK/GOSSIP] PRESENCE_ANNOUNCE Zehirli Adres (localhost, 127.0.0.1, .mesh) Filtreleme', poisoningBlocked);
 
     // Test 7.31: CONFIG.meshRole === 'EDGE' Belirtildiğinde handleObservedAddress Dialback Başlatmama Koruması
     const origMeshRole = CONFIG.meshRole;
@@ -1535,7 +1531,7 @@ async function runV2TestSuite() {
     const meshIdOk = await mockChannelRemote.validatePeerIp('c5fvlkcmf63btlx2.mesh:8001');
     const rawNodeIdOk = await mockChannelRemote.validatePeerIp('c5fvlkcmf63btlx2:8001');
 
-    // 3. sendHandshakeInit içinde .mesh kanonik adres kullanımı
+    // 3. sendHandshakeInit içinde fiziksel nodeAddress normalizasyonu (.mesh yerine fiziksel adres/anons)
     let sentPayload = null;
     const clientMockSocket = {
       write: (data) => {
@@ -1550,10 +1546,10 @@ async function runV2TestSuite() {
       nodeId: 'c5fvlkcmf63btlx2'
     }, testDb2, { track: () => true });
     clientChan.sendHandshakeInit();
-    const handshakeCanonicalOk = sentPayload && sentPayload.nodeAddress === 'c5fvlkcmf63btlx2.mesh:8001';
+    const handshakeCanonicalOk = sentPayload && sentPayload.nodeAddress === 'localhost:8001';
 
     const test744Ok = localhostNatOk && loopbackIpNatOk && meshIdOk && rawNodeIdOk && handshakeCanonicalOk;
-    record('7.44 [REVİZYON 16] NAT/Edge Localhost Toleransı, Kriptografik .mesh Kimliği ve Handshake Adres Normalizasyonu', !!test744Ok);
+    record('7.44 [REVİZYON 16/18] NAT/Edge Localhost Toleransı, Kriptografik .mesh Kimliği ve Handshake Adres Normalizasyonu', !!test744Ok);
 
     // Test 7.45: [REVİZYON 17] Kross-Röle Buluşma Noktası Anonsu (ROUTE_UPDATE) & Cross-Relay Onion Exit Hop Çözümlemesi
     const deKp = CryptoHelper.generateIdentityKeyPair();
