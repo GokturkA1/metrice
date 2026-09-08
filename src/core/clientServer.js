@@ -752,7 +752,12 @@ export class ClientServer {
       }
 
       if (target.isGlobalChannel) {
-        await this.federation.sendRemoteMessage(from, target.raw, finalContent, isAction, isSnippet, isE2EE);
+        try {
+          const res = await this.federation.sendRemoteMessage(from, target.raw, finalContent, isAction, isSnippet, isE2EE);
+          log.debug(`Küresel kanal (#genel) mesajı dağıtıldı: ${from} -> ${target.raw} (${res?.status || 'ok'})`);
+        } catch (err) {
+          log.warn(`Küresel kanal (#genel) mesaj dağıtım hatası: ${err.message}`);
+        }
       } else if (!target.isLocal) {
         await this.federation.sendRemoteMessage(from, target.raw, finalContent, isAction, isSnippet, isE2EE);
       } else {

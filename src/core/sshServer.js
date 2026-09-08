@@ -59,7 +59,7 @@ class SshClientConnection extends EventEmitter {
       const clean = configuredVersion.trim();
       this.serverVersion = clean.startsWith('SSH-2.0-') ? clean : `SSH-2.0-${clean}`;
     } else {
-      this.serverVersion = 'SSH-2.0-Metrice_2.2.7';
+      this.serverVersion = 'SSH-2.0-Metrice_2.2.8';
     }
 
     this.clientKexPayload = null;

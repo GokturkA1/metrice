@@ -688,7 +688,7 @@ async function runV2TestSuite() {
     });
     CONFIG.sshServerVersion = prevVersion;
 
-    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.2.7' && customIdent === 'SSH-2.0-MyCustomNode';
+    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.2.8' && customIdent === 'SSH-2.0-MyCustomNode';
     record('7.8 [YAPILANDIRMA] SSH Sunucu Version String Özelleştirme & Fallback Uyumu', versionTestValid, `Fallback: ${fallbackIdent}, Custom: ${customIdent}`);
 
     // Test 7.9: RENDEZVOUS_BIND Yabancı relayAddress İmzası Reddi (Bypass & Reflection Önlemi)
@@ -1875,6 +1875,36 @@ async function runV2TestSuite() {
     const crossRelaySyncOk = routeUpdateBroadcastCount > 0 && announcedEdge === boundEdgeId;
     record('7.49 [REVİZYON 20] Çapraz Röle Rendezvous Tünel Rota Senkronizasyonu (Route Propagation)', !!crossRelaySyncOk,
       `BroadcastCount: ${routeUpdateBroadcastCount}, AnnouncedEdge: ${announcedEdge}`);
+
+    // Test 7.50: [REVİZYON 21] EDGE Düğümünden Küresel Kanal (#genel) Mesajının rendezvousRelays Tüneline İletimi
+    let edgeRendezvousPayload = null;
+    const mockRelayChannel = {
+      socket: { writable: true, remoteAddress: '198.51.100.1', remotePort: 8001 },
+      writePayload: (p) => {
+        edgeRendezvousPayload = p;
+      }
+    };
+
+    edgeEngine.rendezvousRelays.set('198.51.100.1:8001', {
+      socket: mockRelayChannel.socket,
+      channel: mockRelayChannel
+    });
+
+    await edgeEngine.broadcastChannelMessage({
+      id: 'edge_global_msg_1',
+      from: `@edge_sender:${edgeEngine.nodeId}.mesh`,
+      to: '#genel',
+      content: 'Merhaba tüm mesh ağı!',
+      timestamp: new Date().toISOString()
+    });
+
+    const test750Ok = edgeRendezvousPayload &&
+      edgeRendezvousPayload.type === 'CHANNEL_MESSAGE' &&
+      edgeRendezvousPayload.to === '#genel' &&
+      edgeRendezvousPayload.content === 'Merhaba tüm mesh ağı!';
+
+    record('7.50 [REVİZYON 21] EDGE Düğümü #genel Mesajının rendezvousRelays Tüneline İletimi', !!test750Ok,
+      `Payload: ${edgeRendezvousPayload?.content || 'null'}`);
 
     // Temiz Kapanış
     relayEngine.close();

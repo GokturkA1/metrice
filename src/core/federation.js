@@ -1563,9 +1563,22 @@ export class FederationEngine extends EventEmitter {
       this.sendPacket(host, port, payload).catch(() => {});
     }
 
-    for (const [, tunnel] of this.rendezvousTunnels.entries()) {
-      if (tunnel && tunnel.channel && tunnel.channel.socket && tunnel.channel.socket.writable) {
-        tunnel.channel.writePayload(payload);
+    if (this.rendezvousTunnels) {
+      for (const [, tunnel] of this.rendezvousTunnels.entries()) {
+        if (tunnel && tunnel.channel && tunnel.channel.socket && tunnel.channel.socket.writable) {
+          const tunnelPeer = tunnel.channel.socket ? `${tunnel.channel.socket.remoteAddress}:${tunnel.channel.socket.remotePort}` : null;
+          if (exceptPeer && (tunnelPeer === exceptPeer || tunnel.channel.peerNodeAddress === exceptPeer)) continue;
+          tunnel.channel.writePayload(payload);
+        }
+      }
+    }
+
+    if (this.rendezvousRelays) {
+      for (const [relayAddr, relay] of this.rendezvousRelays.entries()) {
+        if (relayAddr === exceptPeer) continue;
+        if (relay && relay.channel && relay.channel.socket && relay.channel.socket.writable) {
+          relay.channel.writePayload(payload);
+        }
       }
     }
   }
