@@ -17,8 +17,12 @@ export default {
 
     const parsed = AddressHelper.parse(targetChannel);
     // Uzak bir sunucunun kanalıysa aboneliği iptal et
-    if (parsed && !parsed.isLocal && !parsed.isGlobalChannel && parsed.host && parsed.port && federation) {
-      await federation.unsubscribeRemoteChannel(parsed.host, parsed.port, parsed.raw);
+    if (parsed && !parsed.isLocal && !parsed.isGlobalChannel && federation) {
+      if (parsed.host && parsed.port) {
+        await federation.unsubscribeRemoteChannel(parsed.host, parsed.port, parsed.raw);
+      } else if (parsed.nodeId) {
+        await federation.unsubscribeNodeChannel(parsed.nodeId, parsed.raw);
+      }
     }
 
     session.removeContact(targetChannel);

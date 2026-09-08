@@ -19,8 +19,12 @@ export default {
     }
 
     // Uzak bir sunucunun kanalıysa o sunucuya SUBSCRIBE sinyali gönder
-    if (!parsed.isLocal && !parsed.isGlobalChannel && parsed.host && parsed.port && federation) {
-      await federation.subscribeRemoteChannel(parsed.host, parsed.port, parsed.raw);
+    if (!parsed.isLocal && !parsed.isGlobalChannel && federation) {
+      if (parsed.host && parsed.port) {
+        await federation.subscribeRemoteChannel(parsed.host, parsed.port, parsed.raw);
+      } else if (parsed.nodeId) {
+        await federation.subscribeNodeChannel(parsed.nodeId, parsed.raw);
+      }
     }
 
     session.setTarget(parsed.raw);

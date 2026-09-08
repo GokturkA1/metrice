@@ -688,7 +688,7 @@ async function runV2TestSuite() {
     });
     CONFIG.sshServerVersion = prevVersion;
 
-    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.2.6' && customIdent === 'SSH-2.0-MyCustomNode';
+    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.2.7' && customIdent === 'SSH-2.0-MyCustomNode';
     record('7.8 [YAPILANDIRMA] SSH Sunucu Version String Özelleştirme & Fallback Uyumu', versionTestValid, `Fallback: ${fallbackIdent}, Custom: ${customIdent}`);
 
     // Test 7.9: RENDEZVOUS_BIND Yabancı relayAddress İmzası Reddi (Bypass & Reflection Önlemi)
@@ -1707,6 +1707,174 @@ async function runV2TestSuite() {
     const channelResolvedCustomPort = dialedHost === 'custom.relay.org' && dialedPort === 3157;
     const test746Ok = presencePreservedPort && channelResolvedCustomPort;
     record('7.46 [REVİZYON 19] Dinamik Port Çözümleme ve Özel Port (3157) Bütünlüğü Koruması', !!test746Ok);
+
+    // Test 7.47: [REVİZYON 20] Saat Farkı (Clock Skew) Toleransı ve 24 Saat Sınırı Koruması
+    const skewKeypair = CryptoHelper.generateIdentityKeyPair();
+    const skewNodeId = CryptoHelper.deriveNodeId(skewKeypair.publicKey);
+    const twoHoursAgo = Date.now() - 7200000;
+    const twentyFiveHoursAgo = Date.now() - 90000000;
+
+    // 2 saatlik farkla PRESENCE_ANNOUNCE
+    const skewPresenceData = JSON.stringify({
+      nodeId: skewNodeId,
+      role: 'RELAY',
+      rendezvousNodes: ['skew-relay.net:8001'],
+      kemPublicKey: 'dummy_kem_key_skew',
+      channels: ['#genel', '#skew_chan'],
+      timestamp: twoHoursAgo
+    });
+    const skewSig = CryptoHelper.sign(skewPresenceData, skewKeypair.privateKey);
+    fedAutoNat.handleIncoming({
+      type: 'PRESENCE_ANNOUNCE',
+      nodeId: skewNodeId,
+      role: 'RELAY',
+      rendezvousNodes: ['skew-relay.net:8001'],
+      kemPublicKey: 'dummy_kem_key_skew',
+      identityPublicKey: skewKeypair.publicKey,
+      channels: ['#genel', '#skew_chan'],
+      memberships: [{ user: `@skew_user:${skewNodeId}.mesh`, channels: ['#skew_chan'] }],
+      timestamp: twoHoursAgo,
+      sig: skewSig
+    }, { writePayload: () => {} }, 'skew-relay.net:8001');
+
+    const skewPresenceAccepted = fedAutoNat.presenceTable.has(skewNodeId) &&
+      fedAutoNat.remoteOnlineUsers.has(`@skew_user:${skewNodeId}.mesh`);
+
+    // 2 saatlik farkla ROUTE_UPDATE
+    const skewEdgeKeypair = CryptoHelper.generateIdentityKeyPair();
+    const skewEdgeId = CryptoHelper.deriveNodeId(skewEdgeKeypair.publicKey);
+    const skewRouteData = JSON.stringify({
+      nodeId: skewEdgeId,
+      relayNodeId: skewNodeId,
+      rendezvousNodes: ['skew-relay.net:8001'],
+      timestamp: twoHoursAgo
+    });
+    const skewRouteSig = CryptoHelper.sign(skewRouteData, skewKeypair.privateKey);
+    fedAutoNat.handleIncoming({
+      type: 'ROUTE_UPDATE',
+      nodeId: skewEdgeId,
+      role: 'EDGE',
+      rendezvousNodes: ['skew-relay.net:8001'],
+      kemPublicKey: 'dummy_kem_edge',
+      identityPublicKey: skewEdgeKeypair.publicKey,
+      relayNodeId: skewNodeId,
+      relayAddress: 'skew-relay.net:8001',
+      relayKemPublicKey: 'dummy_kem_key_skew',
+      relayIdentityPublicKey: skewKeypair.publicKey,
+      timestamp: twoHoursAgo,
+      sig: skewRouteSig
+    }, { writePayload: () => {} }, 'skew-relay.net:8001');
+
+    const skewRouteAccepted = fedAutoNat.presenceTable.has(skewEdgeId);
+
+    // 25 saatlik farkla paket (reddedilmeli)
+    const expiredKeypair = CryptoHelper.generateIdentityKeyPair();
+    const expiredNodeId = CryptoHelper.deriveNodeId(expiredKeypair.publicKey);
+    const expiredData = JSON.stringify({
+      nodeId: expiredNodeId,
+      role: 'RELAY',
+      rendezvousNodes: ['expired-relay.net:8001'],
+      kemPublicKey: 'dummy_kem_exp',
+      channels: ['#genel'],
+      timestamp: twentyFiveHoursAgo
+    });
+    const expiredSig = CryptoHelper.sign(expiredData, expiredKeypair.privateKey);
+    fedAutoNat.handleIncoming({
+      type: 'PRESENCE_ANNOUNCE',
+      nodeId: expiredNodeId,
+      role: 'RELAY',
+      rendezvousNodes: ['expired-relay.net:8001'],
+      kemPublicKey: 'dummy_kem_exp',
+      identityPublicKey: expiredKeypair.publicKey,
+      channels: ['#genel'],
+      timestamp: twentyFiveHoursAgo,
+      sig: expiredSig
+    }, { writePayload: () => {} }, 'expired-relay.net:8001');
+
+    const expiredRejected = !fedAutoNat.presenceTable.has(expiredNodeId);
+    const test747Ok = skewPresenceAccepted && skewRouteAccepted && expiredRejected;
+    record('7.47 [REVİZYON 20] Saat Farkı (Clock Skew) Toleransı ve 24 Saat Sınır Güvenliği', !!test747Ok,
+      `SkewPresence: ${skewPresenceAccepted}, SkewRoute: ${skewRouteAccepted}, ExpiredRejected: ${expiredRejected}`);
+
+    // Test 7.48: [REVİZYON 20] .mesh Kanal Aboneliği ve Çok Katmanlı (Onion) İletim
+    const chanTestHostKeypair = CryptoHelper.generateIdentityKeyPair();
+    const chanTestHostId = CryptoHelper.deriveNodeId(chanTestHostKeypair.publicKey);
+    const chanSubscriberKeypair = CryptoHelper.generateIdentityKeyPair();
+    const chanSubscriberId = CryptoHelper.deriveNodeId(chanSubscriberKeypair.publicKey);
+    const testChannelName = `#testchan:${chanTestHostId}.mesh`;
+
+    // 1. Düğümün kanala abone olması (CHANNEL_SUBSCRIBE)
+    fedAutoNat.handleIncoming({
+      type: 'CHANNEL_SUBSCRIBE',
+      channel: testChannelName,
+      subscriberNode: `${chanSubscriberId}.mesh`
+    }, { writePayload: () => {} }, null);
+
+    const isSubscribed = fedAutoNat.channelSubscribers.has(testChannelName) &&
+      fedAutoNat.channelSubscribers.get(testChannelName).has(`${chanSubscriberId}.mesh`);
+
+    // 2. Kanala mesaj geldiğinde .mesh aboneye sendViaOnion ile iletilmesi
+    let forwardedTargetNode = null;
+    let forwardedPayload = null;
+    const origSendViaOnion = fedAutoNat.sendViaOnion;
+    fedAutoNat.sendViaOnion = async (target, payload) => {
+      forwardedTargetNode = target;
+      forwardedPayload = payload;
+      return { status: 'delivered' };
+    };
+
+    fedAutoNat.forwardToChannelSubscribers(testChannelName, {
+      id: 'test_chan_msg_1',
+      from: `@author:${chanTestHostId}.mesh`,
+      to: testChannelName,
+      content: 'Merhaba .mesh kanal!',
+      timestamp: new Date().toISOString()
+    });
+
+    const forwardedCorrectly = forwardedTargetNode === chanSubscriberId &&
+      forwardedPayload?.type === 'CHANNEL_MESSAGE' &&
+      forwardedPayload?.content === 'Merhaba .mesh kanal!';
+
+    // 3. sendViaOnion rota bulunamadığında hata fırlatmalıdır (Outbox döngüsünü engellemek için)
+    fedAutoNat.sendViaOnion = origSendViaOnion;
+    let outboxLoopPrevented = false;
+    try {
+      await fedAutoNat.sendViaOnion('nonexistentnode1', { id: 'test_orphan', to: 'nonexistentnode1.mesh' }, true);
+    } catch (err) {
+      outboxLoopPrevented = err.message.includes('aktif buluşma noktası bulunamadı');
+    }
+
+    const test748Ok = isSubscribed && forwardedCorrectly && outboxLoopPrevented;
+    record('7.48 [REVİZYON 20] .mesh Hedefli Kanal Aboneliği ve Outbox Sonsuz Döngü Koruması', !!test748Ok,
+      `Subscribed: ${isSubscribed}, Forwarded: ${forwardedCorrectly}, LoopPrevented: ${outboxLoopPrevented}`);
+
+    // Test 7.49: [REVİZYON 20] Çapraz Röle Rendezvous Senkronizasyonu ve Üyelik Yayılımı
+    let routeUpdateBroadcastCount = 0;
+    let announcedEdge = null;
+    const origBroadcastRouteUpdate = relayEngine.broadcastRouteUpdate;
+    relayEngine.broadcastRouteUpdate = (nId, rAddr, kem, ident) => {
+      routeUpdateBroadcastCount++;
+      announcedEdge = nId;
+      origBroadcastRouteUpdate.call(relayEngine, nId, rAddr, kem, ident);
+    };
+
+    // Röleye bağlı bir tünel ekle
+    const boundEdgeKey = CryptoHelper.generateIdentityKeyPair();
+    const boundEdgeId = CryptoHelper.deriveNodeId(boundEdgeKey.publicKey);
+    relayEngine.rendezvousTunnels.set(boundEdgeId, {
+      boundRendezvousAddr: 'relay.sync.test:8001',
+      edgeKemKey: 'dummy_kem_bound',
+      identityPublicKey: boundEdgeKey.publicKey,
+      channel: { socket: { writable: true }, writePayload: () => {} }
+    });
+
+    // broadcastPresence() çağır
+    await relayEngine.broadcastPresence();
+    relayEngine.broadcastRouteUpdate = origBroadcastRouteUpdate;
+
+    const crossRelaySyncOk = routeUpdateBroadcastCount > 0 && announcedEdge === boundEdgeId;
+    record('7.49 [REVİZYON 20] Çapraz Röle Rendezvous Tünel Rota Senkronizasyonu (Route Propagation)', !!crossRelaySyncOk,
+      `BroadcastCount: ${routeUpdateBroadcastCount}, AnnouncedEdge: ${announcedEdge}`);
 
     // Temiz Kapanış
     relayEngine.close();

@@ -726,7 +726,7 @@ export class FederationEngine extends EventEmitter {
         return;
       }
 
-      if (Math.abs(Date.now() - timestamp) > 120000) {
+      if (Math.abs(Date.now() - timestamp) > 86400000) {
         channel.writePayload({ status: 'rejected', reason: 'expired_timestamp' });
         return;
       }
@@ -739,10 +739,18 @@ export class FederationEngine extends EventEmitter {
         return;
       }
 
+      // Rota tablosunu güncelle: EDGE'in bu röleye tünellendiğini kaydet
+      const relayAnnounceAddr = this.getRelayAnnounceAddress();
+      const boundRendezvousAddr = payload.relayAddress || relayAnnounceAddr;
+      const edgeKemKey = payload.kemPublicKey || channel?.peerKemKey || this.presenceTable.get(nodeId)?.kemPublicKey || this.db.getRoute(nodeId)?.kemPublicKey;
+
       this.rendezvousTunnels.set(nodeId, {
         socket: channel.socket,
         channel,
-        boundAt: Date.now()
+        boundAt: Date.now(),
+        boundRendezvousAddr,
+        edgeKemKey,
+        identityPublicKey
       });
 
       if (channel?.socket && typeof channel.socket.once === 'function') {
@@ -751,11 +759,6 @@ export class FederationEngine extends EventEmitter {
           log.info(`Rendezvous tüneli kapandı: ${nodeId}`);
         });
       }
-
-      // Rota tablosunu güncelle: EDGE'in bu röleye tünellendiğini kaydet
-      const relayAnnounceAddr = this.getRelayAnnounceAddress();
-      const boundRendezvousAddr = payload.relayAddress || relayAnnounceAddr;
-      const edgeKemKey = payload.kemPublicKey || channel?.peerKemKey || this.presenceTable.get(nodeId)?.kemPublicKey || this.db.getRoute(nodeId)?.kemPublicKey;
 
       const edgeRecord = {
         nodeId,
@@ -824,7 +827,10 @@ export class FederationEngine extends EventEmitter {
       });
 
       if (!CryptoHelper.verify(dataToVerify, sig, identityPublicKey)) return;
-      if (Math.abs(Date.now() - timestamp) > 120000) return;
+      if (Math.abs(Date.now() - timestamp) > 86400000) {
+        log.warn(`Varlık anonsu zaman aşımı (${nodeId}): Saat farkı 24 saati aştı (${Math.round(Math.abs(Date.now() - timestamp) / 1000)}s)`);
+        return;
+      }
 
       // Zehirli adres koruması (Gossip Poisoning): 'localhost', '127.0.0.1', '0.0.0.0' ve sahte '.mesh' adresleri rota tablosuna alınmaz
       const isPoisoned = (addr) => {
@@ -887,8 +893,19 @@ export class FederationEngine extends EventEmitter {
 
       if (Array.isArray(payload.memberships)) {
         payload.memberships.forEach((m) => {
-          if (m && m.user && m.kemPublicKey) {
-            this.db.saveRemoteUserKemKey(m.user, m.kemPublicKey);
+          if (m && m.user) {
+            const parsed = AddressHelper.parse(m.user);
+            if (parsed && !parsed.isLocal) {
+              this.remoteOnlineUsers.set(m.user, {
+                lastSeen: Date.now(),
+                channels: m.channels || [],
+                isSsh: !!m.isSsh,
+                kemPublicKey: m.kemPublicKey || ''
+              });
+            }
+            if (m.kemPublicKey) {
+              this.db.saveRemoteUserKemKey(m.user, m.kemPublicKey);
+            }
           }
         });
       }
@@ -959,7 +976,10 @@ export class FederationEngine extends EventEmitter {
       });
 
       if (!CryptoHelper.verify(dataToVerify, sig, relayIdentityPublicKey)) return;
-      if (Math.abs(Date.now() - timestamp) > 120000) return;
+      if (Math.abs(Date.now() - timestamp) > 86400000) {
+        log.warn(`Rota güncellemesi zaman aşımı (${nodeId}): Saat farkı 24 saati aştı (${Math.round(Math.abs(Date.now() - timestamp) / 1000)}s)`);
+        return;
+      }
 
       const isPoisoned = (addr) => {
         if (typeof addr !== 'string' || !addr.includes(':')) return true;
@@ -1198,12 +1218,17 @@ export class FederationEngine extends EventEmitter {
     };
 
     for (const peer of subscribers) {
-      if (peer === exceptPeer || !peer.includes(':')) continue;
-      const [host, portStr] = peer.split(':');
-      const port = parseInt(portStr, 10);
-      if (!host || isNaN(port)) continue;
+      if (peer === exceptPeer) continue;
+      if (peer.includes(':')) {
+        const [host, portStr] = peer.split(':');
+        const port = parseInt(portStr, 10);
+        if (!host || isNaN(port)) continue;
 
-      this.sendPacket(host, port, payload).catch(() => {});
+        this.sendPacket(host, port, payload).catch(() => {});
+      } else if (AddressHelper.isValidNodeId(peer) || peer.endsWith('.mesh')) {
+        const targetNodeId = peer.replace('.mesh', '');
+        this.sendViaOnion(targetNodeId, payload).catch(() => {});
+      }
     }
 
     for (const [, tunnel] of this.rendezvousTunnels.entries()) {
@@ -1231,6 +1256,32 @@ export class FederationEngine extends EventEmitter {
         channel,
         subscriberNode: this.nodeAddress
       });
+    } catch {}
+  }
+
+  async subscribeNodeChannel(nodeId, channel) {
+    if (!nodeId || !channel) return;
+    const cleanNodeId = nodeId.replace('.mesh', '').toLowerCase();
+    const payload = {
+      type: 'CHANNEL_SUBSCRIBE',
+      channel,
+      subscriberNode: this.meshAddress || this.nodeId
+    };
+    try {
+      await this.sendViaOnion(cleanNodeId, payload);
+    } catch {}
+  }
+
+  async unsubscribeNodeChannel(nodeId, channel) {
+    if (!nodeId || !channel) return;
+    const cleanNodeId = nodeId.replace('.mesh', '').toLowerCase();
+    const payload = {
+      type: 'CHANNEL_UNSUBSCRIBE',
+      channel,
+      subscriberNode: this.meshAddress || this.nodeId
+    };
+    try {
+      await this.sendViaOnion(cleanNodeId, payload);
     } catch {}
   }
 
@@ -1389,6 +1440,15 @@ export class FederationEngine extends EventEmitter {
   async broadcastPresence() {
     // 1. V2.0 Kuantum Sonrası Varlık ve Buluşma Noktası Anonsu (Section 5.1)
     this.broadcastPresenceAnnounce();
+
+    // Röle ise bağlı tüm tünellerin rotasını periyodik olarak ağa duyur (Çapraz Röle Senkronizasyonu)
+    if (this.isRelay() && this.rendezvousTunnels) {
+      for (const [tNodeId, tunnel] of this.rendezvousTunnels.entries()) {
+        if (tunnel && tunnel.boundRendezvousAddr) {
+          this.broadcastRouteUpdate(tNodeId, tunnel.boundRendezvousAddr, tunnel.edgeKemKey, tunnel.identityPublicKey);
+        }
+      }
+    }
 
     // 2. V1.x Geriye Dönük Uyumluluk (PRESENCE_SYNC)
     const peers = this.peerManager.getAllPeers();
@@ -1930,6 +1990,7 @@ export class FederationEngine extends EventEmitter {
 
     const sig = CryptoHelper.sign(dataToSign, this.identityKeyPair.privateKey);
 
+    const myState = this.getLocalStateFn ? this.getLocalStateFn() : { memberships: [] };
     const payload = {
       type: 'PRESENCE_ANNOUNCE',
       nodeId: this.nodeId,
@@ -1938,6 +1999,7 @@ export class FederationEngine extends EventEmitter {
       kemPublicKey: this.kemKeyPair.publicKey,
       identityPublicKey: this.identityKeyPair.publicKey,
       channels,
+      memberships: myState.memberships || [],
       timestamp,
       sig
     };
@@ -2018,18 +2080,22 @@ export class FederationEngine extends EventEmitter {
   }
 
   handleLocalDeliveredMessage(payload) {
-    if (!payload || !payload.id) return;
-    if (this.seenMessages.has(payload.id)) return;
-    this.seenMessages.add(payload.id);
-
-    const msg = this.db.saveMessage(payload);
-    if (msg) {
-      this.emit('message', msg);
-      log.info(I18n.t('FED_MSG_RECEIVED', { from: msg.from, to: msg.to }));
+    if (!payload) return;
+    if (!payload.type) {
+      if (payload.to && payload.to.startsWith('#')) {
+        payload.type = 'CHANNEL_MESSAGE';
+      } else if (payload.to && payload.to.startsWith('@')) {
+        payload.type = 'DIRECT_MESSAGE';
+      }
     }
+    const mockChannel = {
+      socket: null,
+      writePayload: () => {}
+    };
+    this.handleIncoming(payload, mockChannel, null);
   }
 
-  async sendViaOnion(targetNodeId, payload) {
+  async sendViaOnion(targetNodeId, payload, fromOutbox = false) {
     if (targetNodeId && this.rendezvousTunnels.has(targetNodeId)) {
       const localTunnel = this.rendezvousTunnels.get(targetNodeId);
       if (localTunnel && localTunnel.channel && localTunnel.channel.socket && localTunnel.channel.socket.writable) {
@@ -2061,6 +2127,9 @@ export class FederationEngine extends EventEmitter {
     }
 
     if (targetNodeId && (!exitRelayAddress || exitRelayAddress.length === 0)) {
+      if (fromOutbox) {
+        throw new Error(`Hedef ${targetNodeId} için aktif buluşma noktası bulunamadı`);
+      }
       log.info(`Hedef EDGE ${targetNodeId} için aktif buluşma noktası bulunamadı, mesaj Outbox kuyruğuna alındı`);
       this.db.queueOutbox(payload);
       return { status: 'queued' };
@@ -2230,7 +2299,11 @@ export class FederationEngine extends EventEmitter {
 
       if (target.nodeId) {
         try {
-          await this.sendViaOnion(target.nodeId, payload);
+          const res = await this.sendViaOnion(target.nodeId, payload, true);
+          if (res && res.status === 'queued') {
+            this.db.updateOutboxRetry(item.id);
+            continue;
+          }
           log.info(I18n.t('FED_OUTBOX_SENT', { id: item.id }));
           this.db.removeOutbox(item.id);
         } catch {
