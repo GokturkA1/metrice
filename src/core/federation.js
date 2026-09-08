@@ -490,17 +490,14 @@ export class FederationEngine extends EventEmitter {
     const now = Date.now();
     const ttl = (CONFIG && CONFIG.presenceTtl) || 60000;
     const activeRemote = [];
-    let removedAny = false;
     for (const [userAddr, data] of this.remoteOnlineUsers.entries()) {
+      const diff = now - data.lastSeen;
+      if (diff < 0) {
+        data.lastSeen = now;
+      }
       if (now - data.lastSeen < ttl) {
         activeRemote.push(userAddr);
-      } else {
-        this.remoteOnlineUsers.delete(userAddr);
-        removedAny = true;
       }
-    }
-    if (removedAny) {
-      this.emit('presence_change');
     }
     const localState = this.getLocalStateFn ? this.getLocalStateFn() : { users: [] };
     return Array.from(new Set([...localState.users, ...activeRemote]));
@@ -512,6 +509,10 @@ export class FederationEngine extends EventEmitter {
     const ttl = (CONFIG && CONFIG.presenceTtl) || 60000;
 
     for (const [userAddr, data] of this.remoteOnlineUsers.entries()) {
+      const diff = now - data.lastSeen;
+      if (diff < 0) {
+        data.lastSeen = now;
+      }
       if (now - data.lastSeen < ttl && Array.isArray(data.channels) && data.channels.includes(channelName)) {
         members.push(userAddr);
       }
@@ -744,6 +745,9 @@ export class FederationEngine extends EventEmitter {
         status: 'bound',
         ttl: 3600
       });
+      if (this.db && typeof this.db.resetOutboxForTarget === 'function') {
+        this.db.resetOutboxForTarget(nodeId);
+      }
       setImmediate(() => this.processOutbox(true));
       return;
     }
@@ -752,6 +756,9 @@ export class FederationEngine extends EventEmitter {
       if (payload.status === 'bound') {
         const peerAddr = channel.peerNodeAddress || remotePeer;
         this.boundRendezvousRelays.add(peerAddr);
+        if (this.db && typeof this.db.resetOutboxForTarget === 'function') {
+          this.db.resetOutboxForTarget(peerAddr);
+        }
         setImmediate(() => this.processOutbox(true));
       }
       return;
@@ -827,6 +834,10 @@ export class FederationEngine extends EventEmitter {
             this.db.saveRemoteUserKemKey(m.user, m.kemPublicKey);
           }
         });
+      }
+
+      if (this.db && typeof this.db.resetOutboxForTarget === 'function') {
+        this.db.resetOutboxForTarget(nodeId);
       }
 
       this.emit('presence_change');
@@ -1512,6 +1523,9 @@ export class FederationEngine extends EventEmitter {
             setTimeout(() => this.maintainRendezvousTunnels(), 2000);
           });
         }
+        if (this.db && typeof this.db.resetOutboxForTarget === 'function') {
+          this.db.resetOutboxForTarget(relayAddr);
+        }
         setImmediate(() => this.processOutbox(true));
         return true;
       }
@@ -1652,11 +1666,29 @@ export class FederationEngine extends EventEmitter {
     const now = Date.now();
     const presenceTtl = (CONFIG && CONFIG.presenceTtl) || 60000;
     for (const [nodeId, rec] of this.presenceTable.entries()) {
-      if (now - rec.lastSeen > presenceTtl) {
+      const diff = now - rec.lastSeen;
+      if (diff < 0) {
+        rec.lastSeen = now;
+      } else if (diff > presenceTtl) {
         this.presenceTable.delete(nodeId);
         this.nodePhysicalAddresses.delete(nodeId);
       }
     }
+
+    let removedUsers = false;
+    for (const [userAddr, data] of this.remoteOnlineUsers.entries()) {
+      const diff = now - data.lastSeen;
+      if (diff < 0) {
+        data.lastSeen = now;
+      } else if (diff >= presenceTtl) {
+        this.remoteOnlineUsers.delete(userAddr);
+        removedUsers = true;
+      }
+    }
+    if (removedUsers) {
+      this.emit('presence_change');
+    }
+
     this.db.deleteExpiredRoutes(presenceTtl);
     this.onionRouter.cleanupExpiredCircuits();
   }

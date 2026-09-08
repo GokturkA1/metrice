@@ -437,6 +437,15 @@ export class Database {
     }
   }
 
+  resetOutboxForTarget(target) {
+    if (!target) return;
+    const stmt = this.db.prepare(`
+      UPDATE outbox SET next_retry = 0, retries = 0 
+      WHERE receiver LIKE '%' || ? || '%'
+    `);
+    stmt.run(target);
+  }
+
   updateUserPassword(userAddress, passwordHash) {
     const stmt = this.db.prepare(`
       INSERT INTO profiles (user_address, contacts, history, password_hash, public_key, kem_public_key)
@@ -464,20 +473,20 @@ export class Database {
       const chanPrefix = targetB.split(':')[0];
       const stmt = this.db.prepare(`
         SELECT * FROM (
-          SELECT id, sender, receiver, content, is_action, is_snippet, is_e2ee, timestamp 
+          SELECT rowid, id, sender, receiver, content, is_action, is_snippet, is_e2ee, timestamp 
           FROM messages 
           WHERE (receiver = ? OR receiver = ? OR receiver LIKE ? || ':%')
             AND (deleted_by NOT LIKE '%' || ? || '%' AND deleted_by NOT LIKE '%' || ? || '%')
-          ORDER BY timestamp DESC 
+          ORDER BY rowid DESC 
           LIMIT ?
-        ) ORDER BY timestamp ASC
+        ) ORDER BY rowid ASC
       `);
       rows = stmt.all(targetB, chanPrefix, chanPrefix, targetA, userAPrefix, limit);
     } else {
       const userBPrefix = targetB.split(':')[0];
       const stmt = this.db.prepare(`
         SELECT * FROM (
-          SELECT id, sender, receiver, content, is_action, is_snippet, is_e2ee, timestamp 
+          SELECT rowid, id, sender, receiver, content, is_action, is_snippet, is_e2ee, timestamp 
           FROM messages 
           WHERE (
             ((sender = ? OR sender = ? OR sender LIKE ? || ':%') AND (receiver = ? OR receiver = ? OR receiver LIKE ? || ':%'))
@@ -485,9 +494,9 @@ export class Database {
             ((sender = ? OR sender = ? OR sender LIKE ? || ':%') AND (receiver = ? OR receiver = ? OR receiver LIKE ? || ':%'))
           )
           AND (deleted_by NOT LIKE '%' || ? || '%' AND deleted_by NOT LIKE '%' || ? || '%')
-          ORDER BY timestamp DESC 
+          ORDER BY rowid DESC 
           LIMIT ?
-        ) ORDER BY timestamp ASC
+        ) ORDER BY rowid ASC
       `);
       rows = stmt.all(
         targetA, userAPrefix, userAPrefix, targetB, userBPrefix, userBPrefix,

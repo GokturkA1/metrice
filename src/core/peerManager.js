@@ -103,10 +103,10 @@ export class PeerManager {
       if (lowestKey) this.peers.delete(lowestKey);
     }
 
-    const current = this.peers.get(peerAddr) || { score: 10, lastSeen: Date.now(), failures: 0 };
+    const current = this.peers.get(peerAddr) || { score: 100, lastSeen: Date.now(), failures: 0 };
 
     if (success) {
-      current.score = Math.min(100, current.score + 2);
+      current.score = 100;
       current.failures = 0;
       current.lastSeen = Date.now();
     } else {
