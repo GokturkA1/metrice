@@ -10,6 +10,7 @@ import { CryptoHelper } from '../src/utils/cryptoHelper.js';
 import { AddressHelper } from '../src/utils/addressHelper.js';
 import { Database } from '../src/storage/database.js';
 import { FederationEngine, SecureChannel } from '../src/core/federation.js';
+import { PeerManager } from '../src/core/peerManager.js';
 import { OnionRouter, UNIFORM_CELL_SIZE } from '../src/core/onionRouter.js';
 import { ClientServer } from '../src/core/clientServer.js';
 import { TerminalSession } from '../src/core/terminalSession.js';
@@ -691,7 +692,7 @@ async function runV2TestSuite() {
     });
     CONFIG.sshServerVersion = prevVersion;
 
-    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.2.3' && customIdent === 'SSH-2.0-MyCustomNode';
+    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.2.4' && customIdent === 'SSH-2.0-MyCustomNode';
     record('7.8 [YAPILANDIRMA] SSH Sunucu Version String Özelleştirme & Fallback Uyumu', versionTestValid, `Fallback: ${fallbackIdent}, Custom: ${customIdent}`);
 
     // Test 7.9: RENDEZVOUS_BIND Yabancı relayAddress İmzası Reddi (Bypass & Reflection Önlemi)
@@ -1553,6 +1554,106 @@ async function runV2TestSuite() {
 
     const test744Ok = localhostNatOk && loopbackIpNatOk && meshIdOk && rawNodeIdOk && handshakeCanonicalOk;
     record('7.44 [REVİZYON 16] NAT/Edge Localhost Toleransı, Kriptografik .mesh Kimliği ve Handshake Adres Normalizasyonu', !!test744Ok);
+
+    // Test 7.45: [REVİZYON 17] Kross-Röle Buluşma Noktası Anonsu (ROUTE_UPDATE) & Cross-Relay Onion Exit Hop Çözümlemesi
+    const deKp = CryptoHelper.generateIdentityKeyPair();
+    const deKem = CryptoHelper.generateKemKeyPair();
+    const deNodeId = CryptoHelper.deriveNodeId(deKp.publicKey);
+    const deRelayAddr = 'metrice-de.gokturka.net:8001';
+
+    const testEdgeKp = CryptoHelper.generateIdentityKeyPair();
+    const testEdgeKem = CryptoHelper.generateKemKeyPair();
+    const testEdgeNodeId = CryptoHelper.deriveNodeId(testEdgeKp.publicKey);
+
+    // 1. DE Rölesine RENDEZVOUS_BIND simülasyonu
+    let capturedRouteUpdate = null;
+    const mockDeRelayEngine = new FederationEngine(testDb2, new PeerManager());
+    mockDeRelayEngine.nodeAddress = deRelayAddr;
+    mockDeRelayEngine.setRole('RELAY');
+    mockDeRelayEngine.identityKeyPair = deKp;
+    mockDeRelayEngine.kemKeyPair = deKem;
+    mockDeRelayEngine.nodeId = deNodeId;
+
+    mockDeRelayEngine.sendPacket = async (host, port, payload) => {
+      if (payload && payload.type === 'ROUTE_UPDATE') {
+        capturedRouteUpdate = payload;
+      }
+      return { status: 'delivered' };
+    };
+    mockDeRelayEngine.peerManager.getAllPeers = () => ['metrice-tr.gokturka.net:8001'];
+
+    const r17BindNonce = CryptoHelper.generateRandomKey(16);
+    const r17BindTs = Date.now();
+    const r17BindSig = CryptoHelper.sign(`${testEdgeNodeId}${deRelayAddr}${r17BindTs}${r17BindNonce}`, testEdgeKp.privateKey);
+
+    const mockEdgeChannel = {
+      socket: { once: () => {}, write: () => {}, writable: true },
+      peerNodeAddress: '198.51.100.2:45678',
+      writePayload: () => {}
+    };
+
+    mockDeRelayEngine.handleIncoming({
+      type: 'RENDEZVOUS_BIND',
+      nodeId: testEdgeNodeId,
+      relayAddress: deRelayAddr,
+      identityPublicKey: testEdgeKp.publicKey,
+      kemPublicKey: testEdgeKem.publicKey,
+      timestamp: r17BindTs,
+      nonce: r17BindNonce,
+      sig: r17BindSig
+    }, mockEdgeChannel, '198.51.100.2:45678');
+
+    const deLocalRoute = mockDeRelayEngine.presenceTable.get(testEdgeNodeId);
+    const deRouteOk = deLocalRoute && deLocalRoute.rendezvousNodes.includes(deRelayAddr);
+    const routeUpdateAnnounced = capturedRouteUpdate &&
+      capturedRouteUpdate.nodeId === testEdgeNodeId &&
+      capturedRouteUpdate.relayNodeId === deNodeId &&
+      capturedRouteUpdate.relayAddress === deRelayAddr &&
+      capturedRouteUpdate.relayKemPublicKey === deKem.publicKey;
+
+    // 2. TR Rölesinin ROUTE_UPDATE paketini işlemesi ve Exit Hop çözümü
+    const trKp = CryptoHelper.generateIdentityKeyPair();
+    const trKem = CryptoHelper.generateKemKeyPair();
+    const trNodeId = CryptoHelper.deriveNodeId(trKp.publicKey);
+    const trRelayAddr = 'metrice-tr.gokturka.net:8001';
+
+    const mockTrRelayEngine = new FederationEngine(testDb2, new PeerManager());
+    mockTrRelayEngine.nodeAddress = trRelayAddr;
+    mockTrRelayEngine.setRole('RELAY');
+    mockTrRelayEngine.identityKeyPair = trKp;
+    mockTrRelayEngine.kemKeyPair = trKem;
+    mockTrRelayEngine.nodeId = trNodeId;
+
+    if (capturedRouteUpdate) {
+      mockTrRelayEngine.handleIncoming(capturedRouteUpdate, { socket: { once: () => {} } }, 'metrice-de.gokturka.net:8001');
+    }
+
+    const trEdgeRoute = mockTrRelayEngine.presenceTable.get(testEdgeNodeId);
+    const trDeRoute = mockTrRelayEngine.presenceTable.get(deNodeId);
+    const trCrossRouteOk = trEdgeRoute && trEdgeRoute.rendezvousNodes.includes(deRelayAddr) &&
+      trDeRoute && trDeRoute.kemPublicKey === deKem.publicKey;
+
+    // 3. TR'nin DE'yi Exit Hop olarak seçebilmesi
+    let onionCircuitBuiltWithDeExit = false;
+    mockTrRelayEngine.onionRouter.buildCircuit = async (hops, targetNodeId) => {
+      const exitHop = hops[hops.length - 1];
+      if (exitHop && exitHop.nodeId === deNodeId && exitHop.kemPublicKey === deKem.publicKey && exitHop.address === deRelayAddr) {
+        onionCircuitBuiltWithDeExit = true;
+      }
+      return { circuitId: 'circ_test_r17', hops, keys: [CryptoHelper.generateRandomKey(32)] };
+    };
+    mockTrRelayEngine.onionRouter.sendOnionCell = async () => ({ status: 'onion_sent' });
+
+    await mockTrRelayEngine.sendViaOnion(testEdgeNodeId, {
+      type: 'DIRECT_MESSAGE',
+      id: 'msg_r17_test',
+      from: `@trUser:${trNodeId}.mesh`,
+      to: `@edgeUser:${testEdgeNodeId}.mesh`,
+      content: 'Cross-relay test message'
+    });
+
+    const test745Ok = deRouteOk && routeUpdateAnnounced && trCrossRouteOk && onionCircuitBuiltWithDeExit;
+    record('7.45 [REVİZYON 17] Kross-Röle Buluşma Noktası Anonsu (ROUTE_UPDATE) & Cross-Relay Onion Exit Hop Çözümlemesi', !!test745Ok);
 
     // Temiz Kapanış
     relayEngine.close();

@@ -360,9 +360,14 @@ export class OnionRouter extends EventEmitter {
 
       // Rendezvous tersine tüneli var mı?
       const tunnel = this.rendezvousTunnels.get(targetNodeId);
-      if (tunnel && tunnel.channel && tunnel.channel.socket.writable) {
+      const isSocketWritable = !tunnel?.channel?.socket || tunnel.channel.socket.writable !== false;
+      if (tunnel && tunnel.channel && isSocketWritable) {
         log.info(`Onion mesajı tersine tünel üzerinden teslim ediliyor -> NodeID: ${targetNodeId}`);
-        tunnel.channel.writePayload(parsed.payload);
+        if (typeof tunnel.channel.writePayload === 'function') {
+          tunnel.channel.writePayload(parsed.payload);
+        } else if (tunnel.channel.socket && typeof tunnel.channel.socket.write === 'function') {
+          tunnel.channel.socket.write(JSON.stringify(parsed.payload) + '\n');
+        }
         return;
       }
 

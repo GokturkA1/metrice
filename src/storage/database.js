@@ -520,6 +520,7 @@ export class Database {
   // --- V2.0 ROUTING TABLE & RENDEZVOUS STORAGE ---
 
   upsertRoute({ nodeId, role, rendezvousNodes = [], kemPublicKey, identityPublicKey, lastSeen = Date.now() }) {
+    if (!nodeId || !kemPublicKey || !identityPublicKey) return;
     const stmt = this.db.prepare(`
       INSERT INTO routing_table (node_id, role, rendezvous_nodes, kem_public_key, identity_public_key, last_seen)
       VALUES (?, ?, ?, ?, ?, ?)
