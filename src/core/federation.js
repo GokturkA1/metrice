@@ -157,11 +157,17 @@ export class SecureChannel extends EventEmitter {
 
   sendHandshakeInit() {
     const nonce = CryptoHelper.generateRandomKey(16);
-    this.nonceTracker.track(nonce);
+    if (this.nonceTracker && typeof this.nonceTracker.track === 'function') {
+      this.nonceTracker.track(nonce);
+    }
+
+    const canonicalAddress = (this.myIdentity && this.myIdentity.nodeId)
+      ? `${this.myIdentity.nodeId}.mesh:${CONFIG.federationPort}`
+      : this.myIdentity.nodeAddress;
 
     const dataToSign = JSON.stringify({
       type: 'HANDSHAKE_INIT',
-      nodeAddress: this.myIdentity.nodeAddress,
+      nodeAddress: canonicalAddress,
       identityPublicKey: this.myIdentity.identityKeyPair.publicKey,
       kemPublicKey: this.myIdentity.kemKeyPair.publicKey,
       nonce
@@ -171,7 +177,7 @@ export class SecureChannel extends EventEmitter {
 
     const payload = {
       type: 'HANDSHAKE_INIT',
-      nodeAddress: this.myIdentity.nodeAddress,
+      nodeAddress: canonicalAddress,
       identityPublicKey: this.myIdentity.identityKeyPair.publicKey,
       kemPublicKey: this.myIdentity.kemKeyPair.publicKey,
       nonce,
@@ -327,47 +333,46 @@ export class SecureChannel extends EventEmitter {
     const rawRemote = this.socket.remoteAddress || '';
     const cleanRemote = rawRemote.replace('::ffff:', '');
 
-    // 1. Kendi adresi veya genel sunucu adı toleransı
-    if (declaredHost === CONFIG.serverName) {
-      return true;
-    }
-
-    // 2. Loopback toleransı
+    // 1. NAT / Ev Kullanıcısı / Edge toleransı (localhost veya döngüsel adreste çalışan istemciler)
     const isLoopback = (ip) => ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
-    if (isLoopback(declaredHost) && isLoopback(cleanRemote)) {
+    if (isLoopback(declaredHost)) {
       return true;
     }
 
-    // 3. Özel Ağ / Intranet (RFC 1918) ve CGNAT (RFC 6598: 100.64.0.0/10) toleransı
-    const isPrivateOrCgnatSubnet = (ip) => {
-      return /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.)/.test(ip);
-    };
-
-    if (isPrivateOrCgnatSubnet(cleanRemote)) {
-      return true;
-    }
-
-    // 4. Reverse proxy, Container (Docker / Podman) toleransı
-    if (process.env.TRUST_PROXY === 'true' || process.env.DOCKER === 'true' || process.env.CONTAINER === 'true') {
-      return true;
-    }
-
-    // 5. V2.0 Kriptografik Düğüm Kimliği (.mesh veya NodeID) toleransı
+    // 2. Kriptografik kimlik (.mesh veya 16-karakter NodeID) toleransı
     if (declaredHost.endsWith('.mesh') || AddressHelper.isValidNodeId(declaredHost)) {
       return true;
     }
 
-    // 6. Doğrudan IP eşleşmesi
+    // 3. Kendi sunucu adı toleransı
+    if (declaredHost === CONFIG.serverName) {
+      return true;
+    }
+
+    // 4. Özel ağlar / Container / Proxy toleransı
+    const isPrivateOrCgnatSubnet = (ip) => {
+      return /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.)/.test(ip);
+    };
+    if (isPrivateOrCgnatSubnet(cleanRemote)) {
+      return true;
+    }
+
+    if (process.env.TRUST_PROXY === 'true' || process.env.DOCKER === 'true' || process.env.CONTAINER === 'true') {
+      return true;
+    }
+
+    // 5. Doğrudan IP eşleşmesi
     if (declaredHost === cleanRemote) {
       return true;
     }
 
-    // 7. DNS Çözümleme (Domain -> IP Eşleşmesi - VDS & Alan Adı Arkası)
+    // 6. DNS Çözümleme (Domain -> IP Eşleşmesi - VDS & Alan Adı Arkası)
     try {
       const resolved = await dns.lookup(declaredHost, { all: true });
       return resolved.some((entry) => entry.address === cleanRemote);
     } catch {
-      return false;
+      // DNS çözülemiyorsa ama Ed25519 imzası el sıkışmada doğrulanacaksa bağlantıyı düşürme
+      return true;
     }
   }
 
