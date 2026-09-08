@@ -9,16 +9,10 @@ peers_*.json
 dump.js
 project_dump.txt
 
-# Test Suites
-test_suite.js
-comprehensive_test_suite.js
-security_audit_suite.js
-
 # OS & Environment
 .DS_Store
 node_modules/
 
 ARCHITECT.md
 REPORT.txt
-v2_test_suite.js
 *.txt

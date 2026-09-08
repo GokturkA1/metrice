@@ -5,6 +5,10 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test": "node tests/mesh.test.js && node tests/protocol.test.js && node tests/security.test.js",
+    "test:mesh": "node tests/mesh.test.js",
+    "test:protocol": "node tests/protocol.test.js",
+    "test:security": "node tests/security.test.js"
   }
 }

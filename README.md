@@ -207,14 +207,16 @@ Terminal arayüzünde komut satırından çalıştırılabilecek yönergeler:
 
 ## Doğrulama ve Testler
 
-Sistem bütünlüğü iki kapsamlı test süiti ile doğrulanır:
+Sistem bütünlüğü `tests/` klasöründeki üç kapsamlı test süiti ile doğrulanır:
 
 ```bash
-# 1. Metrice v2.2.3 Spesifikasyon ve Güvenlik Süiti
-node v2_test_suite.js
+# Tüm test süitlerini sırayla çalıştırmak için:
+npm test
 
-# 2. Protokol, Post-Quantum, SSH-2 ve Veritabanı Süiti (24 Test)
-node comprehensive_test_suite.js
+# Veya test süitlerini bağımsız çalıştırmak için:
+node tests/mesh.test.js      # 1. P2P-Mesh, AutoNAT, Rendezvous ve Onion Spesifikasyon Süiti (61 Test)
+node tests/protocol.test.js  # 2. Protokol, Ağ Keşfi, Post-Quantum SSH-2 ve Veritabanı Süiti (24 Test)
+node tests/security.test.js  # 3. Protokol Güvenliği, Nonce Replay, DoS ve Enjeksiyon Denetim Süiti (8 Test)
 ```
 
 Testler; Base32 türetimi, AutoNAT konsensüsü, DoS tampon limitleri, ML-KEM-768 soğan yönlendirmesi, SSRF önlemleri ve Two-Factor SSH kimlik doğrulamasını uçtan uca kapsar.
