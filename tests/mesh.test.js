@@ -688,7 +688,7 @@ async function runV2TestSuite() {
     });
     CONFIG.sshServerVersion = prevVersion;
 
-    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.2.8' && customIdent === 'SSH-2.0-MyCustomNode';
+    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.2.9' && customIdent === 'SSH-2.0-MyCustomNode';
     record('7.8 [YAPILANDIRMA] SSH Sunucu Version String Özelleştirme & Fallback Uyumu', versionTestValid, `Fallback: ${fallbackIdent}, Custom: ${customIdent}`);
 
     // Test 7.9: RENDEZVOUS_BIND Yabancı relayAddress İmzası Reddi (Bypass & Reflection Önlemi)
@@ -1905,6 +1905,41 @@ async function runV2TestSuite() {
 
     record('7.50 [REVİZYON 21] EDGE Düğümü #genel Mesajının rendezvousRelays Tüneline İletimi', !!test750Ok,
       `Payload: ${edgeRendezvousPayload?.content || 'null'}`);
+
+    // Test 7.51: [REVİZYON 22] Online Kullanıcı Adresi Normalizasyonu (.mesh Önceliği) ve TUI Sağ Panel Eşleşmesi
+    const origLocalGetter = fedAutoNat.getLocalStateFn;
+    fedAutoNat.setLocalStateGetter(() => ({
+      users: ['@dual_user:127.0.0.1:8001']
+    }));
+    fedAutoNat.remoteOnlineUsers.set('@dual_user:canonicalnodeid.mesh', {
+      channels: ['#genel'],
+      lastSeen: Date.now()
+    });
+
+    const dedupedOnline = fedAutoNat.getAllOnlineUsers();
+    const dualUserEntries = dedupedOnline.filter((u) => u.startsWith('@dual_user:'));
+    const prioritizedMesh = dualUserEntries.length === 1 && dualUserEntries[0] === '@dual_user:canonicalnodeid.mesh';
+    fedAutoNat.setLocalStateGetter(origLocalGetter);
+
+    // TUI sağ panel eşleşme testi
+    const mockSocket = { write: () => {} };
+    const sessionTestTui = new TerminalSession(
+      mockSocket,
+      '@me:local.mesh',
+      { username: 'me', contacts: ['#testchan'], history: {} },
+      () => ['@online_bob:someothernode.mesh'],
+      () => ['@online_bob:127.0.0.1:8001'],
+      () => {},
+      () => ({ uptime: '1m', rss: '10', peers: [], role: 'EDGE', nodeId: 'test' }),
+      () => []
+    );
+    sessionTestTui.activeTarget = '#testchan';
+    sessionTestTui.renderFull([]);
+    const rightPanelHasOnlineGreen = sessionTestTui.screenBuffer.some((line) => line && line.includes('●') && line.includes('online_bob'));
+
+    const test751Ok = prioritizedMesh && rightPanelHasOnlineGreen;
+    record('7.51 [REVİZYON 22] Presence Adres Formatı Normalizasyonu (.mesh Önceliği) ve Sağ Panel Flicker Koruması', !!test751Ok,
+      `MeshPrioritized: ${prioritizedMesh}, TUIOnlineMatch: ${rightPanelHasOnlineGreen}`);
 
     // Temiz Kapanış
     relayEngine.close();

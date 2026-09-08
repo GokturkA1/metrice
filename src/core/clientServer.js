@@ -112,9 +112,12 @@ export class ClientServer {
 
   getLocalMemberships() {
     const list = [];
+    const localNodeId = this.federation ? (this.federation.nodeId || this.federation.myIdentity?.nodeId) : AddressHelper.getLocalNodeId();
     for (const [userAddr, session] of this.sessions.entries()) {
+      const nick = userAddr.split(':')[0].replace('@', '');
+      const canonicalUser = localNodeId ? `@${nick}:${localNodeId}.mesh` : userAddr;
       list.push({
-        user: userAddr,
+        user: canonicalUser,
         channels: typeof session.getMyChannels === 'function' ? session.getMyChannels() : [],
         isSsh: !!session.isSsh,
         kemPublicKey: session.kemKeyPair ? session.kemKeyPair.publicKey : ''
@@ -141,14 +144,29 @@ export class ClientServer {
     }
 
     const localMembers = [];
+    const localNodeId = this.federation ? (this.federation.nodeId || this.federation.myIdentity?.nodeId) : AddressHelper.getLocalNodeId();
     for (const [userAddr, session] of this.sessions.entries()) {
       if (session.isMemberOf(target)) {
-        localMembers.push(userAddr);
+        const nick = userAddr.split(':')[0].replace('@', '');
+        const canonicalUser = localNodeId ? `@${nick}:${localNodeId}.mesh` : userAddr;
+        localMembers.push(canonicalUser);
       }
     }
 
     const remoteMembers = this.federation.getChannelMembers(target);
-    return Array.from(new Set([...localMembers, ...remoteMembers]));
+    const allMembers = [...localMembers, ...remoteMembers];
+    const memberByNick = new Map();
+    for (const m of allMembers) {
+      if (typeof m !== 'string') continue;
+      const nick = m.split(':')[0].replace('@', '').toLowerCase();
+      const existing = memberByNick.get(nick);
+      if (!existing) {
+        memberByNick.set(nick, m);
+      } else if (!existing.endsWith('.mesh') && m.endsWith('.mesh')) {
+        memberByNick.set(nick, m);
+      }
+    }
+    return Array.from(memberByNick.values());
   }
 
   notifyAllSessionsRender() {

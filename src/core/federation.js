@@ -513,7 +513,26 @@ export class FederationEngine extends EventEmitter {
       }
     }
     const localState = this.getLocalStateFn ? this.getLocalStateFn() : { users: [] };
-    return Array.from(new Set([...localState.users, ...activeRemote]));
+    const allUsers = [...(localState.users || []), ...activeRemote];
+
+    // Tekilleştirme: Aynı nickname'e sahip birden fazla kayıt varsa .mesh adresini önceliklendir
+    const userByNick = new Map();
+    for (const u of allUsers) {
+      if (typeof u !== 'string') continue;
+      const nick = u.split(':')[0].replace('@', '').toLowerCase();
+      const existing = userByNick.get(nick);
+      if (!existing) {
+        userByNick.set(nick, u);
+      } else {
+        const existingIsMesh = existing.endsWith('.mesh');
+        const newIsMesh = u.endsWith('.mesh');
+        if (!existingIsMesh && newIsMesh) {
+          userByNick.set(nick, u);
+        }
+      }
+    }
+
+    return Array.from(userByNick.values());
   }
 
   getChannelMembers(channelName) {

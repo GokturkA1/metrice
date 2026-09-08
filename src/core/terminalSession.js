@@ -521,11 +521,15 @@ export class TerminalSession extends EventEmitter {
         }
         rightTitle = I18n.t('TUI_MEMBERS_HEADER', { count: channelMembers.length });
         channelMembers.forEach((member) => {
-          const isOnline = onlineList.includes(member);
-          const isMe = member === this.userAddress;
+          const memberNick = member.split(':')[0].replace('@', '');
+          const isOnline = onlineList.includes(member) ||
+            onlineList.some((u) => {
+              const uNick = u.split(':')[0].replace('@', '');
+              return u === member || uNick === memberNick;
+            });
+          const isMe = member === this.userAddress || (this.userAddress && this.userAddress.split(':')[0].replace('@', '') === memberNick);
           const statusChar = isOnline ? '●' : '○';
           const statusColor = isOnline ? ANSI.FG_GREEN : ANSI.FG_GRAY;
-          const memberNick = member.split(':')[0].replace('@', '');
           const maxNameLen = Math.max(4, innerRightWidth - 3);
           const visibleMember = memberNick.slice(0, maxNameLen);
           const nameColor = isMe ? ANSI.FG_CYAN + ANSI.BOLD : (isOnline ? ANSI.FG_WHITE : ANSI.FG_GRAY);
