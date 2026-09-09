@@ -134,9 +134,7 @@ export class ClientServer {
   getChannelMembers(target) {
     if (!target) return [];
 
-    const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
-
-    if (target === systemConsole) {
+    if (AddressHelper.isSystemConsole(target)) {
       return this.getOnlineUsers();
     }
 
@@ -197,8 +195,7 @@ export class ClientServer {
   }
 
   getCurrentConversation(userAddress, activeTarget, systemLogs) {
-    const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
-    if (activeTarget === systemConsole) return systemLogs;
+    if (AddressHelper.isSystemConsole(activeTarget)) return systemLogs;
     if (!activeTarget) return [];
 
     const messages = this.db.getConversation(userAddress, activeTarget);
@@ -473,7 +470,6 @@ export class ClientServer {
             if (action.type === 'PASTE_COMPLETE') {
               const rawText = action.content || '';
               const trimmed = rawText.trim();
-              const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
 
               // 1. Komut veya tek satırlık metin yapıştırıldı
               if (trimmed.startsWith('/') || !rawText.includes('\n')) {
@@ -485,7 +481,7 @@ export class ClientServer {
                 }
               } 
               // 2. Çok satırlı kod veya metin bloğu yapıştırıldı
-              else if (session && session.activeTarget && session.activeTarget !== systemConsole) {
+              else if (session && session.activeTarget && !AddressHelper.isSystemConsole(session.activeTarget)) {
                 await this.handleOutboundMessage(
                   session,
                   userAddress,
@@ -514,8 +510,7 @@ export class ClientServer {
                   session.insertChar(action.char);
                   session.renderInputOnly();
 
-                  const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
-                  if (session.activeTarget && !session.activeTarget.startsWith('#') && session.activeTarget !== systemConsole) {
+                  if (session.activeTarget && !session.activeTarget.startsWith('#') && !AddressHelper.isSystemConsole(session.activeTarget)) {
                     const targetParsed = AddressHelper.parse(session.activeTarget);
                     if (targetParsed) {
                       if (targetParsed.isLocal) {
@@ -642,8 +637,7 @@ export class ClientServer {
                   break;
                 }
 
-                const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
-                if (session.activeTarget === systemConsole) {
+                if (AddressHelper.isSystemConsole(session.activeTarget)) {
                   session.addSystemLog(I18n.t('SYS_SYSTEM_WINDOW_NO_MSG'));
                   break;
                 }

@@ -25,6 +25,18 @@ export class AddressHelper {
     return this.NODE_ID_REGEX.test(nodeId);
   }
 
+  static isGlobalChannel(target) {
+    if (!target || typeof target !== 'string') return false;
+    const clean = target.trim().replace(/İ/g, 'i').toLowerCase().split(':')[0];
+    return clean === '#genel' || clean === '#general' || clean === 'genel' || clean === 'general';
+  }
+
+  static isSystemConsole(target) {
+    if (!target || typeof target !== 'string') return false;
+    const clean = target.trim().replace(/İ/g, 'i').toLowerCase();
+    return clean === '*sistem' || clean === '*system' || clean === 'sistem' || clean === 'system';
+  }
+
   /**
    * RFC 5952 standardına göre IPv6 adresini kanonik ve sıkıştırılmış formata dönüştürür
    * @param {string} ip
@@ -193,7 +205,7 @@ export class AddressHelper {
       const globalChannelName = I18n.t('DEFAULT_CHANNEL_NAME').replace('#', '');
 
       // 1. Küresel Mesh Kanalı (Örn: #genel / #general)
-      if ((channelName === globalChannelName || channelName === 'genel' || channelName === 'general') && !target) {
+      if (this.isGlobalChannel(channelName) && !target) {
         return {
           type,
           raw: `#${channelName}`,
@@ -332,7 +344,7 @@ export class AddressHelper {
 
   static formatChannel(channelName, nodeId = null) {
     const clean = channelName.replace('#', '');
-    if (clean === 'genel' || clean === 'general') return '#genel';
+    if (this.isGlobalChannel(clean)) return '#genel';
     const targetNodeId = nodeId || this.localNodeId;
     if (targetNodeId) {
       return `#${clean}:${targetNodeId}.mesh`;

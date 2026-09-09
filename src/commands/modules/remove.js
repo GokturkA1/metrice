@@ -24,7 +24,7 @@ export default {
     session.addSystemLog(I18n.t('SYS_REMOVED_DM', { target: targetUser }));
 
     if (session.activeTarget === targetUser) {
-      const fallback = session.contacts.includes(defaultChannel) ? defaultChannel : systemConsole;
+      const fallback = session.contacts.find((c) => AddressHelper.isGlobalChannel(c)) || systemConsole;
       session.setTarget(fallback);
     }
   }

@@ -821,8 +821,6 @@ class SshClientConnection extends EventEmitter {
       if (action.type === 'PASTE_COMPLETE') {
         const rawText = action.content || '';
         const trimmed = rawText.trim();
-        const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
-
         if (trimmed.startsWith('/') || !rawText.includes('\n')) {
           const singleLine = trimmed.replace(/[\r\n]+/g, ' ');
           if (this.session.focus === 'input') {
@@ -830,7 +828,7 @@ class SshClientConnection extends EventEmitter {
             this.session.cursorIndex = this.session.inputBuffer.length;
             this.session.renderInputOnly();
           }
-        } else if (this.session.activeTarget && this.session.activeTarget !== systemConsole) {
+        } else if (this.session.activeTarget && !AddressHelper.isSystemConsole(this.session.activeTarget)) {
           await this.clientServer.handleOutboundMessage(
             this.session,
             this.authenticatedUser,
@@ -859,8 +857,7 @@ class SshClientConnection extends EventEmitter {
             this.session.insertChar(action.char);
             this.session.renderInputOnly();
 
-            const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
-            if (this.session.activeTarget && !this.session.activeTarget.startsWith('#') && this.session.activeTarget !== systemConsole) {
+            if (this.session.activeTarget && !this.session.activeTarget.startsWith('#') && !AddressHelper.isSystemConsole(this.session.activeTarget)) {
               const targetParsed = AddressHelper.parse(this.session.activeTarget);
               if (targetParsed) {
                 if (targetParsed.isLocal) {
@@ -992,8 +989,7 @@ class SshClientConnection extends EventEmitter {
             break;
           }
 
-          const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
-          if (this.session.activeTarget === systemConsole) {
+          if (AddressHelper.isSystemConsole(this.session.activeTarget)) {
             this.session.addSystemLog(I18n.t('SYS_SYSTEM_WINDOW_NO_MSG'));
             break;
           }

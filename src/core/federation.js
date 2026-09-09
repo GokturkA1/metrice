@@ -974,6 +974,15 @@ export class FederationEngine extends EventEmitter {
         }
       }
 
+      // Opportunistic Relay Peering: Röle ise doğrudan eş havuzuna ekle
+      if (this.peerManager && Array.isArray(safeRendezvous) && (role === 'RELAY' || role === 'CAP_RELAY')) {
+        for (const rdvAddr of safeRendezvous) {
+          if (rdvAddr && rdvAddr.includes(':') && !rdvAddr.endsWith('.mesh')) {
+            this.peerManager.addOrUpdate(rdvAddr, true);
+          }
+        }
+      }
+
       this.db.upsertRoute({
         nodeId,
         role: record.role,
@@ -1132,6 +1141,9 @@ export class FederationEngine extends EventEmitter {
         this.presenceTable.set(relayNodeId, relayRecord);
         this.db.upsertRoute(relayRecord);
         this.nodePhysicalAddresses.set(relayNodeId, canonicalRelayAddr);
+        if (this.peerManager && canonicalRelayAddr.includes(':') && !canonicalRelayAddr.endsWith('.mesh')) {
+          this.peerManager.addOrUpdate(canonicalRelayAddr, true);
+        }
       }
 
       // 2. EDGE düğümünü kaydet/güncelle
@@ -1147,6 +1159,15 @@ export class FederationEngine extends EventEmitter {
       };
       this.presenceTable.set(nodeId, edgeRecord);
       this.db.upsertRoute(edgeRecord);
+
+      // Opportunistic Relay Peering: Anons edilen düğüm bir Röle ise doğrudan eş havuzuna ekle
+      if (this.peerManager && Array.isArray(safeRdv) && (role === 'RELAY' || role === 'CAP_RELAY')) {
+        for (const rdvAddr of safeRdv) {
+          if (rdvAddr && rdvAddr.includes(':') && !rdvAddr.endsWith('.mesh')) {
+            this.peerManager.addOrUpdate(rdvAddr, true);
+          }
+        }
+      }
 
       // Dinamik port koruması: Karşı tarafın beyan ettiği orijinal host:port çiftini sakla
       if (Array.isArray(safeRdv) && safeRdv.length > 0) {
@@ -2444,7 +2465,7 @@ export class FederationEngine extends EventEmitter {
   }
 
   async processOutbox(forceAll = false) {
-    if (!this.db || !this.db.db || !this.db.db.isOpen) return;
+    if (!this.db || !this.db.db) return;
     const pending = this.db.getPendingOutbox(forceAll);
     for (const item of pending) {
       const target = AddressHelper.parse(item.to);

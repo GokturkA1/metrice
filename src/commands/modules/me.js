@@ -1,3 +1,4 @@
+import { AddressHelper } from '../../utils/addressHelper.js';
 import { I18n } from '../../locales/i18n.js';
 
 export default {
@@ -10,7 +11,7 @@ export default {
       return;
     }
 
-    if (!session.activeTarget || session.activeTarget === '*sistem') {
+    if (!session.activeTarget || AddressHelper.isSystemConsole(session.activeTarget)) {
       session.addSystemLog(I18n.t('CMD_ME_TARGET_ERROR'));
       return;
     }

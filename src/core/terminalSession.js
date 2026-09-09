@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { ANSI } from '../utils/ansi.js';
 import { I18n } from '../locales/i18n.js';
+import { AddressHelper } from '../utils/addressHelper.js';
 
 export class TerminalSession extends EventEmitter {
   constructor(socket, userAddress, initialProfile, getOnlineUsersFn, getChannelMembersFn = null, onProfileChangeFn = null, getSystemStatsFn = null, getKnownCommandsFn = null) {
@@ -82,8 +83,8 @@ export class TerminalSession extends EventEmitter {
 
   isMemberOf(target) {
     if (this.contacts.includes(target)) return true;
-    if (target === '#genel' || target === '#general') {
-      return this.contacts.includes('#genel') || this.contacts.includes('#general');
+    if (AddressHelper.isGlobalChannel(target)) {
+      return this.contacts.some((c) => AddressHelper.isGlobalChannel(c));
     }
     return false;
   }
@@ -161,7 +162,7 @@ export class TerminalSession extends EventEmitter {
       content,
       timestamp: new Date().toISOString()
     });
-    if (this.activeTarget !== systemConsole) {
+    if (!AddressHelper.isSystemConsole(this.activeTarget)) {
       this.incrementUnread(systemConsole);
     }
     if (this.systemLogs.length > 200) {
@@ -486,7 +487,7 @@ export class TerminalSession extends EventEmitter {
       }
 
       const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
-      const isSystemWindow = this.activeTarget === systemConsole;
+      const isSystemWindow = AddressHelper.isSystemConsole(this.activeTarget);
       const newFrame = new Array(this.height);
 
       const innerLeftWidth = Math.max(10, this.leftSidebarWidth - 2);

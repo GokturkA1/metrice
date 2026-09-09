@@ -2435,6 +2435,107 @@ async function runV2TestSuite() {
     record('7.56 [REVİZYON 25 / v2.4.2] Layer 4 Proxy Announced/Public Port Çözümlemesi ve RENDEZVOUS_BIND İmza Toleransı', !!test756Ok,
       `ConfigDefaults: ${configDefaultsOk756}, AnnouncedPort: ${announcedPortOk756}, DialbackPort: ${dialbackPortOk756}, BoundPublic: ${boundPublicOk756}, BoundInternal: ${boundInternalOk756}, RejectedFake: ${rejectedFakeOk756}`);
 
+    // Test 7.57: [REVİZYON 26 / v2.4.4] Dinamik Röle Peering, Outbox .isOpen Onarımı & AddressHelper Global/System Eşleme
+    const testRdvRelayIp1 = '198.51.100.77:8001';
+    const testRdvRelayIp2 = '198.51.100.88:8001';
+    const testRdvRelayIp3 = '198.51.100.99:8001';
+
+    const peerStore757 = new Map();
+    const origPm757 = fedAutoNat.peerManager;
+    fedAutoNat.peerManager = {
+      peers: peerStore757,
+      getAllPeers: () => Array.from(peerStore757.keys()),
+      addOrUpdate: (addr) => peerStore757.set(addr, { score: 100 })
+    };
+
+    // 1. PRESENCE_ANNOUNCE ile Röle Eş Keşfi
+    const relayKp757 = CryptoHelper.generateIdentityKeyPair();
+    const relayNodeId757 = CryptoHelper.deriveNodeId(relayKp757.publicKey);
+    const kemKp757 = CryptoHelper.generateKemKeyPair();
+    const ts757 = Date.now();
+    const sig757 = CryptoHelper.sign(JSON.stringify({
+      nodeId: relayNodeId757,
+      role: 'CAP_RELAY',
+      rendezvousNodes: [testRdvRelayIp1],
+      kemPublicKey: kemKp757.publicKey,
+      channels: [],
+      timestamp: ts757
+    }), relayKp757.privateKey);
+
+    fedAutoNat.handleIncoming({
+      type: 'PRESENCE_ANNOUNCE',
+      nodeId: relayNodeId757,
+      role: 'CAP_RELAY',
+      rendezvousNodes: [testRdvRelayIp1],
+      kemPublicKey: kemKp757.publicKey,
+      identityPublicKey: relayKp757.publicKey,
+      channels: [],
+      timestamp: ts757,
+      sig: sig757
+    }, { writePayload: () => {} }, '127.0.0.1:9001');
+
+    const presencePeeringOk = fedAutoNat.peerManager.peers.has(testRdvRelayIp1);
+
+    // 2. ROUTE_UPDATE ile Röle Eş Keşfi
+    const edgeKp757 = CryptoHelper.generateIdentityKeyPair();
+    const edgeNodeId757 = CryptoHelper.deriveNodeId(edgeKp757.publicKey);
+    const routeSig757 = CryptoHelper.sign(JSON.stringify({
+      nodeId: edgeNodeId757,
+      relayNodeId: relayNodeId757,
+      rendezvousNodes: [testRdvRelayIp3],
+      timestamp: ts757
+    }), relayKp757.privateKey);
+
+    fedAutoNat.handleIncoming({
+      type: 'ROUTE_UPDATE',
+      nodeId: edgeNodeId757,
+      role: 'CAP_RELAY',
+      rendezvousNodes: [testRdvRelayIp3],
+      relayNodeId: relayNodeId757,
+      relayAddress: testRdvRelayIp2,
+      relayKemPublicKey: CryptoHelper.generateKemKeyPair().publicKey,
+      relayIdentityPublicKey: relayKp757.publicKey,
+      timestamp: ts757,
+      sig: routeSig757
+    }, { writePayload: () => {} }, '127.0.0.1:9001');
+
+    const routePeeringOk = fedAutoNat.peerManager.peers.has(testRdvRelayIp2) &&
+      fedAutoNat.peerManager.peers.has(testRdvRelayIp3);
+
+    fedAutoNat.peerManager = origPm757;
+
+    // 3. Outbox .isOpen Hatasının Yokluğu
+    const mockDbWithoutIsOpen = {
+      db: {
+        prepare: () => ({
+          all: () => [{ id: 'outbox_test_1', sender: '@a', receiver: '#genel', content: 'test', is_action: 0, is_snippet: 0, is_e2ee: 0, retries: 0, next_retry: 0, timestamp: 123 }]
+        })
+      }
+    };
+    mockDbWithoutIsOpen.getPendingOutbox = nodeRelayDb.getPendingOutbox.bind(mockDbWithoutIsOpen);
+    const pendingWithoutIsOpen = mockDbWithoutIsOpen.getPendingOutbox(true);
+    const outboxWithoutIsOpenOk = Array.isArray(pendingWithoutIsOpen) && pendingWithoutIsOpen.length === 1 && pendingWithoutIsOpen[0].id === 'outbox_test_1';
+
+    // 4. AddressHelper Fonksiyonları
+    const globalChanOk = AddressHelper.isGlobalChannel('#genel') &&
+      AddressHelper.isGlobalChannel('#general') &&
+      AddressHelper.isGlobalChannel('genel') &&
+      AddressHelper.isGlobalChannel('general') &&
+      AddressHelper.isGlobalChannel('#GENEL') &&
+      AddressHelper.isGlobalChannel('#GENERAL') &&
+      !AddressHelper.isGlobalChannel('#ozel_oda');
+
+    const systemConsoleOk = AddressHelper.isSystemConsole('*sistem') &&
+      AddressHelper.isSystemConsole('*system') &&
+      AddressHelper.isSystemConsole('*SİSTEM') &&
+      AddressHelper.isSystemConsole('*SYSTEM') &&
+      !AddressHelper.isSystemConsole('#genel');
+
+    const test757Ok = presencePeeringOk && routePeeringOk && outboxWithoutIsOpenOk && globalChanOk && systemConsoleOk;
+
+    record('7.57 [REVİZYON 26 / v2.4.4] Dinamik Röle Peering, Outbox .isOpen Onarımı & AddressHelper Global/System Eşleme', !!test757Ok,
+      `PresencePeering: ${presencePeeringOk}, RoutePeering: ${routePeeringOk}, OutboxWithoutIsOpen: ${outboxWithoutIsOpenOk}, GlobalChan: ${globalChanOk}, SystemConsole: ${systemConsoleOk}`);
+
     // Temiz Kapanış
     relayEngine.close();
     edgeEngine.close();

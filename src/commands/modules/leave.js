@@ -31,7 +31,7 @@ export default {
     session.addSystemLog(I18n.t('SYS_LEFT_CHANNEL', { channel: targetChannel }));
 
     if (session.activeTarget === targetChannel) {
-      const fallback = session.contacts.includes(defaultChannel) ? defaultChannel : I18n.t('SYSTEM_CONSOLE_NAME');
+      const fallback = session.contacts.find((c) => AddressHelper.isGlobalChannel(c)) || I18n.t('SYSTEM_CONSOLE_NAME');
       session.setTarget(fallback);
     }
   }
