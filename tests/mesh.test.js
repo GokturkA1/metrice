@@ -2537,7 +2537,68 @@ async function runV2TestSuite() {
     record('7.57 [REVİZYON 26 / v2.4.4] Dinamik Röle Peering, Outbox .isOpen Onarımı & AddressHelper Global/System Eşleme', !!test757Ok,
       `PresencePeering: ${presencePeeringOk}, RoutePeering: ${routePeeringOk}, OutboxWithoutIsOpen: ${outboxWithoutIsOpenOk}, GlobalChan: ${globalChanOk}, SystemConsole: ${systemConsoleOk}`);
 
+    // Test 7.58: [REVİZYON 27 / Locale Değişimi] Kalıcı Veritabanı ve Oturumda Çok Dilli Sistem / Genel Kanal Tekilleştirmesi
+    const testDbLocalePath = path.join(rootDir, 'v2_test_locale_mig.db');
+    if (fs.existsSync(testDbLocalePath)) fs.unlinkSync(testDbLocalePath);
+    const testDbLocale = new Database(testDbLocalePath);
+
+    // 1. Türkçe locale ile kaydedilmiş profil benzetimi
+    testDbLocale.db.exec(`
+      INSERT INTO profiles (user_address, contacts, history) 
+      VALUES ('@testuser:locale.mesh', '["*sistem", "#genel", "@buddy:peer.mesh"]', '[]');
+    `);
+
+    // 2. Veritabanı yeniden açıldığında (örneğin İngilizce locale ile başlatıldığında) profil kontaklarının dönüştürülmesi
+    const profileAfterMig = testDbLocale.getUserProfile('@testuser:locale.mesh');
+    const dbNormOk = profileAfterMig.contacts.includes('*system') &&
+      profileAfterMig.contacts.includes('#general') &&
+      !profileAfterMig.contacts.includes('*sistem') &&
+      !profileAfterMig.contacts.includes('#genel') &&
+      profileAfterMig.contacts.includes('@buddy:peer.mesh') &&
+      profileAfterMig.contacts.length === 3;
+
+    // 3. TerminalSession başlatıldığında eski dil varyantlarının temizlenmesi ve tekilleştirilmesi
+    const mockSocketLocale = { write: () => {}, destroyed: false };
+    const localeSession = new TerminalSession(
+      mockSocketLocale,
+      '@testuser:locale.mesh',
+      { contacts: ['*sistem', '#genel', '@buddy:peer.mesh', '*system', '#general'] },
+      () => [],
+      () => [],
+      () => {},
+      () => ({ uptime: '1m', rss: '10', peers: [] }),
+      () => []
+    );
+
+    const sessionInitOk = localeSession.contacts.length === 3 &&
+      localeSession.contacts[0] === '*system' &&
+      localeSession.contacts[1] === '#general' &&
+      localeSession.contacts[2] === '@buddy:peer.mesh';
+
+    // 4. Eski dildeki isimle ekleme yapılmak istendiğinde yinelenen girdi oluşturulmaması
+    localeSession.addContact('*sistem');
+    localeSession.addContact('#genel');
+    const sessionAddDuplicateOk = localeSession.contacts.length === 3 &&
+      !localeSession.contacts.includes('*sistem') &&
+      !localeSession.contacts.includes('#genel');
+
+    // 5. Eski dildeki kanala (#genel) atılmış mesajların yeni dilde (#general) getConversation ile listelenebilmesi
+    testDbLocale.saveMessage({
+      id: 'legacy_tr_msg_1',
+      from: '@sender:remote.mesh',
+      to: '#genel',
+      content: 'Eski dildeki genel mesaj'
+    });
+    const generalConversation = testDbLocale.getConversation('@testuser:locale.mesh', '#general');
+    const crossLocaleMessagesOk = generalConversation.some((m) => m.id === 'legacy_tr_msg_1');
+
+    const test758Ok = dbNormOk && sessionInitOk && sessionAddDuplicateOk && crossLocaleMessagesOk;
+    record('7.58 [REVİZYON 27 / Locale Değişimi] Kalıcı Veritabanı ve Oturumda Çok Dilli Sistem / Genel Kanal Tekilleştirmesi', !!test758Ok,
+      `DbNorm: ${dbNormOk}, SessionInit: ${sessionInitOk}, SessionAddDup: ${sessionAddDuplicateOk}, CrossLocaleMsg: ${crossLocaleMessagesOk}`);
+
     // Temiz Kapanış
+    testDbLocale.close();
+    try { if (fs.existsSync(testDbLocalePath)) fs.unlinkSync(testDbLocalePath); } catch {}
     relayEngine.close();
     edgeEngine.close();
     fedAutoNat.close();

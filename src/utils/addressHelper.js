@@ -344,7 +344,7 @@ export class AddressHelper {
 
   static formatChannel(channelName, nodeId = null) {
     const clean = channelName.replace('#', '');
-    if (this.isGlobalChannel(clean)) return '#genel';
+    if (this.isGlobalChannel(clean)) return I18n.t('DEFAULT_CHANNEL_NAME');
     const targetNodeId = nodeId || this.localNodeId;
     if (targetNodeId) {
       return `#${clean}:${targetNodeId}.mesh`;

@@ -38,9 +38,19 @@ export class TerminalSession extends EventEmitter {
     this.tabIndex = -1;
     this.tabPrefix = '';
 
-    const savedContacts = initialProfile?.contacts || [];
+    const rawSaved = initialProfile?.contacts || [];
+    const normalizedSaved = [];
+    for (const c of rawSaved) {
+      let norm = c;
+      if (AddressHelper.isSystemConsole(c)) norm = systemConsole;
+      else if (AddressHelper.isGlobalChannel(c)) norm = defaultChannel;
+      if (!normalizedSaved.includes(norm)) {
+        normalizedSaved.push(norm);
+      }
+    }
     const baseContacts = [systemConsole, defaultChannel];
-    this.contacts = Array.from(new Set([...baseContacts, ...savedContacts]));
+    this.contacts = Array.from(new Set([...baseContacts, ...normalizedSaved]));
+    this.activeTarget = defaultChannel;
     this.selectedContactIdx = this.contacts.indexOf(defaultChannel) !== -1 ? this.contacts.indexOf(defaultChannel) : 1;
 
     this.unreadCounts = new Map();
@@ -90,7 +100,16 @@ export class TerminalSession extends EventEmitter {
   }
 
   getMyChannels() {
-    return this.contacts.filter((c) => c.startsWith('#'));
+    const defaultChannel = I18n.t('DEFAULT_CHANNEL_NAME');
+    const channels = [];
+    for (const c of this.contacts) {
+      if (!c.startsWith('#')) continue;
+      const norm = AddressHelper.isGlobalChannel(c) ? defaultChannel : c;
+      if (!channels.includes(norm)) {
+        channels.push(norm);
+      }
+    }
+    return channels;
   }
 
   notifyProfileChange() {
@@ -110,14 +129,36 @@ export class TerminalSession extends EventEmitter {
   }
 
   addContact(target) {
-    if (!this.contacts.includes(target)) {
-      this.contacts.push(target);
+    if (!target) return;
+    const defaultChannel = I18n.t('DEFAULT_CHANNEL_NAME');
+    const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
+    let norm = target;
+    if (AddressHelper.isSystemConsole(target)) norm = systemConsole;
+    else if (AddressHelper.isGlobalChannel(target)) norm = defaultChannel;
+
+    if (!this.contacts.includes(norm)) {
+      if (AddressHelper.isSystemConsole(norm)) {
+        this.contacts = this.contacts.filter((c) => !AddressHelper.isSystemConsole(c));
+        this.contacts.unshift(norm);
+      } else if (AddressHelper.isGlobalChannel(norm)) {
+        this.contacts = this.contacts.filter((c) => !AddressHelper.isGlobalChannel(c));
+        this.contacts.splice(1, 0, norm);
+      } else {
+        this.contacts.push(norm);
+      }
       this.notifyProfileChange();
     }
   }
 
   removeContact(target) {
-    this.contacts = this.contacts.filter((c) => c !== target);
+    const isSys = AddressHelper.isSystemConsole(target);
+    const isGlob = AddressHelper.isGlobalChannel(target);
+
+    this.contacts = this.contacts.filter((c) => {
+      if (isSys && AddressHelper.isSystemConsole(c)) return false;
+      if (isGlob && AddressHelper.isGlobalChannel(c)) return false;
+      return c !== target;
+    });
     this.unreadCounts.delete(target);
     if (this.selectedContactIdx >= this.contacts.length) {
       this.selectedContactIdx = Math.max(0, this.contacts.length - 1);
@@ -128,21 +169,33 @@ export class TerminalSession extends EventEmitter {
 
   incrementUnread(target) {
     if (!target) return;
-    if (this.activeTarget === target) return;
-    const targetNick = target.split(':')[0];
+    const defaultChannel = I18n.t('DEFAULT_CHANNEL_NAME');
+    const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
+    let norm = target;
+    if (AddressHelper.isSystemConsole(target)) norm = systemConsole;
+    else if (AddressHelper.isGlobalChannel(target)) norm = defaultChannel;
+
+    if (this.activeTarget === norm) return;
+    const targetNick = norm.split(':')[0];
     const activeNick = this.activeTarget ? this.activeTarget.split(':')[0] : null;
     if (activeNick && targetNick && activeNick === targetNick) return;
 
-    const current = this.unreadCounts.get(target) || 0;
-    this.unreadCounts.set(target, current + 1);
+    const current = this.unreadCounts.get(norm) || 0;
+    this.unreadCounts.set(norm, current + 1);
   }
 
   setTarget(target) {
-    this.activeTarget = target;
-    this.addContact(target);
-    this.selectedContactIdx = this.contacts.indexOf(target);
-    this.unreadCounts.delete(target);
-    const targetNick = target ? target.split(':')[0] : null;
+    const defaultChannel = I18n.t('DEFAULT_CHANNEL_NAME');
+    const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
+    let norm = target;
+    if (AddressHelper.isSystemConsole(target)) norm = systemConsole;
+    else if (AddressHelper.isGlobalChannel(target)) norm = defaultChannel;
+
+    this.activeTarget = norm;
+    this.addContact(norm);
+    this.selectedContactIdx = this.contacts.indexOf(norm);
+    this.unreadCounts.delete(norm);
+    const targetNick = norm ? norm.split(':')[0] : null;
     if (targetNick) {
       this.unreadCounts.delete(targetNick);
       for (const k of this.unreadCounts.keys()) {
@@ -597,7 +650,7 @@ export class TerminalSession extends EventEmitter {
           let statusChar = '○';
           let statusColor = ANSI.FG_GRAY;
 
-          if (contact === systemConsole) {
+          if (AddressHelper.isSystemConsole(contact)) {
             statusChar = '★';
             statusColor = ANSI.FG_YELLOW;
           } else if (contact.startsWith('#')) {
@@ -615,7 +668,7 @@ export class TerminalSession extends EventEmitter {
           const visibleName = contact.slice(0, maxTextLen);
 
           let nameColor = isCurrent ? ANSI.FG_GREEN + ANSI.BOLD : ANSI.FG_GRAY;
-          if (contact === systemConsole && !isCurrent) nameColor = ANSI.FG_YELLOW;
+          if (AddressHelper.isSystemConsole(contact) && !isCurrent) nameColor = ANSI.FG_YELLOW;
           if (unread > 0 && !isCurrent) nameColor = ANSI.FG_WHITE + ANSI.BOLD;
           if (isSelected) nameColor = ANSI.BG_HEADER + ANSI.FG_YELLOW + ANSI.BOLD;
 

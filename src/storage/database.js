@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { Logger } from '../utils/logger.js';
 import { I18n } from '../locales/i18n.js';
 import { CryptoHelper } from '../utils/cryptoHelper.js';
+import { AddressHelper } from '../utils/addressHelper.js';
 
 const log = new Logger('DATABASE');
 
@@ -136,6 +137,32 @@ export class Database {
             WHERE public_key IS NOT NULL AND public_key != '' AND public_keys = '[]';
           `);
         }
+
+        // Profil kontaklarını mevcut locale doğrultusunda senkronize et (eski dildeki kopyaları temizle)
+        try {
+          const defaultChannel = I18n.t('DEFAULT_CHANNEL_NAME');
+          const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
+          const allProfiles = this.db.prepare('SELECT user_address, contacts FROM profiles').all();
+          const updateStmt = this.db.prepare('UPDATE profiles SET contacts = ? WHERE user_address = ?');
+          for (const p of allProfiles) {
+            if (!p.contacts) continue;
+            let rawList = [];
+            try { rawList = JSON.parse(p.contacts); } catch { continue; }
+            const normList = [];
+            for (const c of rawList) {
+              let norm = c;
+              if (AddressHelper.isSystemConsole(c)) norm = systemConsole;
+              else if (AddressHelper.isGlobalChannel(c)) norm = defaultChannel;
+              if (!normList.includes(norm)) normList.push(norm);
+            }
+            if (!normList.includes(systemConsole)) normList.unshift(systemConsole);
+            if (!normList.includes(defaultChannel)) normList.splice(1, 0, defaultChannel);
+            const newJson = JSON.stringify(normList);
+            if (newJson !== p.contacts) {
+              updateStmt.run(newJson, p.user_address);
+            }
+          }
+        } catch {}
       } catch (migErr) {
         log.warn(I18n.t('DB_MIGRATION_WARN', { error: migErr.message }));
       }
@@ -257,9 +284,25 @@ export class Database {
     }
 
     try {
+      const rawContacts = JSON.parse(row.contacts || '[]');
+      const normalizedContacts = [];
+      for (const c of rawContacts) {
+        let norm = c;
+        if (AddressHelper.isSystemConsole(c)) norm = systemConsole;
+        else if (AddressHelper.isGlobalChannel(c)) norm = defaultChannel;
+        if (!normalizedContacts.includes(norm)) {
+          normalizedContacts.push(norm);
+        }
+      }
+      if (!normalizedContacts.includes(systemConsole)) {
+        normalizedContacts.unshift(systemConsole);
+      }
+      if (!normalizedContacts.includes(defaultChannel)) {
+        normalizedContacts.splice(1, 0, defaultChannel);
+      }
       return {
-        contacts: JSON.parse(row.contacts),
-        history: JSON.parse(row.history),
+        contacts: normalizedContacts,
+        history: JSON.parse(row.history || '[]'),
         passwordHash: row.password_hash || '',
         publicKey: row.public_key || '',
         publicKeys,
@@ -304,10 +347,27 @@ export class Database {
         history = excluded.history
     `);
 
-    const cleanContacts = Array.from(new Set(contacts));
+    const defaultChannel = I18n.t('DEFAULT_CHANNEL_NAME');
+    const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
+    const normalizedContacts = [];
+    for (const c of (contacts || [])) {
+      let norm = c;
+      if (AddressHelper.isSystemConsole(c)) norm = systemConsole;
+      else if (AddressHelper.isGlobalChannel(c)) norm = defaultChannel;
+      if (!normalizedContacts.includes(norm)) {
+        normalizedContacts.push(norm);
+      }
+    }
+    if (!normalizedContacts.includes(systemConsole)) {
+      normalizedContacts.unshift(systemConsole);
+    }
+    if (!normalizedContacts.includes(defaultChannel)) {
+      normalizedContacts.splice(1, 0, defaultChannel);
+    }
+
     const cleanHistory = (history || []).slice(-50);
 
-    stmt.run(userAddress, JSON.stringify(cleanContacts), JSON.stringify(cleanHistory));
+    stmt.run(userAddress, JSON.stringify(normalizedContacts), JSON.stringify(cleanHistory));
   }
 
   saveMessage({ id, from, to, content, isAction = false, isSnippet = false, isE2EE = false, timestamp = new Date().toISOString() }) {
@@ -353,7 +413,18 @@ export class Database {
 
   clearConversationForUser(userAddress, target) {
     const userPrefix = userAddress.split(':')[0];
-    if (target.startsWith('#')) {
+    if (AddressHelper.isGlobalChannel(target)) {
+      const stmt = this.db.prepare(`
+        UPDATE messages 
+        SET deleted_by = CASE 
+          WHEN deleted_by = '' THEN ?1 
+          WHEN deleted_by NOT LIKE '%' || ?1 || '%' AND deleted_by NOT LIKE '%' || ?2 || '%' THEN deleted_by || ',' || ?1 
+          ELSE deleted_by 
+        END
+        WHERE receiver = '#genel' OR receiver = '#general' OR receiver = 'genel' OR receiver = 'general'
+      `);
+      stmt.run(userAddress, userPrefix);
+    } else if (target.startsWith('#')) {
       const chanPrefix = target.split(':')[0];
       const stmt = this.db.prepare(`
         UPDATE messages 
@@ -466,7 +537,19 @@ export class Database {
     let rows = [];
     const userAPrefix = targetA.split(':')[0];
 
-    if (targetB.startsWith('#')) {
+    if (AddressHelper.isGlobalChannel(targetB)) {
+      const stmt = this.db.prepare(`
+        SELECT * FROM (
+          SELECT rowid, id, sender, receiver, content, is_action, is_snippet, is_e2ee, timestamp 
+          FROM messages 
+          WHERE (receiver = '#genel' OR receiver = '#general' OR receiver = 'genel' OR receiver = 'general')
+            AND (deleted_by NOT LIKE '%' || ? || '%' AND deleted_by NOT LIKE '%' || ? || '%')
+          ORDER BY rowid DESC 
+          LIMIT ?
+        ) ORDER BY rowid ASC
+      `);
+      rows = stmt.all(targetA, userAPrefix, limit);
+    } else if (targetB.startsWith('#')) {
       const chanPrefix = targetB.split(':')[0];
       const stmt = this.db.prepare(`
         SELECT * FROM (

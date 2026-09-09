@@ -2055,16 +2055,23 @@ export class FederationEngine extends EventEmitter {
   // --- V2.0 PRESENCE & ONION ROUTING METHODS ---
 
   getLocalChannels() {
-    const chans = new Set(['#genel']);
+    const defaultChannel = I18n.t('DEFAULT_CHANNEL_NAME');
+    const chans = new Set([defaultChannel]);
     if (this.getLocalStateFn) {
       const state = this.getLocalStateFn();
       if (Array.isArray(state.channels)) {
-        state.channels.forEach((c) => chans.add(c));
+        state.channels.forEach((c) => {
+          if (AddressHelper.isGlobalChannel(c)) chans.add(defaultChannel);
+          else chans.add(c);
+        });
       }
       if (Array.isArray(state.memberships)) {
         state.memberships.forEach((m) => {
           if (Array.isArray(m.channels)) {
-            m.channels.forEach((c) => chans.add(c));
+            m.channels.forEach((c) => {
+              if (AddressHelper.isGlobalChannel(c)) chans.add(defaultChannel);
+              else chans.add(c);
+            });
           }
         });
       }

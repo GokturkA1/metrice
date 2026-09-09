@@ -256,14 +256,14 @@ PROXY TCP4 203.0.113.195 198.51.100.1 56324 8001\r\n<payload>
 
 ## Doğrulama ve Testler
 
-Sistem bütünlüğü `tests/` klasöründeki üç kapsamlı test süiti (toplam 106 test) ile doğrulanır:
+Sistem bütünlüğü `tests/` klasöründeki üç kapsamlı test süiti (toplam 107 test) ile doğrulanır:
 
 ```bash
 # Tüm test süitlerini sırayla çalıştırmak için:
 npm test
 
 # Veya test süitlerini bağımsız çalıştırmak için:
-node tests/mesh.test.js      # 1. P2P-Mesh, AutoNAT, Rendezvous, PROXY ve Transit Spesifikasyon Süiti (74 Test)
+node tests/mesh.test.js      # 1. P2P-Mesh, AutoNAT, Rendezvous, PROXY ve Transit Spesifikasyon Süiti (75 Test)
 node tests/protocol.test.js  # 2. Protokol, Ağ Keşfi, Post-Quantum SSH-2 ve Veritabanı Süiti (24 Test)
 node tests/security.test.js  # 3. Protokol Güvenliği, Nonce Replay, DoS ve Enjeksiyon Denetim Süiti (8 Test)
 ```
