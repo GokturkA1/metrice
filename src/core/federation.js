@@ -1323,11 +1323,16 @@ export class FederationEngine extends EventEmitter {
           deleted = true;
         }
         const parsed = AddressHelper.parse(payload.user);
-        if (parsed && parsed.name && parsed.nodeId) {
-          const canonical = `@${parsed.name}:${parsed.nodeId}.mesh`;
-          if (this.remoteOnlineUsers.has(canonical)) {
-            this.remoteOnlineUsers.delete(canonical);
-            deleted = true;
+        const nick = parsed?.name || payload.user.split(':')[0].replace(/^@/, '');
+        if (nick) {
+          const nickLower = nick.toLowerCase();
+          for (const k of Array.from(this.remoteOnlineUsers.keys())) {
+            const kParsed = AddressHelper.parse(k);
+            const kNick = kParsed?.name || k.split(':')[0].replace(/^@/, '');
+            if (kNick.toLowerCase() === nickLower) {
+              this.remoteOnlineUsers.delete(k);
+              deleted = true;
+            }
           }
         }
         if (deleted) {
@@ -1607,9 +1612,13 @@ export class FederationEngine extends EventEmitter {
     if (!userAddress) return;
     this.remoteOnlineUsers.delete(userAddress);
     const parsed = AddressHelper.parse(userAddress);
-    if (parsed && parsed.name) {
+    const nick = parsed?.name || userAddress.split(':')[0].replace(/^@/, '');
+    if (nick) {
+      const nickLower = nick.toLowerCase();
       for (const k of Array.from(this.remoteOnlineUsers.keys())) {
-        if (k.startsWith(`@${parsed.name}:`)) {
+        const kParsed = AddressHelper.parse(k);
+        const kNick = kParsed?.name || k.split(':')[0].replace(/^@/, '');
+        if (kNick.toLowerCase() === nickLower) {
           this.remoteOnlineUsers.delete(k);
         }
       }

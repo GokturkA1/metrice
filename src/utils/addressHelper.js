@@ -335,11 +335,8 @@ export class AddressHelper {
   }
 
   static formatUser(username, nodeId = null) {
-    const targetNodeId = nodeId || this.localNodeId;
-    if (targetNodeId) {
-      return `@${username}:${targetNodeId}.mesh`;
-    }
-    return `@${username}:${CONFIG.serverName}:${CONFIG.federationPort}`;
+    const targetNodeId = nodeId || this.getLocalNodeId() || 'local';
+    return `@${username}:${targetNodeId}.mesh`;
   }
 
   static formatChannel(channelName, nodeId = null) {

@@ -47,8 +47,57 @@ export class ClientServer {
     this.initFederationListeners();
   }
 
+  updateTargetMigration(canonicalUser) {
+    const parsed = AddressHelper.parse(canonicalUser);
+    if (!parsed || !parsed.name || !parsed.nodeId) return;
+    const nickLower = parsed.name.toLowerCase();
+
+    for (const session of this.sessions.values()) {
+      let changed = false;
+
+      // 1. Aktif hedef eski NodeID ise güncelle
+      if (session.activeTarget && session.activeTarget.startsWith('@')) {
+        const activeParsed = AddressHelper.parse(session.activeTarget);
+        if (activeParsed && activeParsed.name.toLowerCase() === nickLower && activeParsed.nodeId !== parsed.nodeId) {
+          session.activeTarget = canonicalUser;
+          changed = true;
+        }
+      }
+
+      // 2. Rehberdeki (contacts) eski NodeID'yi güncelle
+      if (Array.isArray(session.contacts)) {
+        let contactsUpdated = false;
+        session.contacts = session.contacts.map((c) => {
+          if (c.startsWith('@')) {
+            const cParsed = AddressHelper.parse(c);
+            if (cParsed && cParsed.name.toLowerCase() === nickLower && cParsed.nodeId !== parsed.nodeId) {
+              changed = true;
+              contactsUpdated = true;
+              return canonicalUser;
+            }
+          }
+          return c;
+        });
+        if (contactsUpdated && typeof session.onProfileChange === 'function') {
+          session.onProfileChange(session.contacts, session.history);
+        }
+      }
+
+      if (changed) {
+        session.emit('request_render');
+      }
+    }
+  }
+
   initFederationListeners() {
     this.federation.on('presence_change', () => {
+      try {
+        if (this.federation && this.federation.remoteOnlineUsers) {
+          for (const u of this.federation.remoteOnlineUsers.keys()) {
+            this.updateTargetMigration(u);
+          }
+        }
+      } catch {}
       if (this.renderDebounceTimer) clearTimeout(this.renderDebounceTimer);
       this.renderDebounceTimer = setTimeout(() => {
         this.notifyAllSessionsRender();
@@ -57,6 +106,9 @@ export class ClientServer {
 
     this.federation.on('message', (msg) => {
       try {
+        if (msg.from && msg.from.startsWith('@')) {
+          this.updateTargetMigration(msg.from);
+        }
         if (msg.to.startsWith('#')) {
           for (const [addr, userSession] of this.sessions.entries()) {
             if (msg.from !== addr) {
@@ -116,16 +168,27 @@ export class ClientServer {
   }
 
   getLocalOnlineUsers() {
-    return Array.from(this.sessions.keys());
+    const localNodeId = (this.federation && (this.federation.nodeId || this.federation.myIdentity?.nodeId)) || AddressHelper.getLocalNodeId() || 'local';
+    return Array.from(this.sessions.keys()).map((userAddr) => {
+      if (typeof userAddr === 'string' && userAddr.endsWith('.mesh')) {
+        return userAddr;
+      }
+      const parsed = AddressHelper.parse(userAddr);
+      const nick = parsed?.name || (typeof userAddr === 'string' ? userAddr.split(':')[0].replace('@', '') : 'user');
+      return `@${nick}:${localNodeId}.mesh`;
+    });
   }
 
   getLocalMemberships() {
     const list = [];
     const localNodeId = (this.federation && (this.federation.nodeId || this.federation.myIdentity?.nodeId)) || AddressHelper.getLocalNodeId() || 'local';
     for (const [userAddr, session] of this.sessions.entries()) {
-      const parsed = AddressHelper.parse(userAddr);
-      const nick = parsed?.name || userAddr.split(':')[0].replace('@', '');
-      const canonicalUser = `@${nick}:${localNodeId}.mesh`;
+      let canonicalUser = userAddr;
+      if (typeof userAddr !== 'string' || !userAddr.endsWith('.mesh')) {
+        const parsed = AddressHelper.parse(userAddr);
+        const nick = parsed?.name || (typeof userAddr === 'string' ? userAddr.split(':')[0].replace('@', '') : 'user');
+        canonicalUser = `@${nick}:${localNodeId}.mesh`;
+      }
       list.push({
         user: canonicalUser,
         channels: typeof session.getMyChannels === 'function' ? session.getMyChannels() : [],

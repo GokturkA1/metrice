@@ -3038,6 +3038,100 @@ async function runV2TestSuite() {
     record('7.63 [REVİZYON 32 / v2.5.1] Bilateral Varlık Senkronizasyonu, Tünel USER_OFFLINE Dağıtımı & Eski NodeID Temizliği', !!test763Ok,
       `TunnelsOffline: ${offlineTunnelsNotifiedOk}, NickPruned: ${allBobVariantsCleanedOk}, BilateralSync: ${!!bilateralSyncOk}, OldNodePruned: ${aliceOldPrunedOk}`);
 
+    // Test 7.64: [REVİZYON 33 / v2.5.2] Kanonik .mesh Adresleme Zorlaması, NodeID Göçü & Bilateral Kalkanı
+    const db764Path = path.join(rootDir, 'v2_test_r33_migration.db');
+    if (fs.existsSync(db764Path)) fs.unlinkSync(db764Path);
+    const mockDb764 = new Database(db764Path);
+    const fed764 = new FederationEngine(mockDb764, new PeerManager());
+    fed764.role = 'RELAY';
+
+    // 1. Tavizsiz Kanonik .mesh Adresleme
+    const prevNodeId = AddressHelper.getLocalNodeId();
+    AddressHelper.setLocalNodeId(fed764.nodeId);
+    const userWithoutNodeId = AddressHelper.formatUser('mehmet');
+    const userWithNodeId = AddressHelper.formatUser('zeynep', 'customnode123456');
+    const canonicalFormatOk = userWithoutNodeId === `@mehmet:${fed764.nodeId}.mesh` &&
+      userWithNodeId === '@zeynep:customnode123456.mesh' &&
+      !userWithoutNodeId.includes(':8001') && !userWithoutNodeId.includes('localhost');
+
+    const clientSrv764 = new ClientServer(mockDb764, fed764);
+    const mockSession = new EventEmitter();
+    mockSession.activeTarget = '@ahmet:oldnode11111111.mesh';
+    mockSession.contacts = ['*sistem', '#genel', '@ahmet:oldnode11111111.mesh', '@ayse:othernode222222.mesh'];
+    mockSession.history = [];
+    mockSession.getMyChannels = () => ['#genel'];
+    mockSession.isSsh = false;
+    mockSession.kemKeyPair = null;
+    let renderRequested = false;
+    mockSession.on('request_render', () => { renderRequested = true; });
+
+    clientSrv764.sessions.set(`@mehmet:${fed764.nodeId}.mesh`, mockSession);
+
+    const localUsers = clientSrv764.getLocalOnlineUsers();
+    const localMemberships = clientSrv764.getLocalMemberships();
+    const clientSrvCanonicalOk = localUsers.length === 1 && localUsers[0] === `@mehmet:${fed764.nodeId}.mesh` &&
+      localMemberships.length === 1 && localMemberships[0].user === `@mehmet:${fed764.nodeId}.mesh`;
+
+    // 2. NodeID Göçü (NodeID Migration)
+    clientSrv764.updateTargetMigration('@ahmet:newnode33333333.mesh');
+    const migrationActiveTargetOk = mockSession.activeTarget === '@ahmet:newnode33333333.mesh';
+    const migrationContactsOk = mockSession.contacts.includes('@ahmet:newnode33333333.mesh') &&
+      !mockSession.contacts.includes('@ahmet:oldnode11111111.mesh');
+    const migrationRenderOk = renderRequested;
+
+    // 3. Bilateral PRESENCE_ANNOUNCE Ping-Pong Fırtınası Kalkanı (isBilateralReply)
+    const remoteRelayId764 = CryptoHelper.generateIdentityKeyPair();
+    const remoteRelayNodeId764 = CryptoHelper.deriveNodeId(remoteRelayId764.publicKey);
+    const remoteRelayKem764 = CryptoHelper.generateKemKeyPair();
+    const ts764 = Date.now();
+    const dataToSign764 = JSON.stringify({
+      nodeId: remoteRelayNodeId764,
+      role: 'RELAY',
+      rendezvousNodes: ['198.51.100.99:8001'],
+      kemPublicKey: remoteRelayKem764.publicKey,
+      channels: ['#genel'],
+      timestamp: ts764
+    });
+    const sig764 = CryptoHelper.sign(dataToSign764, remoteRelayId764.privateKey);
+
+    const writtenPackets764 = [];
+    const mockChannel764 = {
+      peerNodeAddress: `${remoteRelayNodeId764}.mesh`,
+      writePayload: (p) => { writtenPackets764.push(p); }
+    };
+
+    // isBilateralReply: true olarak gelen anons
+    fed764.handleIncoming({
+      type: 'PRESENCE_ANNOUNCE',
+      nodeId: remoteRelayNodeId764,
+      role: 'RELAY',
+      rendezvousNodes: ['198.51.100.99:8001'],
+      kemPublicKey: remoteRelayKem764.publicKey,
+      identityPublicKey: remoteRelayId764.publicKey,
+      channels: ['#genel'],
+      memberships: [{ user: `@remotepartner:${remoteRelayNodeId764}.mesh`, channels: ['#genel'] }],
+      timestamp: ts764,
+      sig: sig764,
+      isBilateralReply: true
+    }, mockChannel764);
+
+    const hasLoopingBilateralReply = writtenPackets764.some((p) => p.type === 'PRESENCE_ANNOUNCE' && p.isBilateralReply === true);
+    const hasAck = writtenPackets764.some((p) => p.status === 'ack' && p.type === 'PRESENCE_ANNOUNCE');
+    const bilateralShieldOk = hasAck && !hasLoopingBilateralReply;
+
+    if (prevNodeId) AddressHelper.setLocalNodeId(prevNodeId);
+    clientSrv764.close();
+    fed764.close();
+    mockDb764.close();
+    try { if (fs.existsSync(db764Path)) fs.unlinkSync(db764Path); } catch {}
+
+    const test764Ok = canonicalFormatOk && clientSrvCanonicalOk &&
+      migrationActiveTargetOk && migrationContactsOk && migrationRenderOk &&
+      bilateralShieldOk;
+
+    record('7.64 [REVİZYON 33 / v2.5.2] Kanonik .mesh Adresleme Zorlaması, NodeID Göçü & Bilateral Kalkanı', !!test764Ok,
+      `Canonical: ${canonicalFormatOk && clientSrvCanonicalOk}, Migration: ${migrationActiveTargetOk && migrationContactsOk}, BilateralShield: ${bilateralShieldOk}`);
+
     // Temiz Kapanış
     testDbLocale.close();
     try { if (fs.existsSync(testDbLocalePath)) fs.unlinkSync(testDbLocalePath); } catch {}
