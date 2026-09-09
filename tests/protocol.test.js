@@ -552,7 +552,7 @@ function createTelnetSession(host, port, username, password = SUITE_CONFIG.defau
       const str = stripAnsi(chunk.toString());
       totalText += str;
 
-      if (state === 0 && (totalText.includes('Kullanıcı adı') || totalText.includes(':'))) {
+      if (state === 0 && (totalText.includes('username') || totalText.includes('Kullanıcı adı') || totalText.includes(':'))) {
         state = 1;
         totalText = '';
         setTimeout(() => socket.write(`${username}\r`), 100);
@@ -560,12 +560,12 @@ function createTelnetSession(host, port, username, password = SUITE_CONFIG.defau
       }
 
       if (state === 1) {
-        if (totalText.includes('Parola belirleyin') || totalText.includes('[YENİ HESAP]')) {
+        if (totalText.includes('Set password') || totalText.includes('Parola belirleyin') || totalText.includes('[NEW ACCOUNT]') || totalText.includes('[YENİ HESAP]')) {
           state = 2; // Yeni hesap, tekrar isteyecek
           totalText = '';
           setTimeout(() => socket.write(`${password}\r`), 100);
           return;
-        } else if (totalText.includes('Parola:')) {
+        } else if (totalText.includes('Password:') || totalText.includes('Parola:')) {
           state = 3; // Mevcut hesap doğrudan girişe gider
           totalText = '';
           setTimeout(() => socket.write(`${password}\r`), 100);
@@ -573,14 +573,14 @@ function createTelnetSession(host, port, username, password = SUITE_CONFIG.defau
         }
       }
 
-      if (state === 2 && totalText.includes('tekrar')) {
+      if (state === 2 && (totalText.includes('Confirm password') || totalText.includes('tekrar'))) {
         state = 3;
         totalText = '';
         setTimeout(() => socket.write(`${password}\r`), 100);
         return;
       }
 
-      if (totalText.includes('METRICE |') || totalText.includes('Konsol/Odalar') || totalText.includes('Pencere:')) {
+      if (totalText.includes('METRICE |') || totalText.includes('Console/Rooms') || totalText.includes('Konsol/Odalar') || totalText.includes('Window:') || totalText.includes('Pencere:')) {
         clearTimeout(timer);
         resolve({
           socket,
@@ -796,11 +796,11 @@ async function main() {
             s.write('\x1b[24;110R');
           }
           out += stripAnsi(d.toString());
-          if (!sent && (out.includes('Kullanıcı adı') || out.includes(':'))) {
+          if (!sent && (out.includes('username') || out.includes('Kullanıcı adı') || out.includes(':'))) {
             sent = true;
             setTimeout(() => s.write('ali boşluklu!*\r'), 80);
           }
-          if (out.includes('Geçersiz ad') || out.includes('Sadece a-z')) {
+          if (out.includes('Invalid') || out.includes('Geçersiz ad') || out.includes('Sadece a-z')) {
             s.destroy();
             res(true);
           }
@@ -837,17 +837,17 @@ async function main() {
             s.write('\x1b[24;110R');
           }
           out += stripAnsi(d.toString());
-          if (step === 'USER' && (out.includes('Kullanıcı adı') || out.includes(':'))) {
+          if (step === 'USER' && (out.includes('username') || out.includes('Kullanıcı adı') || out.includes(':'))) {
             step = 'PASS';
             setTimeout(() => s.write('user_locked\r'), 80);
             return;
           }
-          if (step === 'PASS' && (out.includes('Parola:') || out.includes('Parola'))) {
+          if (step === 'PASS' && (out.includes('Password:') || out.includes('Password') || out.includes('Parola:') || out.includes('Parola'))) {
             step = 'CHECK';
             setTimeout(() => s.write('tamamen_yanlis_parola\r'), 80);
             return;
           }
-          if (out.includes('Hatalı parola') || out.includes('Kalan hak')) {
+          if (out.includes('Incorrect') || out.includes('Remaining') || out.includes('Hatalı parola') || out.includes('Kalan hak')) {
             s.destroy();
             res(true);
           }
@@ -1032,21 +1032,21 @@ async function main() {
           totalText += clean;
 
           // 1. Kullanıcı adını gönder
-          if (!userSent && (totalText.includes('Kullanıcı adı') || totalText.includes(':'))) {
+          if (!userSent && (totalText.includes('username') || totalText.includes('Kullanıcı adı') || totalText.includes(':'))) {
             userSent = true;
             setTimeout(() => s.write('ssh_alice\r'), 80);
             return;
           }
 
           // 2. Parola promptu gelirse parolayı gönder
-          if (userSent && !passSent && (totalText.includes('Parola:') || totalText.includes('Parola'))) {
+          if (userSent && !passSent && (totalText.includes('Password:') || totalText.includes('Password') || totalText.includes('Parola:') || totalText.includes('Parola'))) {
             passSent = true;
             setTimeout(() => s.write('AlicePassword999!\r'), 80);
             return;
           }
 
           // 3. Emniyet kilidi uyarısı yakalandığı an başarılı
-          if (totalText.includes('Telnet erişimi kapalıdır') || totalText.includes('donanım anahtarı ile mühürlenmiştir')) {
+          if (totalText.includes('Telnet access is disabled') || totalText.includes('sealed with') || totalText.includes('Telnet erişimi kapalıdır') || totalText.includes('donanım anahtarı ile mühürlenmiştir')) {
             clearTimeout(timer);
             s.destroy();
             res(true);
@@ -1054,7 +1054,7 @@ async function main() {
         });
 
         s.on('close', () => {
-          if (totalText.includes('Telnet erişimi kapalıdır') || totalText.includes('donanım anahtarı ile mühürlenmiştir')) {
+          if (totalText.includes('Telnet access is disabled') || totalText.includes('sealed with') || totalText.includes('Telnet erişimi kapalıdır') || totalText.includes('donanım anahtarı ile mühürlenmiştir')) {
             clearTimeout(timer);
             res(true);
           }

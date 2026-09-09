@@ -1844,7 +1844,8 @@ async function runV2TestSuite() {
     try {
       await fedAutoNat.sendViaOnion('nonexistentnode1', { id: 'test_orphan', to: 'nonexistentnode1.mesh' }, true);
     } catch (err) {
-      outboxLoopPrevented = err.message.includes('aktif buluşma noktası bulunamadı');
+      outboxLoopPrevented = err.message.includes('aktif buluşma noktası bulunamadı') ||
+        err.message.includes('No active rendezvous point found');
     }
 
     const test748Ok = isSubscribed && forwardedCorrectly && outboxLoopPrevented;

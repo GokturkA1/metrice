@@ -558,10 +558,14 @@ export class TerminalSession extends EventEmitter {
       const midTitle = I18n.t('TUI_CHAT_HEADER', { target: this.activeTarget || I18n.t('TUI_CHAT_NO_TARGET'), scroll: scrollInfo });
       const leftBorderColor = this.focus === 'sidebar' ? ANSI.FG_YELLOW : ANSI.FG_CYAN;
 
+      const safeLeftTitle = leftTitle.length > innerLeftWidth ? leftTitle.slice(0, innerLeftWidth) : leftTitle;
+      const safeMidTitle = midTitle.length > innerMidWidth ? midTitle.slice(0, innerMidWidth) : midTitle;
+      const safeRightTitle = rightTitle.length > innerRightWidth ? rightTitle.slice(0, innerRightWidth) : rightTitle;
+
       let topBorder = '+';
-      topBorder += leftBorderColor + ANSI.BOLD + leftTitle + ANSI.RESET + '-'.repeat(Math.max(0, innerLeftWidth - leftTitle.length)) + '+';
-      topBorder += ANSI.FG_CYAN + ANSI.BOLD + midTitle + ANSI.RESET + '-'.repeat(Math.max(0, innerMidWidth - midTitle.length)) + '+';
-      topBorder += (isSystemWindow ? ANSI.FG_YELLOW : ANSI.FG_GRAY) + ANSI.BOLD + rightTitle + ANSI.RESET + '-'.repeat(Math.max(0, innerRightWidth - rightTitle.length)) + '+';
+      topBorder += leftBorderColor + ANSI.BOLD + safeLeftTitle + ANSI.RESET + '-'.repeat(Math.max(0, innerLeftWidth - safeLeftTitle.length)) + '+';
+      topBorder += ANSI.FG_CYAN + ANSI.BOLD + safeMidTitle + ANSI.RESET + '-'.repeat(Math.max(0, innerMidWidth - safeMidTitle.length)) + '+';
+      topBorder += (isSystemWindow ? ANSI.FG_YELLOW : ANSI.FG_GRAY) + ANSI.BOLD + safeRightTitle + ANSI.RESET + '-'.repeat(Math.max(0, innerRightWidth - safeRightTitle.length)) + '+';
       newFrame[1] = topBorder;
 
       const chatHeight = this.height - 4;
