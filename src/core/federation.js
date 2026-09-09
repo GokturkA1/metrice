@@ -785,25 +785,39 @@ export class FederationEngine extends EventEmitter {
         : null;
       const hostAddr = this.nodeAddress;
       const meshAddr = this.meshAddress;
-      const ipAddr = this.publicIp ? `${this.publicIp}:${CONFIG.federationPort}` : null;
-      const localhostAddr = this.nodeAddress && this.nodeAddress.startsWith('localhost:')
-        ? this.nodeAddress.replace('localhost:', '127.0.0.1:')
-        : null;
+      const announceAddr = this.getRelayAnnounceAddress();
 
-      let isSigValid = CryptoHelper.verify(`${nodeId}${hostAddr}${timestamp}${nonce}`, sig, identityPublicKey) ||
-                       CryptoHelper.verify(`${nodeId}${meshAddr}${timestamp}${nonce}`, sig, identityPublicKey);
+      const validRelayAddresses = new Set([
+        hostAddr,
+        meshAddr,
+        announceAddr
+      ]);
+      if (localSockAddr) validRelayAddresses.add(localSockAddr);
+      if (bracketSockAddr) validRelayAddresses.add(bracketSockAddr);
 
-      if (!isSigValid && localSockAddr) {
-        isSigValid = CryptoHelper.verify(`${nodeId}${localSockAddr}${timestamp}${nonce}`, sig, identityPublicKey);
+      if (this.nodeAddress && this.nodeAddress.startsWith('localhost:')) {
+        validRelayAddresses.add(this.nodeAddress.replace('localhost:', '127.0.0.1:'));
       }
-      if (!isSigValid && bracketSockAddr) {
-        isSigValid = CryptoHelper.verify(`${nodeId}${bracketSockAddr}${timestamp}${nonce}`, sig, identityPublicKey);
+
+      const publicPort = CONFIG.publicFederationPort || CONFIG.federationPort;
+      if (this.publicIp) {
+        validRelayAddresses.add(`${this.publicIp}:${CONFIG.federationPort}`);
+        validRelayAddresses.add(`${this.publicIp}:${publicPort}`);
       }
-      if (!isSigValid && ipAddr) {
-        isSigValid = CryptoHelper.verify(`${nodeId}${ipAddr}${timestamp}${nonce}`, sig, identityPublicKey);
+      validRelayAddresses.add(`${CONFIG.serverName || '127.0.0.1'}:${CONFIG.federationPort}`);
+      validRelayAddresses.add(`${CONFIG.serverName || '127.0.0.1'}:${publicPort}`);
+      if (CONFIG.serverName === 'localhost') {
+        validRelayAddresses.add(`127.0.0.1:${CONFIG.federationPort}`);
+        validRelayAddresses.add(`127.0.0.1:${publicPort}`);
       }
-      if (!isSigValid && localhostAddr) {
-        isSigValid = CryptoHelper.verify(`${nodeId}${localhostAddr}${timestamp}${nonce}`, sig, identityPublicKey);
+
+      let isSigValid = false;
+      for (const addr of validRelayAddresses) {
+        if (!addr) continue;
+        if (CryptoHelper.verify(`${nodeId}${addr}${timestamp}${nonce}`, sig, identityPublicKey)) {
+          isSigValid = true;
+          break;
+        }
       }
 
       if (!isSigValid) {
@@ -1806,7 +1820,7 @@ export class FederationEngine extends EventEmitter {
       const payload = {
         type: 'DIALBACK_REQUEST',
         targetIp,
-        targetPort: CONFIG.federationPort,
+        targetPort: CONFIG.publicFederationPort || CONFIG.federationPort,
         nonce
       };
 
@@ -2040,13 +2054,14 @@ export class FederationEngine extends EventEmitter {
   getRelayAnnounceAddress() {
     const serverHost = CONFIG.serverName;
     const isLoopbackOrLocal = !serverHost || serverHost === 'localhost' || serverHost.startsWith('127.') || serverHost === '0.0.0.0';
+    const announcePort = CONFIG.publicFederationPort || CONFIG.federationPort;
     
     // Genel IP konsensüsü varsa ve serverName yerelse genel IP'yi önceliklendir
     if (isLoopbackOrLocal && this.publicIp) {
-      return `${this.publicIp}:${CONFIG.federationPort}`;
+      return `${this.publicIp}:${announcePort}`;
     }
     
-    return `${serverHost || '127.0.0.1'}:${CONFIG.federationPort}`;
+    return `${serverHost || '127.0.0.1'}:${announcePort}`;
   }
 
   broadcastRouteUpdate(nodeId, rendezvousAddr, kemPublicKey, identityPublicKey) {
@@ -2260,7 +2275,9 @@ export class FederationEngine extends EventEmitter {
       const nonSelf = route.rendezvousNodes.find((addr) =>
         addr !== this.nodeAddress &&
         addr !== this.meshAddress &&
-        addr !== `${CONFIG.serverName}:${CONFIG.federationPort}`
+        addr !== this.getRelayAnnounceAddress() &&
+        addr !== `${CONFIG.serverName}:${CONFIG.federationPort}` &&
+        addr !== `${CONFIG.serverName}:${CONFIG.publicFederationPort || CONFIG.federationPort}`
       );
       exitRelayAddress = nonSelf || route.rendezvousNodes[0];
     } else if (route && (route.role === 'RELAY' || route.role === 'CAP_RELAY')) {
@@ -2427,6 +2444,7 @@ export class FederationEngine extends EventEmitter {
   }
 
   async processOutbox(forceAll = false) {
+    if (!this.db || !this.db.db || !this.db.db.isOpen) return;
     const pending = this.db.getPendingOutbox(forceAll);
     for (const item of pending) {
       const target = AddressHelper.parse(item.to);

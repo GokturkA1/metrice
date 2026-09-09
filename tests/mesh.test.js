@@ -689,7 +689,7 @@ async function runV2TestSuite() {
     });
     CONFIG.sshServerVersion = prevVersion;
 
-    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.4.1' && customIdent === 'SSH-2.0-MyCustomNode';
+    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.4.2' && customIdent === 'SSH-2.0-MyCustomNode';
     record('7.8 [YAPILANDIRMA] SSH Sunucu Version String Özelleştirme & Fallback Uyumu', versionTestValid, `Fallback: ${fallbackIdent}, Custom: ${customIdent}`);
 
     // Test 7.9: RENDEZVOUS_BIND Yabancı relayAddress İmzası Reddi (Bypass & Reflection Önlemi)
@@ -2322,6 +2322,117 @@ async function runV2TestSuite() {
 
     record('7.55 [REVİZYON 24 / v2.4.1] Tünel Timeout Hatası, Hazır Olmayan Tünel Koruması, RFC 5952 IPv6 & DNS Fallback Sıkılaştırması', !!test755Ok,
       `CircuitTimeoutError: ${circuitTimeoutErrorHandled}, UnreadySkipped: ${unreadySkippedOk}, RFC5952: ${rfc5952Ok}, SpoofDnsRejected: ${spoofDnsRejected}, LegitMeshAccepted: ${legitMeshAccepted}, MismatchedMeshRejected: ${mismatchedMeshRejected}, IPv6Match: ${ipv6NormalizedMatch}`);
+
+    // Test 7.56: [REVİZYON 25 / v2.4.2] Layer 4 Proxy Announced/Public Port Çözümlemesi ve RENDEZVOUS_BIND İmza Toleransı
+    // 1. Yapılandırma Akıllı Varsayılanları ve Fallback
+    const prevFedPort756 = CONFIG.federationPort;
+    const prevPubFedPort756 = CONFIG.publicFederationPort;
+    const prevServerName756 = CONFIG.serverName;
+
+    const configDefaultsOk756 = typeof CONFIG.publicFederationPort === 'number' &&
+      typeof CONFIG.publicSshPort === 'number' &&
+      typeof CONFIG.publicClientPort === 'number' &&
+      CONFIG.publicFederationPort === CONFIG.federationPort;
+
+    // 2. getRelayAnnounceAddress ve initiateDialback genel port uyarlaması
+    const tempProxyDb = new Database(path.join(rootDir, 'v2_test_proxy_ports.db'));
+    const tempProxyPm = new PeerManager();
+    tempProxyPm.addOrUpdate('198.51.100.1:8001');
+    const tempProxyEngine = new FederationEngine(tempProxyDb, tempProxyPm);
+    tempProxyEngine.role = 'RELAY';
+
+    CONFIG.serverName = 'relay.proxy-node.org';
+    CONFIG.federationPort = 8001;
+    CONFIG.publicFederationPort = 8002;
+
+    const announcedAddr756 = tempProxyEngine.getRelayAnnounceAddress();
+    const announcedPortOk756 = announcedAddr756 === 'relay.proxy-node.org:8002';
+
+    let dialbackPacket756 = null;
+    tempProxyEngine.sendPacket = async (h, p, payload) => {
+      dialbackPacket756 = payload;
+      return { status: 'ok' };
+    };
+    tempProxyEngine.initiateDialback('198.51.100.50');
+    const dialbackPortOk756 = dialbackPacket756 && dialbackPacket756.targetPort === 8002;
+
+    // 3. RENDEZVOUS_BIND Çift Port (Yerel 8001 ve Genel 8002) İmza Kabul Matrisi
+    const edgeKp756 = CryptoHelper.generateIdentityKeyPair();
+    const edgeNodeId756 = CryptoHelper.deriveNodeId(edgeKp756.publicKey);
+    const nonce756Public = CryptoHelper.generateRandomKey(16);
+    const ts756 = Date.now();
+
+    // Genel anons portu (8002) ile imza
+    const sigPublic756 = CryptoHelper.sign(`${edgeNodeId756}relay.proxy-node.org:8002${ts756}${nonce756Public}`, edgeKp756.privateKey);
+    let boundPublicOk756 = false;
+    const mockProxyChan = {
+      socket: { remoteAddress: '198.51.100.5', localAddress: '127.0.0.1', localPort: 8001 },
+      writePayload: (p) => {
+        if (p?.status === 'bound') boundPublicOk756 = true;
+      }
+    };
+
+    tempProxyEngine.handleIncoming({
+      type: 'RENDEZVOUS_BIND',
+      nodeId: edgeNodeId756,
+      relayAddress: 'relay.proxy-node.org:8002',
+      identityPublicKey: edgeKp756.publicKey,
+      kemPublicKey: CryptoHelper.generateKemKeyPair().publicKey,
+      timestamp: ts756,
+      nonce: nonce756Public,
+      sig: sigPublic756
+    }, mockProxyChan, '198.51.100.5:54321');
+
+    // Yerel dinleme portu (8001) ile imza
+    const nonce756Internal = CryptoHelper.generateRandomKey(16);
+    const sigInternal756 = CryptoHelper.sign(`${edgeNodeId756}relay.proxy-node.org:8001${ts756}${nonce756Internal}`, edgeKp756.privateKey);
+    let boundInternalOk756 = false;
+    mockProxyChan.writePayload = (p) => {
+      if (p?.status === 'bound') boundInternalOk756 = true;
+    };
+
+    tempProxyEngine.handleIncoming({
+      type: 'RENDEZVOUS_BIND',
+      nodeId: edgeNodeId756,
+      relayAddress: 'relay.proxy-node.org:8001',
+      identityPublicKey: edgeKp756.publicKey,
+      kemPublicKey: CryptoHelper.generateKemKeyPair().publicKey,
+      timestamp: ts756,
+      nonce: nonce756Internal,
+      sig: sigInternal756
+    }, mockProxyChan, '198.51.100.5:54321');
+
+    // Yabancı / Sahte adres ile imza reddi
+    const nonce756Fake = CryptoHelper.generateRandomKey(16);
+    const sigFake756 = CryptoHelper.sign(`${edgeNodeId756}attacker-host:9999${ts756}${nonce756Fake}`, edgeKp756.privateKey);
+    let rejectedFakeOk756 = false;
+    mockProxyChan.writePayload = (p) => {
+      if (p?.status === 'rejected' && p?.reason === 'invalid_signature') rejectedFakeOk756 = true;
+    };
+
+    tempProxyEngine.handleIncoming({
+      type: 'RENDEZVOUS_BIND',
+      nodeId: edgeNodeId756,
+      relayAddress: 'attacker-host:9999',
+      identityPublicKey: edgeKp756.publicKey,
+      kemPublicKey: CryptoHelper.generateKemKeyPair().publicKey,
+      timestamp: ts756,
+      nonce: nonce756Fake,
+      sig: sigFake756
+    }, mockProxyChan, '198.51.100.5:54321');
+
+    // Temizlik ve eski konfigürasyonu geri yükleme
+    tempProxyEngine.close();
+    tempProxyDb.close();
+    CONFIG.federationPort = prevFedPort756;
+    CONFIG.publicFederationPort = prevPubFedPort756;
+    CONFIG.serverName = prevServerName756;
+
+    const test756Ok = configDefaultsOk756 && announcedPortOk756 && dialbackPortOk756 &&
+      boundPublicOk756 && boundInternalOk756 && rejectedFakeOk756;
+
+    record('7.56 [REVİZYON 25 / v2.4.2] Layer 4 Proxy Announced/Public Port Çözümlemesi ve RENDEZVOUS_BIND İmza Toleransı', !!test756Ok,
+      `ConfigDefaults: ${configDefaultsOk756}, AnnouncedPort: ${announcedPortOk756}, DialbackPort: ${dialbackPortOk756}, BoundPublic: ${boundPublicOk756}, BoundInternal: ${boundInternalOk756}, RejectedFake: ${rejectedFakeOk756}`);
 
     // Temiz Kapanış
     relayEngine.close();
