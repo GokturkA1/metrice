@@ -92,11 +92,14 @@ export class TerminalSession extends EventEmitter {
   }
 
   isMemberOf(target) {
+    if (AddressHelper.isGlobalChannel(target)) return true;
     if (this.contacts.includes(target)) return true;
-    if (AddressHelper.isGlobalChannel(target)) {
-      return this.contacts.some((c) => AddressHelper.isGlobalChannel(c));
-    }
     return false;
+  }
+
+  isViewingTarget(target) {
+    if (!target || !this.activeTarget) return false;
+    return AddressHelper.isSameTarget(this.activeTarget, target);
   }
 
   getMyChannels() {
@@ -139,25 +142,27 @@ export class TerminalSession extends EventEmitter {
     if (!this.contacts.includes(norm)) {
       if (AddressHelper.isSystemConsole(norm)) {
         this.contacts = this.contacts.filter((c) => !AddressHelper.isSystemConsole(c));
-        this.contacts.unshift(norm);
+        this.contacts.unshift(systemConsole);
       } else if (AddressHelper.isGlobalChannel(norm)) {
         this.contacts = this.contacts.filter((c) => !AddressHelper.isGlobalChannel(c));
-        this.contacts.splice(1, 0, norm);
+        const insertIdx = this.contacts.includes(systemConsole) ? 1 : 0;
+        this.contacts.splice(insertIdx, 0, defaultChannel);
       } else {
         this.contacts.push(norm);
       }
-      this.notifyProfileChange();
     }
+    this.notifyProfileChange();
+    this.emit('request_render');
   }
 
   removeContact(target) {
     const isSys = AddressHelper.isSystemConsole(target);
     const isGlob = AddressHelper.isGlobalChannel(target);
-
     this.contacts = this.contacts.filter((c) => {
+      if (c === target) return false;
       if (isSys && AddressHelper.isSystemConsole(c)) return false;
       if (isGlob && AddressHelper.isGlobalChannel(c)) return false;
-      return c !== target;
+      return true;
     });
     this.unreadCounts.delete(target);
     if (this.selectedContactIdx >= this.contacts.length) {
@@ -169,6 +174,8 @@ export class TerminalSession extends EventEmitter {
 
   incrementUnread(target) {
     if (!target) return;
+    if (this.isViewingTarget(target)) return;
+
     const defaultChannel = I18n.t('DEFAULT_CHANNEL_NAME');
     const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
     let norm = target;

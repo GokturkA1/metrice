@@ -60,7 +60,8 @@ export class ClientServer {
               if (userSession.isMemberOf(msg.to)) {
                 userSession.incrementUnread(msg.to);
                 const isMentioned = userSession.isUserMentioned(msg.content);
-                if (userSession.activeTarget !== msg.to || isMentioned) {
+                const isViewing = userSession.isViewingTarget(msg.to);
+                if (!isViewing || isMentioned) {
                   userSession.notifyNewMessage();
                 }
                 userSession.emit('request_render');
@@ -73,7 +74,11 @@ export class ClientServer {
             recipientSession.addContact(msg.from);
             recipientSession.incrementUnread(msg.from);
 
-            recipientSession.notifyNewMessage();
+            const isMentioned = recipientSession.isUserMentioned(msg.content);
+            const isViewing = recipientSession.isViewingTarget(msg.from);
+            if (!isViewing || isMentioned) {
+              recipientSession.notifyNewMessage();
+            }
             recipientSession.emit('request_render');
           }
         }
@@ -85,7 +90,7 @@ export class ClientServer {
     this.federation.on('typing', (payload) => {
       try {
         const recipientSession = this.findLocalSession(payload.to);
-        if (recipientSession && recipientSession.activeTarget === payload.from) {
+        if (recipientSession && AddressHelper.isSameTarget(recipientSession.activeTarget, payload.from)) {
           const rawName = payload.from.split(':')[0].replace('@', '');
           recipientSession.setTyping(rawName);
         }
@@ -134,7 +139,7 @@ export class ClientServer {
   getChannelMembers(target) {
     if (!target) return [];
 
-    if (AddressHelper.isSystemConsole(target)) {
+    if (AddressHelper.isSystemConsole(target) || AddressHelper.isGlobalChannel(target)) {
       return this.getOnlineUsers();
     }
 
@@ -515,7 +520,7 @@ export class ClientServer {
                     if (targetParsed) {
                       if (targetParsed.isLocal) {
                         const localRecipient = this.sessions.get(targetParsed.raw);
-                        if (localRecipient && localRecipient.activeTarget === userAddress) {
+                        if (localRecipient && AddressHelper.isSameTarget(localRecipient.activeTarget, userAddress)) {
                           const senderNick = userAddress.split(':')[0].replace('@', '');
                           localRecipient.setTyping(senderNick);
                         }
@@ -770,7 +775,8 @@ export class ClientServer {
           if (userSession.isMemberOf(target.raw)) {
             userSession.incrementUnread(target.raw);
             const isMentioned = userSession.isUserMentioned(content);
-            if (userSession.activeTarget !== target.raw || isMentioned) {
+            const isViewing = userSession.isViewingTarget(target.raw);
+            if (!isViewing || isMentioned) {
               userSession.notifyNewMessage();
             }
             userSession.emit('request_render');
@@ -797,7 +803,11 @@ export class ClientServer {
           recipientSession.addContact(from);
           recipientSession.incrementUnread(from);
 
-          recipientSession.notifyNewMessage();
+          const isMentioned = recipientSession.isUserMentioned(content);
+          const isViewing = recipientSession.isViewingTarget(from);
+          if (!isViewing || isMentioned) {
+            recipientSession.notifyNewMessage();
+          }
           recipientSession.emit('request_render');
         }
       } else {

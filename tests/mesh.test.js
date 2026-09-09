@@ -2596,6 +2596,62 @@ async function runV2TestSuite() {
     record('7.58 [REVİZYON 27 / Locale Değişimi] Kalıcı Veritabanı ve Oturumda Çok Dilli Sistem / Genel Kanal Tekilleştirmesi', !!test758Ok,
       `DbNorm: ${dbNormOk}, SessionInit: ${sessionInitOk}, SessionAddDup: ${sessionAddDuplicateOk}, CrossLocaleMsg: ${crossLocaleMessagesOk}`);
 
+    // Test 7.59: [REVİZYON 28 / v2.4.5] Çapraz Dil Aktif Kanal Bildirim Bastırma ve Genel Kanal Broadcast Semantiği
+    // 1. AddressHelper.isSameTarget doğrulaması
+    const sameChanOk = AddressHelper.isSameTarget('#genel', '#general') &&
+      AddressHelper.isSameTarget('#general', '#genel') &&
+      !AddressHelper.isSameTarget('#dev:n1.mesh', '#dev:n2.mesh');
+    const sameSysOk = AddressHelper.isSameTarget('*sistem', '*system') &&
+      AddressHelper.isSameTarget('*system', '*sistem');
+    const sameUserOk = AddressHelper.isSameTarget('@alice', '@alice:node.mesh') &&
+      !AddressHelper.isSameTarget('@alice:n1.mesh', '@alice:n2.mesh');
+    const isSameTargetOk = sameChanOk && sameSysOk && sameUserOk;
+
+    // 2. TerminalSession.isViewingTarget ve incrementUnread bildirim bastırma
+    const testSession759 = new TerminalSession(
+      { write: () => {}, destroyed: false },
+      '@tester:local.mesh',
+      { contacts: ['*system', '#general'] },
+      () => ['@tester:local.mesh', '@tr_user:remote.mesh'],
+      () => ['@tester:local.mesh', '@tr_user:remote.mesh'],
+      () => {},
+      () => ({ uptime: '1m', rss: '10', peers: [] }),
+      () => []
+    );
+    testSession759.setTarget('#general');
+    const isViewingOtherLocale = testSession759.isViewingTarget('#genel');
+    testSession759.incrementUnread('#genel');
+    const unreadSuppressed = (testSession759.unreadCounts.get('#general') || 0) === 0 &&
+      (testSession759.unreadCounts.get('#genel') || 0) === 0;
+
+    testSession759.incrementUnread('#farkli_kanal');
+    const unreadWorksForOther = (testSession759.unreadCounts.get('#farkli_kanal') || 0) === 1;
+    const notificationSuppressionOk = isViewingOtherLocale && unreadSuppressed && unreadWorksForOther;
+
+    // 3. Genel kanalın broadcast semantiği ile kullanıcı listesini getirmesi
+    fedAutoNat.remoteOnlineUsers.set('@tr_user:remote.mesh', {
+      channels: ['#genel'],
+      lastSeen: Date.now()
+    });
+    const generalMembersFromEn = fedAutoNat.getChannelMembers('#general');
+    const generalMembersFromTr = fedAutoNat.getChannelMembers('#genel');
+    const fedBroadcastOk = generalMembersFromEn.includes('@tr_user:remote.mesh') &&
+      generalMembersFromTr.includes('@tr_user:remote.mesh');
+
+    // 4. clientServer.getChannelMembers'ın genel kanalda online tüm kullanıcıları dönmesi
+    const mockCs759 = new ClientServer(testDb2, fedAutoNat);
+    mockCs759.sessions.set('@tester:local.mesh', testSession759);
+    const csMembersEn = mockCs759.getChannelMembers('#general');
+    const csMembersTr = mockCs759.getChannelMembers('#genel');
+    const csBroadcastOk = csMembersEn.includes('@tester:local.mesh') &&
+      csMembersEn.includes('@tr_user:remote.mesh') &&
+      csMembersTr.includes('@tester:local.mesh') &&
+      csMembersTr.includes('@tr_user:remote.mesh');
+
+    const test759Ok = isSameTargetOk && notificationSuppressionOk && fedBroadcastOk && csBroadcastOk;
+    record('7.59 [REVİZYON 28 / v2.4.5] Çapraz Dil Aktif Kanal Bildirim Bastırma ve Genel Kanal Broadcast Semantiği', !!test759Ok,
+      `IsSameTarget: ${isSameTargetOk}, NotifSuppression: ${notificationSuppressionOk}, FedBroadcast: ${fedBroadcastOk}, CsBroadcast: ${csBroadcastOk}`);
+
     // Temiz Kapanış
     testDbLocale.close();
     try { if (fs.existsSync(testDbLocalePath)) fs.unlinkSync(testDbLocalePath); } catch {}

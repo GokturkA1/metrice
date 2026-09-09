@@ -351,4 +351,42 @@ export class AddressHelper {
     }
     return `#${clean}:${CONFIG.serverName}:${CONFIG.federationPort}`;
   }
+
+  /**
+   * İki hedefin (kanal, sistem penceresi veya kullanıcı) mantıksal olarak aynı hedefi
+   * gösterip göstermediğini doğrular. Çapraz dil eşlemelerini (örn. #genel ve #general,
+   * *sistem ve *system) ve niteleyicisiz yerel takma ad eşleşmelerini destekler.
+   * @param {string} targetA
+   * @param {string} targetB
+   * @returns {boolean}
+   */
+  static isSameTarget(targetA, targetB) {
+    if (!targetA || !targetB) return false;
+    if (targetA === targetB) return true;
+    if (this.isGlobalChannel(targetA) && this.isGlobalChannel(targetB)) return true;
+    if (this.isSystemConsole(targetA) && this.isSystemConsole(targetB)) return true;
+
+    const aClean = targetA.trim().toLowerCase();
+    const bClean = targetB.trim().toLowerCase();
+    if (aClean === bClean) return true;
+
+    const isChanA = aClean.startsWith('#');
+    const isChanB = bClean.startsWith('#');
+    const isUserA = aClean.startsWith('@');
+    const isUserB = bClean.startsWith('@');
+    if (isChanA !== isChanB || isUserA !== isUserB) return false;
+
+    if (isChanA) {
+      return aClean === bClean;
+    }
+
+    const nickA = aClean.split(':')[0].replace(/^@/, '');
+    const nickB = bClean.split(':')[0].replace(/^@/, '');
+    if (nickA !== nickB) return false;
+
+    const hostA = aClean.includes(':') ? aClean.split(':')[1] : null;
+    const hostB = bClean.includes(':') ? bClean.split(':')[1] : null;
+    if (!hostA || !hostB) return true;
+    return hostA === hostB;
+  }
 }

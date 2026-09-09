@@ -592,14 +592,19 @@ export class FederationEngine extends EventEmitter {
     const members = [];
     const now = Date.now();
     const ttl = (CONFIG && CONFIG.presenceTtl) || 60000;
+    const isGlobal = AddressHelper.isGlobalChannel(channelName);
 
     for (const [userAddr, data] of this.remoteOnlineUsers.entries()) {
       const diff = now - data.lastSeen;
       if (diff < 0) {
         data.lastSeen = now;
       }
-      if (now - data.lastSeen < ttl && Array.isArray(data.channels) && data.channels.includes(channelName)) {
-        members.push(userAddr);
+      if (now - data.lastSeen < ttl) {
+        if (isGlobal) {
+          members.push(userAddr);
+        } else if (Array.isArray(data.channels) && data.channels.includes(channelName)) {
+          members.push(userAddr);
+        }
       }
     }
     return members;

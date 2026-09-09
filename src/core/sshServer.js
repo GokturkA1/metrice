@@ -862,7 +862,7 @@ class SshClientConnection extends EventEmitter {
               if (targetParsed) {
                 if (targetParsed.isLocal) {
                   const localRecipient = this.clientServer.sessions.get(targetParsed.raw);
-                  if (localRecipient && localRecipient.activeTarget === this.authenticatedUser) {
+                  if (localRecipient && AddressHelper.isSameTarget(localRecipient.activeTarget, this.authenticatedUser)) {
                     const senderNick = this.authenticatedUser.split(':')[0].replace('@', '');
                     localRecipient.setTyping(senderNick);
                   }
