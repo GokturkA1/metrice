@@ -517,7 +517,7 @@ export class FederationEngine extends EventEmitter {
     if (this.role !== newRole) {
       this.role = newRole;
       const roleLabel = this.role.startsWith('CAP_') ? this.role : `CAP_${this.role}`;
-      log.info(`Düğüm rolü güncellendi -> ${roleLabel}`);
+      log.info(I18n.t('FED_ROLE_UPDATED', { role: roleLabel }));
       this.emit('role_change', this.role);
       this.broadcastPresence();
     }
@@ -674,7 +674,7 @@ export class FederationEngine extends EventEmitter {
       if (CONFIG.useProxyProtocol) {
         ProxyProtocolParser.handle(socket, { trustedIps: CONFIG.proxyProtocolTrustedIps }, (err) => {
           if (err) {
-            log.warn(`Proxy Protocol el sıkışma hatası: ${err.message}`);
+            log.warn(I18n.t('FED_PROXY_HANDSHAKE_ERR', { error: err.message }));
             return;
           }
           setupChannel();
@@ -729,11 +729,11 @@ export class FederationEngine extends EventEmitter {
       const isTesting = process.env.NODE_ENV === 'test' || CONFIG.environment === 'test' || process.argv.some((a) => a.includes('test'));
 
       if ((isLoopback || isPrivate) && !isTesting) {
-        log.warn(`AutoNAT SSRF Koruması: Özel/Loopback ağa dialback engellendi: ${verifiedIp}`);
+        log.warn(I18n.t('FED_AUTONAT_SSRF_BLOCKED', { ip: verifiedIp }));
         return;
       }
 
-      log.info(`AutoNAT: Inbound Dialback talebi alındı -> ${verifiedIp}:${numPort}`);
+      log.info(I18n.t('FED_AUTONAT_INBOUND_REQUEST', { ip: verifiedIp, port: numPort }));
       const dialSocket = net.createConnection({ host: verifiedIp, port: numPort }, () => {
         // Sadece gerçekten bağlantı kurulabildiyse ana kanala teyit gönder
         channel.writePayload({
@@ -773,7 +773,7 @@ export class FederationEngine extends EventEmitter {
 
       const derivedId = CryptoHelper.deriveNodeId(identityPublicKey);
       if (derivedId !== nodeId) {
-        log.warn(`Rendezvous NodeID eşleşmedi: Beklenen ${nodeId}, Türetilen: ${derivedId}`);
+        log.warn(I18n.t('FED_RDV_NODE_ID_MISMATCH', { expected: nodeId, derived: derivedId }));
         channel.writePayload({ status: 'rejected', reason: 'invalid_node_id' });
         return;
       }
@@ -821,7 +821,7 @@ export class FederationEngine extends EventEmitter {
       }
 
       if (!isSigValid) {
-        log.warn(`Rendezvous imza geçersiz: ${nodeId}`);
+        log.warn(I18n.t('FED_RDV_INVALID_SIG', { node: nodeId }));
         channel.writePayload({ status: 'rejected', reason: 'invalid_signature' });
         return;
       }
@@ -834,7 +834,7 @@ export class FederationEngine extends EventEmitter {
       // DoS sınırı (maksimum aktif tünel kapasitesi)
       const maxTunnels = (CONFIG && CONFIG.maxRendezvousTunnels) || 64;
       if (this.rendezvousTunnels.size >= maxTunnels && !this.rendezvousTunnels.has(nodeId)) {
-        log.warn(`Rendezvous tünel kapasitesi aşıldı (${this.rendezvousTunnels.size}/${maxTunnels}), ${nodeId} reddedildi`);
+        log.warn(I18n.t('FED_RDV_CAPACITY_REACHED', { current: this.rendezvousTunnels.size, max: maxTunnels, node: nodeId }));
         channel.writePayload({ status: 'rejected', reason: 'tunnel_capacity_reached' });
         return;
       }
@@ -856,7 +856,7 @@ export class FederationEngine extends EventEmitter {
       if (channel?.socket && typeof channel.socket.once === 'function') {
         channel.socket.once('close', () => {
           this.rendezvousTunnels.delete(nodeId);
-          log.info(`Rendezvous tüneli kapandı: ${nodeId}`);
+          log.info(I18n.t('FED_RDV_TUNNEL_CLOSED', { node: nodeId }));
         });
       }
 
@@ -877,7 +877,7 @@ export class FederationEngine extends EventEmitter {
       // Ağdaki diğer eşlere / rölelere (TR) bu EDGE'in bu röleye tünellendiğini anons et
       this.broadcastRouteUpdate(nodeId, boundRendezvousAddr, edgeKemKey, identityPublicKey);
 
-      log.info(`Rendezvous tüneli başarıyla bağlandı: ${nodeId} (Aktif tüneller: ${this.rendezvousTunnels.size}/64)`);
+      log.info(I18n.t('FED_RDV_TUNNEL_BOUND', { node: nodeId, current: this.rendezvousTunnels.size }));
       channel.writePayload({
         type: 'RENDEZVOUS_ACK',
         status: 'bound',
@@ -928,7 +928,7 @@ export class FederationEngine extends EventEmitter {
 
       if (!CryptoHelper.verify(dataToVerify, sig, identityPublicKey)) return;
       if (Math.abs(Date.now() - timestamp) > 86400000) {
-        log.warn(`Varlık anonsu zaman aşımı (${nodeId}): Saat farkı 24 saati aştı (${Math.round(Math.abs(Date.now() - timestamp) / 1000)}s)`);
+        log.warn(I18n.t('FED_PRESENCE_ANNOUNCE_SKEW', { node: nodeId, seconds: Math.round(Math.abs(Date.now() - timestamp) / 1000) }));
         return;
       }
 
@@ -1086,7 +1086,7 @@ export class FederationEngine extends EventEmitter {
 
       if (!CryptoHelper.verify(dataToVerify, sig, relayIdentityPublicKey)) return;
       if (Math.abs(Date.now() - timestamp) > 86400000) {
-        log.warn(`Rota güncellemesi zaman aşımı (${nodeId}): Saat farkı 24 saati aştı (${Math.round(Math.abs(Date.now() - timestamp) / 1000)}s)`);
+        log.warn(I18n.t('FED_ROUTE_UPDATE_SKEW', { node: nodeId, seconds: Math.round(Math.abs(Date.now() - timestamp) / 1000) }));
         return;
       }
 
@@ -1756,12 +1756,12 @@ export class FederationEngine extends EventEmitter {
     const votes = this.observedAddressVotes.get(ip).size;
     if (votes >= 2 && this.publicIp !== ip) {
       this.publicIp = ip;
-      log.info(`AutoNAT: Reflected IP konsensüsüne varıldı: ${ip} (${votes} eş onayı)`);
+      log.info(I18n.t('FED_AUTONAT_CONSENSUS', { ip, votes }));
       this.emit('nat_consensus', ip);
 
       // Section 2.2 Inbound Dialback testi başlat (Mükerrer/çakışan testleri engelle)
       if (CONFIG.meshRole === 'EDGE' || process.env.MESH_ROLE === 'EDGE') {
-        log.debug('AutoNAT: MESH_ROLE=EDGE açıkça yapılandırıldığından dialback atlandı, rol EDGE olarak korunuyor.');
+        log.debug(I18n.t('FED_AUTONAT_EDGE_SKIPPED'));
         this.setRole('EDGE');
         return;
       }
@@ -1769,7 +1769,7 @@ export class FederationEngine extends EventEmitter {
       if (!this.isDialbackRunning) {
         this.initiateDialback(ip).catch((err) => {
           this.isDialbackRunning = false;
-          log.warn(`Dialback başlatma hatası: ${err.message}`);
+          log.warn(I18n.t('FED_AUTONAT_DIALBACK_ERR', { error: err.message }));
         });
       }
     }
@@ -1777,7 +1777,7 @@ export class FederationEngine extends EventEmitter {
 
   async initiateDialback(targetIp) {
     if (this.isDialbackRunning) {
-      log.debug('AutoNAT: Dialback testi zaten çalışıyor, mükerrer çağrı engellendi.');
+      log.debug(I18n.t('FED_AUTONAT_ALREADY_RUNNING'));
       return this.role;
     }
     this.isDialbackRunning = true;
@@ -1805,7 +1805,7 @@ export class FederationEngine extends EventEmitter {
         if (this.pendingDialbacks.has(nonce)) {
           this.pendingDialbacks.delete(nonce);
           this.isDialbackRunning = false;
-          log.info('AutoNAT: Dialback zaman aşımı -> Rol: CAP_EDGE');
+          log.info(I18n.t('FED_AUTONAT_TIMEOUT'));
           this.setRole('EDGE');
           resolve('EDGE');
         }
@@ -1825,7 +1825,7 @@ export class FederationEngine extends EventEmitter {
       };
 
       this.sendPacket(peerHost, peerPort, payload).catch((err) => {
-        log.warn(`Dialback paket gönderim hatası: ${err.message}`);
+        log.warn(I18n.t('FED_AUTONAT_PACKET_ERR', { error: err.message }));
         clearTimeout(timer);
         this.pendingDialbacks.delete(nonce);
         this.isDialbackRunning = false;
@@ -1842,7 +1842,7 @@ export class FederationEngine extends EventEmitter {
       clearTimeout(pending.timer);
       this.pendingDialbacks.delete(payload.nonce);
       this.isDialbackRunning = false;
-      log.info('AutoNAT: Inbound Dialback doğrulandı -> Rol: CAP_RELAY');
+      log.info(I18n.t('FED_AUTONAT_VERIFIED'));
       this.setRole('RELAY');
       pending.resolve('RELAY');
     }
@@ -1939,7 +1939,7 @@ export class FederationEngine extends EventEmitter {
         this.boundRendezvousRelays.add(relayAddr);
         this.rendezvousRelays.set(relayAddr, { channel, socket: channel.socket });
         this.checkTransitEdgeRole();
-        log.info(`Rendezvous tüneli bağlandı -> ${relayAddr}`);
+        log.info(I18n.t('FED_RDV_CONNECTED', { relay: relayAddr }));
 
         this.broadcastPresenceAnnounce();
 
@@ -1972,7 +1972,7 @@ export class FederationEngine extends EventEmitter {
             this.boundRendezvousRelays.delete(relayAddr);
             this.rendezvousRelays.delete(relayAddr);
             this.checkTransitEdgeRole();
-            log.warn(`Rendezvous bağlantısı kesildi -> ${relayAddr}, yenileniyor...`);
+            log.warn(I18n.t('FED_RDV_DISCONNECTED', { relay: relayAddr }));
             setTimeout(() => this.maintainRendezvousTunnels(), 2000);
           });
         }
@@ -1983,7 +1983,7 @@ export class FederationEngine extends EventEmitter {
         return true;
       }
     } catch (err) {
-      log.debug(`Rendezvous bağlantı hatası (${relayAddr}): ${err.message}`);
+      log.debug(I18n.t('FED_RDV_CONN_ERR', { relay: relayAddr, error: err.message }));
     }
     return false;
   }
@@ -2003,7 +2003,7 @@ export class FederationEngine extends EventEmitter {
       if (channel && channel.socket && !channel.socket.destroyed) {
         // Zombi tünel tespiti: 60 saniyeden uzun süredir PONG alınmadıysa soketi kapat ve tüneli yenile
         if (channel.lastPong && (now - channel.lastPong > 60000)) {
-          log.warn(`Rendezvous zombi tünel tespit edildi (PONG zaman aşımı): ${relayAddr}`);
+          log.warn(I18n.t('FED_RDV_ZOMBIE_DETECTED', { relay: relayAddr }));
           channel.socket.destroy();
           this.connectionPool.delete(key);
           this.boundRendezvousRelays.delete(relayAddr);
@@ -2294,9 +2294,9 @@ export class FederationEngine extends EventEmitter {
 
     if (targetNodeId && (!exitRelayAddress || exitRelayAddress.length === 0)) {
       if (fromOutbox) {
-        throw new Error(`Hedef ${targetNodeId} için aktif buluşma noktası bulunamadı`);
+        throw new Error(I18n.t('FED_TARGET_NO_RDV_ERR', { node: targetNodeId }));
       }
-      log.info(`Hedef EDGE ${targetNodeId} için aktif buluşma noktası bulunamadı, mesaj Outbox kuyruğuna alındı`);
+      log.info(I18n.t('FED_NO_ACTIVE_RDV', { node: targetNodeId }));
       this.db.queueOutbox(payload);
       return { status: 'queued' };
     }
@@ -2406,7 +2406,7 @@ export class FederationEngine extends EventEmitter {
     }
 
     if (!exitHop) {
-      log.info(`Hedef ${targetNodeId} (${exitRelayAddress}) için uygun Exit düğümü bulunamadı, Outbox kuyruğuna alındı`);
+      log.info(I18n.t('FED_NO_EXIT_NODE', { node: targetNodeId, exit: exitRelayAddress }));
       this.db.queueOutbox(payload);
       return { status: 'queued' };
     }
@@ -2499,7 +2499,7 @@ export class FederationEngine extends EventEmitter {
 
   async sendRemoteMessage(from, to, content, isAction = false, isSnippet = false, isE2EE = false) {
     const target = AddressHelper.parse(to);
-    if (!target) throw new Error(`Invalid target: ${to}`);
+    if (!target) throw new Error(I18n.t('FED_INVALID_TARGET_ERR', { target: to }));
 
     const payload = {
       type: target.type === 'CHANNEL' ? 'CHANNEL_MESSAGE' : 'DIRECT_MESSAGE',
@@ -2534,7 +2534,7 @@ export class FederationEngine extends EventEmitter {
       try {
         return await this.sendViaOnion(target.nodeId, payload);
       } catch (err) {
-        log.warn(`Onion gönderim hatası (${target.nodeId}): ${err.message}, outbox'a ekleniyor`);
+        log.warn(I18n.t('FED_ONION_SEND_ERR', { node: target.nodeId, error: err.message }));
         this.db.queueOutbox(payload);
         return { status: 'queued' };
       }

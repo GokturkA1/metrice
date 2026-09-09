@@ -683,7 +683,7 @@ export class ClientServer {
       if (CONFIG.useProxyProtocol) {
         ProxyProtocolParser.handle(socket, { trustedIps: CONFIG.proxyProtocolTrustedIps }, (err) => {
           if (err) {
-            log.warn(`Client Proxy Protocol el sıkışma hatası: ${err.message}`);
+            log.warn(I18n.t('CLIENT_PROXY_ERR', { error: err.message }));
             return;
           }
           handleClient();
@@ -787,9 +787,9 @@ export class ClientServer {
       if (target.isGlobalChannel) {
         try {
           const res = await this.federation.sendRemoteMessage(from, target.raw, finalContent, isAction, isSnippet, isE2EE);
-          log.debug(`Küresel kanal (#genel) mesajı dağıtıldı: ${from} -> ${target.raw} (${res?.status || 'ok'})`);
+          log.debug(I18n.t('CLIENT_GLOBAL_CHAN_DISPATCHED', { from, target: target.raw, status: res?.status || 'ok' }));
         } catch (err) {
-          log.warn(`Küresel kanal (#genel) mesaj dağıtım hatası: ${err.message}`);
+          log.warn(I18n.t('CLIENT_GLOBAL_CHAN_ERR', { error: err.message }));
         }
       } else if (!target.isLocal) {
         await this.federation.sendRemoteMessage(from, target.raw, finalContent, isAction, isSnippet, isE2EE);

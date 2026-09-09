@@ -38,7 +38,7 @@ export class OnionRouter extends EventEmitter {
     if (diff > 0) {
       raw.pad = '0'.repeat(diff);
     } else if (diff < 0) {
-      log.warn(`Onion hücresi boyutu uniform sınırı aştı (${initialLen} > ${UNIFORM_CELL_SIZE})`);
+      log.warn(I18n.t('ONION_CELL_SIZE_EXCEEDED', { len: initialLen, max: UNIFORM_CELL_SIZE }));
     }
     return raw;
   }
@@ -73,7 +73,7 @@ export class OnionRouter extends EventEmitter {
    */
   async buildCircuit(hops, targetNodeId = null) {
     if (!hops || hops.length === 0) {
-      throw new Error('Circuit requires at least 1 relay hop');
+      throw new Error(I18n.t('ONION_CIRCUIT_MIN_HOPS'));
     }
 
     const circuitId = CryptoHelper.generateRandomKey(16);
@@ -83,7 +83,7 @@ export class OnionRouter extends EventEmitter {
     for (let i = 0; i < hops.length; i++) {
       const hop = hops[i];
       if (!hop.kemPublicKey) {
-        throw new Error(`Hop ${i} (${hop.address || hop.nodeId}) has no kemPublicKey`);
+        throw new Error(I18n.t('ONION_HOP_NO_KEY', { index: i, hop: hop.address || hop.nodeId }));
       }
       const { sharedSecret, encapsulatedKey } = CryptoHelper.encapsulateKey(hop.kemPublicKey);
       const symmetricKey = CryptoHelper.deriveKey(sharedSecret, circuitId, 'p2p-mesh-onion-v2');
@@ -125,8 +125,8 @@ export class OnionRouter extends EventEmitter {
 
     const res = await this.federation.sendPacket(host, port, currentPayload);
     if (!res || res.status !== 'circuit_ready') {
-      log.warn(`Circuit creation unacknowledged by Guard relay: ${firstHop.address}`);
-      throw new Error(`Circuit creation unacknowledged by Guard relay: ${firstHop.address}`);
+      log.warn(I18n.t('ONION_GUARD_UNACKNOWLEDGED', { address: firstHop.address }));
+      throw new Error(I18n.t('ONION_GUARD_UNACKNOWLEDGED', { address: firstHop.address }));
     }
 
     const circuitRecord = {
@@ -178,7 +178,7 @@ export class OnionRouter extends EventEmitter {
     for (const [circuitId, circuit] of this.clientCircuits.entries()) {
       if (circuit.hops && circuit.hops.some((h) => h.address === hopAddress)) {
         this.clientCircuits.delete(circuitId);
-        log.debug(`Kopan soket ilişkili istemci devresi havuzdan düşürüldü: ${circuitId} (${hopAddress})`);
+        log.debug(I18n.t('ONION_CIRCUIT_DROPPED_SOCKET', { circuitId, hop: hopAddress }));
       }
     }
   }
@@ -190,7 +190,7 @@ export class OnionRouter extends EventEmitter {
     const payloadStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
     const payloadBytes = Buffer.byteLength(payloadStr, 'utf-8');
     if (payloadBytes > MAX_ONION_PAYLOAD) {
-      throw new Error(`Onion payload boyutu MAX_ONION_PAYLOAD (${MAX_ONION_PAYLOAD}) sınırını aştı: ${payloadBytes} bayt`);
+      throw new Error(I18n.t('ONION_PAYLOAD_SIZE_EXCEEDED', { max: MAX_ONION_PAYLOAD, bytes: payloadBytes }));
     }
 
     const { hops, keys, circuitId } = circuit;
@@ -266,13 +266,13 @@ export class OnionRouter extends EventEmitter {
         createdAt: Date.now()
       });
 
-      log.info(`Devre atlaması kaydedildi: ${circuitId} (Önceki: ${prevHop}, Sonraki: ${nextHop || 'Exit'})`);
+      log.info(I18n.t('ONION_CIRCUIT_HOP_SAVED', { circuitId, prev: prevHop, next: nextHop || 'Exit' }));
 
       if (nextHop && extendPayload) {
         // Sonraki atlamaya devreyi uzat
         const decryptedJson = CryptoHelper.decrypt(extendPayload, symmetricKey);
         if (!decryptedJson) {
-          log.warn(`Devre uzatma paketi deşifre edilemedi: ${circuitId}`);
+          log.warn(I18n.t('ONION_EXTEND_DECRYPT_FAIL', { circuitId }));
           channel.writePayload({ status: 'error', reason: 'extend_decrypt_failed' });
           return;
         }
@@ -281,7 +281,7 @@ export class OnionRouter extends EventEmitter {
         try {
           nextExtendPayload = typeof decryptedJson === 'string' ? JSON.parse(decryptedJson) : decryptedJson;
         } catch {
-          log.warn(`Devre uzatma paketi geçersiz JSON: ${circuitId}`);
+          log.warn(I18n.t('ONION_EXTEND_JSON_FAIL', { circuitId }));
           channel.writePayload({ status: 'error', reason: 'invalid_extend_json' });
           return;
         }
@@ -327,7 +327,7 @@ export class OnionRouter extends EventEmitter {
         if (res && res.status === 'circuit_ready') {
           channel.writePayload({ status: 'circuit_ready', circuitId });
         } else {
-          log.warn(`Sonraki atlama devre kurulumunu onaylamadı (${nextHop}): ${res?.reason || 'unacknowledged'}`);
+          log.warn(I18n.t('ONION_NEXT_HOP_UNACKNOWLEDGED', { hop: nextHop, reason: res?.reason || 'unacknowledged' }));
           channel.writePayload({ status: 'error', reason: res?.reason || 'next_hop_extend_failed' });
         }
       } else {
@@ -335,7 +335,7 @@ export class OnionRouter extends EventEmitter {
         channel.writePayload({ status: 'circuit_ready', circuitId });
       }
     } catch (err) {
-      log.error(`Devre kurulum hatası: ${err.message}`);
+      log.error(I18n.t('ONION_CIRCUIT_SETUP_ERR', { error: err.message }));
       channel.writePayload({ status: 'error', reason: err.message });
     }
   }
@@ -346,20 +346,20 @@ export class OnionRouter extends EventEmitter {
   async handleOnionCell(cell, channel) {
     const { circuitId, iv, authTag, ciphertext } = cell;
     if (!circuitId || !iv || !authTag || !ciphertext) {
-      log.warn('Geçersiz ONION_CELL çerçevesi alındı');
+      log.warn(I18n.t('ONION_INVALID_CELL_FRAME'));
       return;
     }
 
     const prevHop = OnionRouter.getHopIdentifier(channel);
     const circuit = this.db.getCircuit(circuitId, prevHop);
     if (!circuit || !circuit.symmetricKey) {
-      log.warn(`Bilinmeyen devre hücresi alındı, düşürülüyor: ${circuitId} (Önceki: ${prevHop})`);
+      log.warn(I18n.t('ONION_UNKNOWN_CIRCUIT_DROPPED', { circuitId, prev: prevHop }));
       return;
     }
 
     const decryptedStr = CryptoHelper.decrypt({ iv, authTag, ciphertext }, circuit.symmetricKey);
     if (!decryptedStr) {
-      log.warn(`Onion hücresi deşifre edilemedi (AuthTag hatası): ${circuitId}`);
+      log.warn(I18n.t('ONION_CELL_DECRYPT_FAIL', { circuitId }));
       return;
     }
 
@@ -367,7 +367,7 @@ export class OnionRouter extends EventEmitter {
     try {
       parsed = JSON.parse(decryptedStr);
     } catch (err) {
-      log.warn(`Onion hücresi JSON hatası: ${err.message}`);
+      log.warn(I18n.t('ONION_CELL_JSON_ERR', { error: err.message }));
       return;
     }
 
@@ -403,10 +403,10 @@ export class OnionRouter extends EventEmitter {
           } else if (targetTunnelChannel.socket) {
             targetTunnelChannel.socket.write(JSON.stringify(paddedObj) + '\n');
           }
-          log.info(`Onion transit hücresi tünel köprüsüyle iletildi -> ${parsed.forwardTo} (Devre: ${circuitId})`);
+          log.info(I18n.t('ONION_TRANSIT_FORWARDED', { forwardTo: parsed.forwardTo, circuitId }));
           return;
         } catch (err) {
-          log.warn(`Onion transit tünel iletim hatası: ${err.message}`);
+          log.warn(I18n.t('ONION_TRANSIT_FORWARD_ERR', { error: err.message }));
         }
       }
 
@@ -421,9 +421,9 @@ export class OnionRouter extends EventEmitter {
         } else if (nextChannel && nextChannel.socket) {
           nextChannel.socket.write(JSON.stringify(paddedObj) + '\n');
         }
-        log.debug(`Onion hücresi şifreli kanal ile iletildi -> ${parsed.forwardTo} (Devre: ${circuitId})`);
+        log.debug(I18n.t('ONION_CELL_FORWARDED', { forwardTo: parsed.forwardTo, circuitId }));
       } catch (err) {
-        log.error(`Onion iletim hatası (${parsed.forwardTo}): ${err.message}`);
+        log.error(I18n.t('ONION_CELL_FORWARD_ERR', { forwardTo: parsed.forwardTo, error: err.message }));
       }
       return;
     }
@@ -431,7 +431,7 @@ export class OnionRouter extends EventEmitter {
     // 2. Çıkış / Rendezvous Atlaması: Hedefe Teslim Et
     if (parsed.deliverTo && parsed.payload) {
       const targetNodeId = parsed.deliverTo;
-      log.info(`Onion hücresi çıkış noktasına ulaştı. Hedef: ${targetNodeId}`);
+      log.info(I18n.t('ONION_CELL_EXIT_REACHED', { node: targetNodeId }));
 
       // Yerel hedef mi?
       if (targetNodeId === this.myIdentity.nodeId) {
@@ -443,7 +443,7 @@ export class OnionRouter extends EventEmitter {
       const tunnel = this.rendezvousTunnels.get(targetNodeId);
       const isSocketWritable = !tunnel?.channel?.socket || tunnel.channel.socket.writable !== false;
       if (tunnel && tunnel.channel && isSocketWritable) {
-        log.info(`Onion mesajı tersine tünel üzerinden teslim ediliyor -> NodeID: ${targetNodeId}`);
+        log.info(I18n.t('ONION_MSG_DELIVERED_TUNNEL', { node: targetNodeId }));
         if (typeof tunnel.channel.writePayload === 'function') {
           tunnel.channel.writePayload(parsed.payload);
         } else if (tunnel.channel.socket && typeof tunnel.channel.socket.write === 'function') {
@@ -452,7 +452,7 @@ export class OnionRouter extends EventEmitter {
         return;
       }
 
-      log.warn(`Onion hücresi teslim edilemedi: ${targetNodeId} için aktif tersine tünel bulunamadı`);
+      log.warn(I18n.t('ONION_CELL_UNDELIVERABLE', { node: targetNodeId }));
     }
   }
 

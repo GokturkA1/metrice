@@ -35,6 +35,9 @@ export const CONFIG = {
   strictPq: process.env.STRICT_PQ === 'true',
   environment: process.env.NODE_ENV || 'production',
 
+  // Dil / Yerelleştirme (Varsayılan: 'en')
+  locale: process.env.LOCALE || 'en',
+
   // Veritabanı, Eş Önbelleği ve Günlük Seviyesi
   dbFile: process.env.DB_FILE || `./data_${process.env.FED_PORT || '8001'}.db`,
   peerCacheFile: process.env.PEER_FILE || `./peers_${process.env.FED_PORT || '8001'}.json`,

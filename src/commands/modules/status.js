@@ -21,11 +21,11 @@ export default {
     const outboxCount = db.getPendingOutbox().length;
 
     const rendezvousInfo = federation.isRelay()
-      ? `Rendezvous Tunnels: ${federation.rendezvousTunnels.size}/64`
-      : `Rendezvous Relays: ${Array.from(federation.boundRendezvousRelays).join(', ') || 'none'}`;
+      ? I18n.t('CMD_STATUS_RDV_TUNNELS', { current: federation.rendezvousTunnels.size, max: 64 })
+      : I18n.t('CMD_STATUS_RDV_RELAYS', { relays: Array.from(federation.boundRendezvousRelays).join(', ') || I18n.t('CMD_STATUS_NONE') });
 
     session.addSystemLog(I18n.t('CMD_STATUS_HEADER'));
-    session.addSystemLog(`Node: ${federation.nodeId} (${federation.meshAddress}) [CAP_${federation.role || 'EDGE'}]`);
+    session.addSystemLog(I18n.t('CMD_STATUS_NODE', { nodeId: federation.nodeId, address: federation.meshAddress, role: federation.role || 'EDGE' }));
     session.addSystemLog(rendezvousInfo);
     session.addSystemLog(I18n.t('CMD_STATUS_UPTIME', { uptime: uptimeStr }));
     session.addSystemLog(I18n.t('CMD_STATUS_MEMORY', { rss: rssMB, heap: heapMB }));

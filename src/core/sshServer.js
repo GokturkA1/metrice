@@ -144,7 +144,7 @@ class SshClientConnection extends EventEmitter {
       if (idx === -1) {
         // ID satırı çok uzun sürerse veya saçma karakterler dolarsa kopar
         if (this.inBuffer.length > 256) {
-          log.warn('Geçersiz SSH ID banner uzunluğu, bağlantı kesiliyor.');
+          log.warn(I18n.t('SSH_INVALID_BANNER_LEN'));
           this.destroySocket(true);
         }
         return;
@@ -164,7 +164,7 @@ class SshClientConnection extends EventEmitter {
         // 5 baytlık standart SSH paket başlığı gelmeden önce tampon aşırı şişerse saldırıdır
         if (this.inBuffer.length < 5) {
           if (this.inBuffer.length > 1024) {
-            log.warn('Şifresiz SSH başlık tamponu taştı, bağlantı sıfırlanıyor.');
+            log.warn(I18n.t('SSH_HEADER_BUFFER_OVERFLOW'));
             this.destroySocket(true);
           }
           return;
@@ -1043,7 +1043,7 @@ class SshClientConnection extends EventEmitter {
         this.clientServer.notifyAllSessionsRender();
         this.clientServer.federation.broadcastUserOffline(exitingUser);
       } catch (err) {
-        log.error(`SSH cleanup error: ${err.message}`);
+        log.error(I18n.t('SSH_CLEANUP_ERROR', { error: err.message }));
       }
     }
   }
@@ -1077,7 +1077,7 @@ export class SshServer {
       if (CONFIG.useProxyProtocol) {
         ProxyProtocolParser.handle(socket, { trustedIps: CONFIG.proxyProtocolTrustedIps }, (err) => {
           if (err) {
-            log.warn(`SSH Proxy Protocol el sıkışma hatası: ${err.message}`);
+            log.warn(I18n.t('SSH_PROXY_HANDSHAKE_ERR', { error: err.message }));
             return;
           }
           setupSsh();

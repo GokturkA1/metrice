@@ -1,7 +1,9 @@
+import { CONFIG } from '../config/index.js';
 import tr from './tr.js';
+import en from './en.js';
 
-const dictionaries = { tr };
-let currentLocale = 'tr';
+const dictionaries = { tr, en };
+let currentLocale = (CONFIG && CONFIG.locale) || 'en';
 
 export class I18n {
   static setLocale(locale) {
@@ -10,9 +12,13 @@ export class I18n {
     }
   }
 
+  static getLocale() {
+    return currentLocale;
+  }
+
   static t(key, params = {}) {
-    const dict = dictionaries[currentLocale] || dictionaries.tr;
-    let template = dict[key] || key;
+    const dict = dictionaries[currentLocale] || dictionaries.en || dictionaries.tr;
+    let template = dict[key] || dictionaries.en?.[key] || dictionaries.tr?.[key] || key;
 
     for (const [paramKey, paramVal] of Object.entries(params)) {
       template = template.replaceAll(`{${paramKey}}`, String(paramVal));

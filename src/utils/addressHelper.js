@@ -192,8 +192,8 @@ export class AddressHelper {
       const channelName = name;
       const globalChannelName = I18n.t('DEFAULT_CHANNEL_NAME').replace('#', '');
 
-      // 1. Küresel Mesh Kanalı (Örn: #genel)
-      if ((channelName === globalChannelName || channelName === 'genel') && !target) {
+      // 1. Küresel Mesh Kanalı (Örn: #genel / #general)
+      if ((channelName === globalChannelName || channelName === 'genel' || channelName === 'general') && !target) {
         return {
           type,
           raw: `#${channelName}`,
@@ -332,7 +332,7 @@ export class AddressHelper {
 
   static formatChannel(channelName, nodeId = null) {
     const clean = channelName.replace('#', '');
-    if (clean === 'genel') return '#genel';
+    if (clean === 'genel' || clean === 'general') return '#genel';
     const targetNodeId = nodeId || this.localNodeId;
     if (targetNodeId) {
       return `#${clean}:${targetNodeId}.mesh`;

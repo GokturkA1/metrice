@@ -81,7 +81,11 @@ export class TerminalSession extends EventEmitter {
   }
 
   isMemberOf(target) {
-    return this.contacts.includes(target);
+    if (this.contacts.includes(target)) return true;
+    if (target === '#genel' || target === '#general') {
+      return this.contacts.includes('#genel') || this.contacts.includes('#general');
+    }
+    return false;
   }
 
   getMyChannels() {
@@ -368,7 +372,7 @@ export class TerminalSession extends EventEmitter {
 
     for (const msg of messages) {
       const isMe = msg.from === this.userAddress;
-      const isSystem = msg.from === `[${systemSender}]` || msg.from === '[SİSTEM]';
+      const isSystem = msg.from === `[${systemSender}]` || msg.from === '[SİSTEM]' || msg.from === '[SYSTEM]';
       const sender = isSystem ? systemSender : (isMe ? I18n.t('TUI_ME_SENDER_YOU') : msg.from.split(':')[0].replace('@', ''));
       const timeStr = `${ANSI.FG_GRAY}${this.formatTime(msg.timestamp)}${ANSI.RESET}`;
 

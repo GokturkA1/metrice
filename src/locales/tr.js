@@ -224,5 +224,80 @@ export default {
   CMD_KEYS_DELETED_SUCCESS: '[BAŞARILI] Anahtar hesaptan kaldırıldı.',
   CMD_KEYS_SYNTAX_HELP: 'Kullanım: /keys [list | add <ssh-ed25519 ...> | del <sıra>]',
 
-  E2EE_ENCRYPTED_PLACEHOLDER: '🔒 [ŞİFRELİ METİN]',
+  // Komut Kayıt & Ek Komut Mesajları
+  CMD_REG_INVALID_MODULE: 'Geçersiz komut modülü kayıt denemesi.',
+  CMD_MSG_IPV6_PORT_SYNTAX: 'Uyarı: IPv6 adreslerinde port belirtmek için [IPv6]:Port sözdizimi kullanılmalıdır.',
+  CMD_STATUS_NODE: 'Düğüm: {nodeId} ({address}) [CAP_{role}]',
+  CMD_STATUS_RDV_TUNNELS: 'Rendezvous Tünelleri: {current}/{max}',
+  CMD_STATUS_RDV_RELAYS: 'Rendezvous Röleleri: {relays}',
+  CMD_STATUS_NONE: 'yok',
+
+  // Database Ek Bildirimleri
+  DB_LEGACY_CIRCUITS_UPGRADED: 'Eski active_circuits şeması tespit edildi ve bileşik circuit_key formatına yükseltildi.',
+
+  // Client Server Ek Bildirimleri
+  CLIENT_PROXY_ERR: 'Client Proxy Protocol el sıkışma hatası: {error}',
+  CLIENT_GLOBAL_CHAN_DISPATCHED: 'Küresel kanal (#genel) mesajı dağıtıldı: {from} -> {target} ({status})',
+  CLIENT_GLOBAL_CHAN_ERR: 'Küresel kanal (#genel) mesaj dağıtım hatası: {error}',
+
+  // SSH Server Ek Bildirimleri
+  SSH_INVALID_BANNER_LEN: 'Geçersiz SSH ID banner uzunluğu, bağlantı kesiliyor.',
+  SSH_HEADER_BUFFER_OVERFLOW: 'Şifresiz SSH başlık tamponu taştı, bağlantı sıfırlanıyor.',
+  SSH_CLEANUP_ERROR: 'SSH temizleme hatası: {error}',
+  SSH_PROXY_HANDSHAKE_ERR: 'SSH Proxy Protocol el sıkışma hatası: {error}',
+
+  // Onion Router & Teleskopik Devre Bildirimleri
+  ONION_CELL_SIZE_EXCEEDED: 'Onion hücresi boyutu uniform sınırı aştı ({len} > {max})',
+  ONION_CIRCUIT_MIN_HOPS: 'Devre en az 1 röle atlaması gerektirir',
+  ONION_HOP_NO_KEY: 'Atlama {index} ({hop}) için kemPublicKey bulunamadı',
+  ONION_GUARD_UNACKNOWLEDGED: 'Devre kurulumu Guard rölesi tarafından onaylanmadı: {address}',
+  ONION_CIRCUIT_DROPPED_SOCKET: 'Kopan soket ilişkili istemci devresi havuzdan düşürüldü: {circuitId} ({hop})',
+  ONION_PAYLOAD_SIZE_EXCEEDED: 'Onion payload boyutu MAX_ONION_PAYLOAD ({max}) sınırını aştı: {bytes} bayt',
+  ONION_CIRCUIT_HOP_SAVED: 'Devre atlaması kaydedildi: {circuitId} (Önceki: {prev}, Sonraki: {next})',
+  ONION_EXTEND_DECRYPT_FAIL: 'Devre uzatma paketi deşifre edilemedi: {circuitId}',
+  ONION_EXTEND_JSON_FAIL: 'Devre uzatma paketi geçersiz JSON: {circuitId}',
+  ONION_NEXT_HOP_UNACKNOWLEDGED: 'Sonraki atlama devre kurulumunu onaylamadı ({hop}): {reason}',
+  ONION_CIRCUIT_SETUP_ERR: 'Devre kurulum hatası: {error}',
+  ONION_INVALID_CELL_FRAME: 'Geçersiz ONION_CELL çerçevesi alındı',
+  ONION_UNKNOWN_CIRCUIT_DROPPED: 'Bilinmeyen devre hücresi alındı, düşürülüyor: {circuitId} (Önceki: {prev})',
+  ONION_CELL_DECRYPT_FAIL: 'Onion hücresi deşifre edilemedi (AuthTag hatası): {circuitId}',
+  ONION_CELL_JSON_ERR: 'Onion hücresi JSON hatası: {error}',
+  ONION_TRANSIT_FORWARDED: 'Onion transit hücresi tünel köprüsüyle iletildi -> {forwardTo} (Devre: {circuitId})',
+  ONION_TRANSIT_FORWARD_ERR: 'Onion transit tünel iletim hatası: {error}',
+  ONION_CELL_FORWARDED: 'Onion hücresi şifreli kanal ile iletildi -> {forwardTo} (Devre: {circuitId})',
+  ONION_CELL_FORWARD_ERR: 'Onion iletim hatası ({forwardTo}): {error}',
+  ONION_CELL_EXIT_REACHED: 'Onion hücresi çıkış noktasına ulaştı. Hedef: {node}',
+  ONION_MSG_DELIVERED_TUNNEL: 'Onion mesajı tersine tünel üzerinden teslim ediliyor -> NodeID: {node}',
+  ONION_CELL_UNDELIVERABLE: 'Onion hücresi teslim edilemedi: {node} için aktif tersine tünel bulunamadı',
+
+  // Federation & AutoNAT Ek Bildirimleri
+  FED_ROLE_UPDATED: 'Düğüm rolü güncellendi -> {role}',
+  FED_PROXY_HANDSHAKE_ERR: 'Proxy Protocol el sıkışma hatası: {error}',
+  FED_AUTONAT_SSRF_BLOCKED: 'AutoNAT SSRF Koruması: Özel/Loopback ağa dialback engellendi: {ip}',
+  FED_AUTONAT_INBOUND_REQUEST: 'AutoNAT: Inbound Dialback talebi alındı -> {ip}:{port}',
+  FED_RDV_NODE_ID_MISMATCH: 'Rendezvous NodeID eşleşmedi: Beklenen {expected}, Türetilen: {derived}',
+  FED_RDV_INVALID_SIG: 'Rendezvous imza geçersiz: {node}',
+  FED_RDV_CAPACITY_REACHED: 'Rendezvous tünel kapasitesi aşıldı ({current}/{max}), {node} reddedildi',
+  FED_RDV_TUNNEL_CLOSED: 'Rendezvous tüneli kapandı: {node}',
+  FED_RDV_TUNNEL_BOUND: 'Rendezvous tüneli başarıyla bağlandı: {node} (Aktif tüneller: {current}/64)',
+  FED_PRESENCE_ANNOUNCE_SKEW: 'Varlık anonsu zaman aşımı ({node}): Saat farkı 24 saati aştı ({seconds}s)',
+  FED_ROUTE_UPDATE_SKEW: 'Rota güncellemesi zaman aşımı ({node}): Saat farkı 24 saati aştı ({seconds}s)',
+  FED_AUTONAT_CONSENSUS: 'AutoNAT: Reflected IP konsensüsüne varıldı: {ip} ({votes} eş onayı)',
+  FED_AUTONAT_EDGE_SKIPPED: 'AutoNAT: MESH_ROLE=EDGE açıkça yapılandırıldığından dialback atlandı, rol EDGE olarak korunuyor.',
+  FED_AUTONAT_DIALBACK_ERR: 'Dialback başlatma hatası: {error}',
+  FED_AUTONAT_ALREADY_RUNNING: 'AutoNAT: Dialback testi zaten çalışıyor, mükerrer çağrı engellendi.',
+  FED_AUTONAT_TIMEOUT: 'AutoNAT: Dialback zaman aşımı -> Rol: CAP_EDGE',
+  FED_AUTONAT_PACKET_ERR: 'Dialback paket gönderim hatası: {error}',
+  FED_AUTONAT_VERIFIED: 'AutoNAT: Inbound Dialback doğrulandı -> Rol: CAP_RELAY',
+  FED_RDV_CONNECTED: 'Rendezvous tüneli bağlandı -> {relay}',
+  FED_RDV_DISCONNECTED: 'Rendezvous bağlantısı kesildi -> {relay}, yenileniyor...',
+  FED_RDV_CONN_ERR: 'Rendezvous bağlantı hatası ({relay}): {error}',
+  FED_RDV_ZOMBIE_DETECTED: 'Rendezvous zombi tünel tespit edildi (PONG zaman aşımı): {relay}',
+  FED_NO_ACTIVE_RDV: 'Hedef EDGE {node} için aktif buluşma noktası bulunamadı, mesaj Outbox kuyruğuna alındı',
+  FED_NO_EXIT_NODE: 'Hedef {node} ({exit}) için uygun Exit düğümü bulunamadı, Outbox kuyruğuna alındı',
+  FED_ONION_SEND_ERR: 'Onion gönderim hatası ({node}): {error}, outbox\'a ekleniyor',
+  FED_TARGET_NO_RDV_ERR: 'Hedef {node} için aktif buluşma noktası bulunamadı',
+  FED_INVALID_TARGET_ERR: 'Geçersiz hedef: {target}',
+
+  E2EE_ENCRYPTED_PLACEHOLDER: '🔒 [ŞİFRELİ METİN]'
 };

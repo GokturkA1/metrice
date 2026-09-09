@@ -11,7 +11,7 @@ export class CommandRegistry {
   register(commandModule) {
     const { name, aliases = [], execute } = commandModule;
     if (!name || typeof execute !== 'function') {
-      log.warn(`Invalid command module registration attempt.`);
+      log.warn(I18n.t('CMD_REG_INVALID_MODULE'));
       return;
     }
 
