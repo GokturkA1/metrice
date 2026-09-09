@@ -1,4 +1,4 @@
-# Metrice v2.4.0
+# Metrice v2.4.1
 
 Metrice, harici bağımlılık içermeyen (Zero External Dependencies), doğrudan Node.js çekirdek kütüphaneleri (`node:crypto`, `node:net`, `node:dgram`, `node:sqlite`, `node:dns`) üzerinde çalışan, kuantum sonrası kriptografi (Post-Quantum Cryptography) ve Tor benzeri çok katmanlı yönlendirme (Onion Routing) mimarisine sahip dağıtık eşler arası (P2P) ağ protokolüdür.
 
@@ -45,7 +45,7 @@ Sistem; NIST FIPS 203 ML-KEM-768 anahtar kapsülleme, Ed25519 tabanlı RFC 4648 
 
 ### 6. Bellek İçi SSH-2 Sunucusu ve İki Faktörlü Kasa Doğrulaması (2FA Vault)
 - Harici SSH arka plan süreci (daemon) gerekmeksizin saf JavaScript ile yazılmış SSH-2 sunucusu barındırır.
-- Yapılandırılabilir Kimlik: Sunucu kimlik dizgesi (`sshServerVersion`) konfigürasyon üzerinden ayarlanabilir (varsayılan: `SSH-2.0-Metrice_2.4.0`).
+- Yapılandırılabilir Kimlik: Sunucu kimlik dizgesi (`sshServerVersion`) konfigürasyon üzerinden ayarlanabilir (varsayılan: `SSH-2.0-Metrice_2.4.1`).
 - Donanım Anahtarı Bağlama: Kullanıcı parolası, istemcinin Ed25519 açık anahtarı ile tuzlanarak Scrypt (N=16384, r=8, p=1) ve HKDF-SHA256 algoritmalarından geçirilir. Kayıtlı Ed25519 anahtarı olmaksızın doğru parola girilse dahi kimlik doğrulanamaz.
 
 ### 7. HAProxy PROXY Protocol v1 & v2 Desteği ve L4 Güvenliği
@@ -143,7 +143,7 @@ Tüm parametreler ortam değişkenleri (`process.env`) veya `src/config/index.js
 | `clientPort` | `CLIENT_PORT` | `2222` | Telnet TUI dinleme TCP portu |
 | `sshPort` | `SSH_PORT` | `2224` | Post-Quantum SSH-2 sunucusu dinleme TCP portu |
 | `federationPort` | `FED_PORT` | `8001` | P2P Federasyon ve Onion dinleme TCP portu |
-| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.4.0'` | SSH sunucusu protokol kimlik dizgesi |
+| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.4.1'` | SSH sunucusu protokol kimlik dizgesi |
 | `meshRole` | `MESH_ROLE` | `'EDGE'` | Düğüm rolü (`'RELAY'` veya `'EDGE'`) |
 | `bootstrapPeers` | `BOOTSTRAP_PEERS` | `''` | Kalıcı başlangıç ve korumalı röle eş listesi (virgülle ayrılmış) |
 | `maxRendezvousTunnels`| `MAX_RENDEZVOUS_TUNNELS` | `64` | Bir RELAY düğümünün kabul edeceği azami ters tünel sayısı |

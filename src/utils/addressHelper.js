@@ -1,3 +1,4 @@
+import net from 'node:net';
 import { CONFIG } from '../config/index.js';
 import { I18n } from '../locales/i18n.js';
 
@@ -22,6 +23,87 @@ export class AddressHelper {
 
   static isValidNodeId(nodeId) {
     return this.NODE_ID_REGEX.test(nodeId);
+  }
+
+  /**
+   * RFC 5952 standardına göre IPv6 adresini kanonik ve sıkıştırılmış formata dönüştürür
+   * @param {string} ip
+   * @returns {string}
+   */
+  static canonicalizeIPv6(ip) {
+    if (!ip || typeof ip !== 'string') return ip;
+    let str = ip.trim().replace(/^\[|\]$/g, '');
+    const scopeIdx = str.indexOf('%');
+    if (scopeIdx !== -1) str = str.slice(0, scopeIdx);
+
+    // IPv4-mapped (örn: ::ffff:192.168.1.1 veya ::192.168.1.1)
+    const lastColon = str.lastIndexOf(':');
+    const tail = str.slice(lastColon + 1);
+    let v4Words = null;
+    if (tail.includes('.')) {
+      const octets = tail.split('.').map((x) => parseInt(x, 10));
+      if (octets.length === 4 && octets.every((o) => !isNaN(o) && o >= 0 && o <= 255)) {
+        v4Words = [(octets[0] << 8) | octets[1], (octets[2] << 8) | octets[3]];
+        str = str.slice(0, lastColon);
+      } else {
+        return ip;
+      }
+    }
+
+    let headParts = [];
+    let tailParts = [];
+    if (str.includes('::')) {
+      const halves = str.split('::');
+      if (halves.length > 2) return ip;
+      headParts = halves[0] ? halves[0].split(':') : [];
+      tailParts = halves[1] ? halves[1].split(':') : [];
+    } else {
+      headParts = str.split(':');
+    }
+
+    const headWords = headParts.map((p) => parseInt(p, 16));
+    const tailWords = tailParts.map((p) => parseInt(p, 16));
+    if (v4Words) tailWords.push(...v4Words);
+
+    if (headWords.some(isNaN) || tailWords.some(isNaN)) return ip;
+    const totalProvided = headWords.length + tailWords.length;
+    if (totalProvided > 8) return ip;
+
+    const numZeros = 8 - totalProvided;
+    const zeros = new Array(Math.max(0, numZeros)).fill(0);
+    const words = [...headWords, ...zeros, ...tailWords];
+    if (words.length !== 8) return ip;
+
+    let maxRunStart = -1;
+    let maxRunLength = 0;
+    let currentRunStart = -1;
+    let currentRunLength = 0;
+
+    for (let i = 0; i < 8; i++) {
+      if (words[i] === 0) {
+        if (currentRunStart === -1) {
+          currentRunStart = i;
+          currentRunLength = 1;
+        } else {
+          currentRunLength++;
+        }
+        if (currentRunLength > maxRunLength) {
+          maxRunStart = currentRunStart;
+          maxRunLength = currentRunLength;
+        }
+      } else {
+        currentRunStart = -1;
+        currentRunLength = 0;
+      }
+    }
+
+    if (maxRunLength >= 2) {
+      const left = words.slice(0, maxRunStart).map((w) => w.toString(16)).join(':');
+      const right = words.slice(maxRunStart + maxRunLength).map((w) => w.toString(16)).join(':');
+      return `${left}::${right}`;
+    }
+
+    return words.map((w) => w.toString(16)).join(':');
   }
 
   static parseTarget(target) {

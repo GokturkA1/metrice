@@ -689,7 +689,7 @@ async function runV2TestSuite() {
     });
     CONFIG.sshServerVersion = prevVersion;
 
-    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.4.0' && customIdent === 'SSH-2.0-MyCustomNode';
+    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.4.1' && customIdent === 'SSH-2.0-MyCustomNode';
     record('7.8 [YAPILANDIRMA] SSH Sunucu Version String Özelleştirme & Fallback Uyumu', versionTestValid, `Fallback: ${fallbackIdent}, Custom: ${customIdent}`);
 
     // Test 7.9: RENDEZVOUS_BIND Yabancı relayAddress İmzası Reddi (Bypass & Reflection Önlemi)
@@ -1210,6 +1210,7 @@ async function runV2TestSuite() {
     let rdvAnnouncePayload = null;
     let rdvSyncPayload = null;
     const mockRdvRelayChannel = {
+      isReady: true,
       socket: { writable: true },
       writePayload: (p) => {
         if (p?.type === 'PRESENCE_ANNOUNCE') rdvAnnouncePayload = p;
@@ -2094,6 +2095,7 @@ async function runV2TestSuite() {
     // 1. röleye bağlan
     const relay1Addr = '198.51.100.10:8001';
     const mockChannel1 = {
+      isReady: true,
       peerNodeAddress: relay1Addr,
       socket: { writable: true, remoteAddress: '198.51.100.10', remotePort: 8001 },
       writePayload: () => {}
@@ -2106,6 +2108,7 @@ async function runV2TestSuite() {
     const relay2Addr = '198.51.100.20:8001';
     let relay2ForwardedCell = null;
     const mockChannel2 = {
+      isReady: true,
       peerNodeAddress: relay2Addr,
       socket: { writable: true, remoteAddress: '198.51.100.20', remotePort: 8001 },
       writePayload: (p) => {
@@ -2223,6 +2226,102 @@ async function runV2TestSuite() {
     const test754Ok = roleTransitionOk && forwardedCellOk && presenceBridgedOk && channelBridgedOk;
     record('7.54 [FAZ 2] EDGE Transit Routing (CAP_EDGE_TRANSIT), Reverse Tünel Çapraz Atlama & Gossip Varlık Köprüleme', !!test754Ok,
       `RoleTransition: ${roleTransitionOk}, ForwardedCell: ${forwardedCellOk}, PresenceBridged: ${presenceBridgedOk}, ChannelBridged: ${channelBridgedOk}`);
+
+    // Test 7.55: [REVİZYON 24 / v2.4.1] Tünel Timeout Hatası, Hazır Olmayan Tünel Koruması, RFC 5952 IPv6 & DNS Fallback Sıkılaştırması
+    // 1. handleCircuitSetup Sonraki Atlama Zaman Aşımı / Red Hata Dönüşü
+    const hop1Kem755 = CryptoHelper.generateKemKeyPair();
+    const circuitId755 = 'circ_fail_test_755';
+    const { sharedSecret: sec755, encapsulatedKey: encKey755 } = CryptoHelper.encapsulateKey(hop1Kem755.publicKey);
+    const symKey755 = CryptoHelper.deriveKey(sec755, circuitId755, 'p2p-mesh-onion-v2');
+
+    const innerPayload755 = {
+      type: 'CIRCUIT_EXTEND',
+      circuitId: circuitId755,
+      encapsulatedKey: 'sample_key',
+      nextHop: null,
+      extendPayload: null
+    };
+    const encryptedExtend755 = CryptoHelper.encrypt(JSON.stringify(innerPayload755), symKey755);
+
+    let setupFailureResponse = null;
+    const mockInChannel755 = {
+      writePayload: (p) => { setupFailureResponse = p; }
+    };
+    const testOnionRouter755 = new OnionRouter({
+      federation: {
+        isRelay: () => true,
+        sendPacket: async () => ({ status: 'error', reason: 'extend_tunnel_timeout' })
+      },
+      db: { saveCircuit: () => {} },
+      myIdentity: { kemKeyPair: hop1Kem755 },
+      rendezvousTunnels: new Map()
+    });
+
+    await testOnionRouter755.handleCircuitSetup({
+      type: 'CIRCUIT_CREATE',
+      circuitId: circuitId755,
+      encapsulatedKey: encKey755,
+      nextHop: '198.51.100.33:8001',
+      extendPayload: encryptedExtend755
+    }, mockInChannel755);
+
+    const circuitTimeoutErrorHandled = setupFailureResponse &&
+      setupFailureResponse.status === 'error' &&
+      setupFailureResponse.reason === 'extend_tunnel_timeout';
+
+    // 2. Hazır Olmayan (isReady: false) Tünellere Dedikodu İletilmemesi
+    let unreadyChannelWritten = false;
+    let readyChannelWritten = false;
+    const mockUnreadyChan = {
+      isReady: false,
+      socket: { writable: true },
+      writePayload: () => { unreadyChannelWritten = true; }
+    };
+    const mockReadyChan = {
+      isReady: true,
+      socket: { writable: true },
+      writePayload: () => { readyChannelWritten = true; }
+    };
+
+    const tempGossipDb = new Database(path.join(rootDir, 'v2_test_gossip_unready.db'));
+    const tempGossipEngine = new FederationEngine(tempGossipDb, new PeerManager());
+    tempGossipEngine.role = 'EDGE';
+    tempGossipEngine.rendezvousRelays.set('relay_unready:8001', { channel: mockUnreadyChan, socket: mockUnreadyChan.socket });
+    tempGossipEngine.rendezvousRelays.set('relay_ready:8001', { channel: mockReadyChan, socket: mockReadyChan.socket });
+
+    await tempGossipEngine.broadcastPresence();
+    const unreadySkippedOk = !unreadyChannelWritten && readyChannelWritten;
+    tempGossipEngine.close();
+    tempGossipDb.close();
+
+    // 3. RFC 5952 IPv6 Kanonik Dönüştürme & ProxyProtocolParser Doğrulaması
+    const ipv6BufSample = Buffer.from([0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    const formattedIpv6 = ProxyProtocolParser.formatIPv6(ipv6BufSample, 0);
+    const canonicalIpv6 = AddressHelper.canonicalizeIPv6('2001:0db8:0000:0000:0000:0000:0000:0001');
+    const rfc5952Ok = formattedIpv6 === '2001:db8::1' && canonicalIpv6 === '2001:db8::1';
+
+    // 4. validatePeerIp DNS Fallback ve Kimlik Doğrulama Sıkılaştırması
+    const testPeerKp = CryptoHelper.generateIdentityKeyPair();
+    const testPeerNodeId = CryptoHelper.deriveNodeId(testPeerKp.publicKey);
+    const mockSocketPeer = { remoteAddress: '198.51.100.99', writable: true, on: () => {} };
+    const mockPeerChannel = new SecureChannel(mockSocketPeer, false, {
+      identityKeyPair: testPeerKp,
+      kemKeyPair: CryptoHelper.generateKemKeyPair(),
+      nodeAddress: 'localhost:8001',
+      nodeId: testPeerNodeId
+    }, testDb2, { track: () => true });
+
+    const spoofDnsRejected = (await mockPeerChannel.validatePeerIp('unresolvable-domain-spoof.invalid:8001', testPeerKp.publicKey)) === false;
+    const legitMeshAccepted = (await mockPeerChannel.validatePeerIp(`${testPeerNodeId}.mesh:8001`, testPeerKp.publicKey)) === true;
+    const mismatchedMeshRejected = (await mockPeerChannel.validatePeerIp(`${testPeerNodeId}.mesh:8001`, CryptoHelper.generateIdentityKeyPair().publicKey)) === false;
+    mockSocketPeer.remoteAddress = '2001:0db8:0000:0000:0000:0000:0000:0001';
+    const ipv6NormalizedMatch = (await mockPeerChannel.validatePeerIp('[2001:db8::1]:8001')) === true;
+
+    const test755Ok = circuitTimeoutErrorHandled && unreadySkippedOk && rfc5952Ok &&
+      spoofDnsRejected && legitMeshAccepted && mismatchedMeshRejected && ipv6NormalizedMatch;
+
+    record('7.55 [REVİZYON 24 / v2.4.1] Tünel Timeout Hatası, Hazır Olmayan Tünel Koruması, RFC 5952 IPv6 & DNS Fallback Sıkılaştırması', !!test755Ok,
+      `CircuitTimeoutError: ${circuitTimeoutErrorHandled}, UnreadySkipped: ${unreadySkippedOk}, RFC5952: ${rfc5952Ok}, SpoofDnsRejected: ${spoofDnsRejected}, LegitMeshAccepted: ${legitMeshAccepted}, MismatchedMeshRejected: ${mismatchedMeshRejected}, IPv6Match: ${ipv6NormalizedMatch}`);
 
     // Temiz Kapanış
     relayEngine.close();

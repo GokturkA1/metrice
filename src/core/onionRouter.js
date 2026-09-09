@@ -277,6 +277,15 @@ export class OnionRouter extends EventEmitter {
           return;
         }
 
+        let nextExtendPayload;
+        try {
+          nextExtendPayload = typeof decryptedJson === 'string' ? JSON.parse(decryptedJson) : decryptedJson;
+        } catch {
+          log.warn(`Devre uzatma paketi geçersiz JSON: ${circuitId}`);
+          channel.writePayload({ status: 'error', reason: 'invalid_extend_json' });
+          return;
+        }
+
         let res;
         let targetChannel = null;
 
@@ -297,7 +306,7 @@ export class OnionRouter extends EventEmitter {
         if (targetChannel && typeof targetChannel.writePayload === 'function') {
           res = await new Promise((resolve) => {
             const onPayload = (p) => {
-              if (p && (p.circuitId === circuitId || p.status === 'circuit_ready')) {
+              if (p && (p.circuitId === circuitId || p.status === 'circuit_ready' || p.status === 'error')) {
                 targetChannel.off('payload', onPayload);
                 resolve(p);
               }
@@ -306,8 +315,8 @@ export class OnionRouter extends EventEmitter {
             targetChannel.writePayload(nextExtendPayload);
             setTimeout(() => {
               targetChannel.off('payload', onPayload);
-              resolve({ status: 'circuit_ready', circuitId, warn: 'tunnel_pending' });
-            }, 3000);
+              resolve({ status: 'error', reason: 'extend_tunnel_timeout' });
+            }, 3500);
           });
         } else {
           const [nextHost, nextPortStr] = nextHop.split(':');
@@ -318,7 +327,8 @@ export class OnionRouter extends EventEmitter {
         if (res && res.status === 'circuit_ready') {
           channel.writePayload({ status: 'circuit_ready', circuitId });
         } else {
-          channel.writePayload({ status: 'circuit_ready', circuitId, warn: 'next_hop_pending' });
+          log.warn(`Sonraki atlama devre kurulumunu onaylamadı (${nextHop}): ${res?.reason || 'unacknowledged'}`);
+          channel.writePayload({ status: 'error', reason: res?.reason || 'next_hop_extend_failed' });
         }
       } else {
         // Exit relay reached

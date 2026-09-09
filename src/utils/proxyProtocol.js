@@ -35,17 +35,48 @@ export class ProxyProtocolParser {
   }
 
   /**
-   * IPv6 16-baytlık bellek dilimini standart formatta hex string'e çevirir
+   * IPv6 16-baytlık bellek dilimini RFC 5952 standardında kanonik formata (ardışık sıfırlar :: ile sıkıştırılmış) çevirir
    * @param {Buffer} buf 
-   * @param {number} offset 
+   * @param {number} [offset=0] 
    * @returns {string}
    */
-  static formatIPv6(buf, offset) {
-    const parts = [];
+  static formatIPv6(buf, offset = 0) {
+    const words = [];
     for (let i = 0; i < 16; i += 2) {
-      parts.push(buf.readUInt16BE(offset + i).toString(16));
+      words.push(buf.readUInt16BE(offset + i));
     }
-    return parts.join(':');
+
+    // RFC 5952: En uzun ardışık sıfır bloğunu bul (en az 2 blok olmalı)
+    let maxRunStart = -1;
+    let maxRunLength = 0;
+    let currentRunStart = -1;
+    let currentRunLength = 0;
+
+    for (let i = 0; i < 8; i++) {
+      if (words[i] === 0) {
+        if (currentRunStart === -1) {
+          currentRunStart = i;
+          currentRunLength = 1;
+        } else {
+          currentRunLength++;
+        }
+        if (currentRunLength > maxRunLength) {
+          maxRunStart = currentRunStart;
+          maxRunLength = currentRunLength;
+        }
+      } else {
+        currentRunStart = -1;
+        currentRunLength = 0;
+      }
+    }
+
+    if (maxRunLength >= 2) {
+      const left = words.slice(0, maxRunStart).map((w) => w.toString(16)).join(':');
+      const right = words.slice(maxRunStart + maxRunLength).map((w) => w.toString(16)).join(':');
+      return `${left}::${right}`;
+    }
+
+    return words.map((w) => w.toString(16)).join(':');
   }
 
   /**

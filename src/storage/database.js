@@ -394,6 +394,7 @@ export class Database {
   }
 
   getPendingOutbox(forceAll = false) {
+    if (!this.db || !this.db.open) return [];
     const now = Date.now();
     const stmt = forceAll
       ? this.db.prepare('SELECT * FROM outbox LIMIT 50')

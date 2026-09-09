@@ -200,7 +200,7 @@ export class SecureChannel extends EventEmitter {
         return;
       }
 
-      if (!(await this.validatePeerIp(frame.nodeAddress))) {
+      if (!(await this.validatePeerIp(frame.nodeAddress, frame.identityPublicKey))) {
         log.warn(I18n.t('FED_IP_SPOOFING_DETECTED', { declared: frame.nodeAddress, remote: this.socket.remoteAddress }));
         this.socket.destroy();
         return;
@@ -330,20 +330,46 @@ export class SecureChannel extends EventEmitter {
     }
   }
 
-  async validatePeerIp(declaredNodeAddress) {
-    if (!declaredNodeAddress || !declaredNodeAddress.includes(':')) return false;
-    const [declaredHost] = declaredNodeAddress.split(':');
-    const rawRemote = this.socket.realRemoteAddress || this.socket.remoteAddress || '';
-    const cleanRemote = rawRemote.replace('::ffff:', '');
+  async validatePeerIp(declaredNodeAddress, identityPublicKey = null) {
+    if (!declaredNodeAddress) return false;
+    const parsed = AddressHelper.parseTarget(declaredNodeAddress);
+    if (!parsed) return false;
 
-    // 1. NAT / Ev Kullanıcısı / Edge toleransı (localhost veya döngüsel adreste çalışan istemciler)
-    const isLoopback = (ip) => ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
-    if (isLoopback(declaredHost)) {
-      return true;
+    let declaredHost = parsed.isMesh ? parsed.nodeId : parsed.host;
+    if (!declaredHost) return false;
+
+    const rawRemote = this.socket.realRemoteAddress || this.socket.remoteAddress || '';
+    let cleanRemote = rawRemote.replace(/^::ffff:/, '');
+
+    // IPv6 normalizasyonu (RFC 5952 kanonik format)
+    if (net.isIPv6(declaredHost)) {
+      declaredHost = AddressHelper.canonicalizeIPv6(declaredHost);
+    }
+    if (net.isIPv6(cleanRemote)) {
+      cleanRemote = AddressHelper.canonicalizeIPv6(cleanRemote);
     }
 
-    // 2. Kriptografik kimlik (.mesh veya 16-karakter NodeID) toleransı
-    if (declaredHost.endsWith('.mesh') || AddressHelper.isValidNodeId(declaredHost)) {
+    const cleanDeclared = declaredHost.replace(/\.mesh$/, '').toLowerCase();
+
+    // 1. Kriptografik kimlik (.mesh veya 16-karakter NodeID) doğrulaması
+    if (identityPublicKey) {
+      const derivedId = CryptoHelper.deriveNodeId(identityPublicKey).toLowerCase();
+      if (cleanDeclared === derivedId) {
+        return true;
+      }
+      if (declaredHost.endsWith('.mesh') || AddressHelper.isValidNodeId(declaredHost)) {
+        // Beyan edilen .mesh / NodeID kimliği el sıkışmadaki açık anahtarla uyuşmuyorsa sahteciliktir (Spoofing)
+        return false;
+      }
+    } else {
+      if (declaredHost.endsWith('.mesh') || AddressHelper.isValidNodeId(declaredHost)) {
+        return true;
+      }
+    }
+
+    // 2. NAT / Ev Kullanıcısı / Edge toleransı (localhost veya döngüsel adreste çalışan istemciler)
+    const isLoopback = (ip) => ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
+    if (isLoopback(declaredHost)) {
       return true;
     }
 
@@ -372,10 +398,20 @@ export class SecureChannel extends EventEmitter {
     // 6. DNS Çözümleme (Domain -> IP Eşleşmesi - VDS & Alan Adı Arkası)
     try {
       const resolved = await dns.lookup(declaredHost, { all: true });
-      return resolved.some((entry) => entry.address === cleanRemote);
+      return resolved.some((entry) => {
+        const entryAddr = net.isIPv6(entry.address) ? AddressHelper.canonicalizeIPv6(entry.address) : entry.address;
+        return entryAddr === cleanRemote;
+      });
     } catch {
-      // DNS çözülemiyorsa ama Ed25519 imzası el sıkışmada doğrulanacaksa bağlantıyı düşürme
-      return true;
+      // DNS çözülemediğinde rastgele domainler üzerinden IP spoofing baypasını engelle.
+      // Yalnızca Ed25519 el sıkışmasında açıkça doğrulanmış düğüm kimliği ile eşleştiği takdirde kabul et.
+      if (identityPublicKey) {
+        const derivedId = CryptoHelper.deriveNodeId(identityPublicKey).toLowerCase();
+        if (cleanDeclared === derivedId) {
+          return true;
+        }
+      }
+      return false;
     }
   }
 
@@ -991,7 +1027,7 @@ export class FederationEngine extends EventEmitter {
           for (const [relayAddr, rObj] of this.rendezvousRelays.entries()) {
             if (remotePeer && (relayAddr === remotePeer || rObj.channel?.peerNodeAddress === remotePeer)) continue;
             if (channel && (rObj.channel === channel || rObj.socket === channel.socket)) continue;
-            if (rObj && rObj.channel && (!rObj.socket || rObj.socket.writable !== false)) {
+            if (rObj && rObj.channel && rObj.channel.isReady !== false && (!rObj.socket || rObj.socket.writable !== false)) {
               rObj.channel.writePayload(payload);
             }
           }
@@ -1560,7 +1596,7 @@ export class FederationEngine extends EventEmitter {
 
     if (this.rendezvousRelays) {
       for (const [, relay] of this.rendezvousRelays.entries()) {
-        if (relay && relay.channel && relay.channel.socket && relay.channel.socket.writable) {
+        if (relay && relay.channel && relay.channel.isReady !== false && relay.channel.socket && relay.channel.socket.writable) {
           relay.channel.writePayload(presenceSyncPayload);
         }
       }
@@ -1653,7 +1689,7 @@ export class FederationEngine extends EventEmitter {
         )) {
           continue;
         }
-        if (relay && relayChan && (!relaySock || relaySock.writable !== false)) {
+        if (relay && relayChan && relayChan.isReady !== false && (!relaySock || relaySock.writable !== false)) {
           relayChan.writePayload(payload);
         }
       }
@@ -2131,7 +2167,7 @@ export class FederationEngine extends EventEmitter {
 
     if (this.rendezvousRelays) {
       for (const [, relay] of this.rendezvousRelays.entries()) {
-        if (relay && relay.channel && relay.channel.socket && relay.channel.socket.writable) {
+        if (relay && relay.channel && relay.channel.isReady !== false && relay.channel.socket && relay.channel.socket.writable) {
           relay.channel.writePayload(payload);
         }
       }
