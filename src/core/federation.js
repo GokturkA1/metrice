@@ -2373,7 +2373,7 @@ export class FederationEngine extends EventEmitter {
       }
     }
 
-    const peers = this.peerManager.getAllPeers();
+    const peers = this.peerManager ? this.peerManager.getAllPeers() : [];
     for (const p of peers) {
       if (!relayPool.some((rp) => rp.address === p)) {
         const peerRoute = allRoutes.find((r) =>
@@ -2466,7 +2466,24 @@ export class FederationEngine extends EventEmitter {
         hops.push(exitHop);
       }
 
-      circuit = await this.onionRouter.buildCircuit(hops, targetNodeId);
+      try {
+        circuit = await this.onionRouter.buildCircuit(hops, targetNodeId);
+      } catch (firstErr) {
+        const guardAddr = hops[0].address;
+        let deadChannel = this.connectionPool.get(guardAddr);
+        if (!deadChannel && guardAddr.includes(':')) {
+          const [gHost, gPortStr] = guardAddr.split(':');
+          const parsed = AddressHelper.parseTarget(guardAddr);
+          const resolvedKey = parsed?.host ? `${parsed.host}:${parsed.port}` : `${gHost}:${gPortStr}`;
+          deadChannel = this.connectionPool.get(resolvedKey);
+          this.connectionPool.delete(resolvedKey);
+        }
+        if (deadChannel?.socket) {
+          try { deadChannel.socket.destroy(); } catch {}
+        }
+        this.connectionPool.delete(guardAddr);
+        circuit = await this.onionRouter.buildCircuit(hops, targetNodeId);
+      }
     }
 
     try {
@@ -2478,7 +2495,7 @@ export class FederationEngine extends EventEmitter {
   }
 
   async processOutbox(forceAll = false) {
-    if (!this.db || !this.db.db) return;
+    if (this.isClosed || !this.db || !this.db.db || (typeof this.db.db.open === 'boolean' && !this.db.db.open)) return;
     const pending = this.db.getPendingOutbox(forceAll);
     for (const item of pending) {
       const target = AddressHelper.parse(item.to);
@@ -2603,6 +2620,7 @@ export class FederationEngine extends EventEmitter {
   }
 
   close() {
+    this.isClosed = true;
     if (this.outboxInterval) clearInterval(this.outboxInterval);
     if (this.presenceInterval) clearInterval(this.presenceInterval);
     if (this.gossipTimeout) clearTimeout(this.gossipTimeout);

@@ -123,7 +123,30 @@ export class OnionRouter extends EventEmitter {
     const [host, portStr] = firstHop.address.split(':');
     const port = parseInt(portStr, 10);
 
-    const res = await this.federation.sendPacket(host, port, currentPayload);
+    let res;
+    if (typeof this.federation.getOrCreateSecureChannel === 'function') {
+      const guardChannel = await this.federation.getOrCreateSecureChannel(host, port);
+      res = await new Promise((resolve) => {
+        let timer = null;
+        const onPayload = (p) => {
+          if (p && (p.circuitId === circuitId || p.status === 'circuit_ready' || p.status === 'error')) {
+            if (timer) clearTimeout(timer);
+            guardChannel.off('payload', onPayload);
+            resolve(p);
+          }
+        };
+        guardChannel.on('payload', onPayload);
+        guardChannel.writePayload(currentPayload);
+
+        timer = setTimeout(() => {
+          guardChannel.off('payload', onPayload);
+          resolve({ status: 'unacknowledged' });
+        }, 4000);
+      });
+    } else {
+      res = await this.federation.sendPacket(host, port, currentPayload);
+    }
+
     if (!res || res.status !== 'circuit_ready') {
       log.warn(I18n.t('ONION_GUARD_UNACKNOWLEDGED', { address: firstHop.address }));
       throw new Error(I18n.t('ONION_GUARD_UNACKNOWLEDGED', { address: firstHop.address }));
@@ -321,7 +344,31 @@ export class OnionRouter extends EventEmitter {
         } else {
           const [nextHost, nextPortStr] = nextHop.split(':');
           const nextPort = parseInt(nextPortStr, 10);
-          res = await this.federation.sendPacket(nextHost, nextPort, nextExtendPayload);
+          if (typeof this.federation.getOrCreateSecureChannel === 'function') {
+            try {
+              const nextChannel = await this.federation.getOrCreateSecureChannel(nextHost, nextPort);
+              res = await new Promise((resolve) => {
+                let timer = null;
+                const onPayload = (p) => {
+                  if (p && (p.circuitId === circuitId || p.status === 'circuit_ready' || p.status === 'error')) {
+                    if (timer) clearTimeout(timer);
+                    nextChannel.off('payload', onPayload);
+                    resolve(p);
+                  }
+                };
+                nextChannel.on('payload', onPayload);
+                nextChannel.writePayload(nextExtendPayload);
+                timer = setTimeout(() => {
+                  nextChannel.off('payload', onPayload);
+                  resolve({ status: 'error', reason: 'extend_timeout' });
+                }, 4000);
+              });
+            } catch (err) {
+              res = { status: 'error', reason: err.message };
+            }
+          } else {
+            res = await this.federation.sendPacket(nextHost, nextPort, nextExtendPayload);
+          }
         }
 
         if (res && res.status === 'circuit_ready') {

@@ -245,6 +245,7 @@ export class Database {
       if (this.db) {
         try { this.db.exec('PRAGMA wal_checkpoint(PASSIVE);'); } catch {}
         this.db.close();
+        this.db = null;
         log.info(I18n.t('DB_WAL_CLOSED'));
       }
     } catch (err) {
@@ -465,25 +466,29 @@ export class Database {
   }
 
   getPendingOutbox(forceAll = false) {
-    if (!this.db) return [];
-    const now = Date.now();
-    const stmt = forceAll
-      ? this.db.prepare('SELECT * FROM outbox LIMIT 50')
-      : this.db.prepare('SELECT * FROM outbox WHERE next_retry <= ? LIMIT 50');
-    const rows = forceAll ? stmt.all() : stmt.all(now);
+    if (!this.db || (typeof this.db.open === 'boolean' && !this.db.open)) return [];
+    try {
+      const now = Date.now();
+      const stmt = forceAll
+        ? this.db.prepare('SELECT * FROM outbox LIMIT 50')
+        : this.db.prepare('SELECT * FROM outbox WHERE next_retry <= ? LIMIT 50');
+      const rows = forceAll ? stmt.all() : stmt.all(now);
 
-    return rows.map((r) => ({
-      id: r.id,
-      from: r.sender,
-      to: r.receiver,
-      content: r.content,
-      isAction: r.is_action === 1,
-      isSnippet: r.is_snippet === 1,
-      isE2EE: r.is_e2ee === 1,
-      retries: r.retries,
-      nextRetry: r.next_retry,
-      timestamp: r.timestamp
-    }));
+      return rows.map((r) => ({
+        id: r.id,
+        from: r.sender,
+        to: r.receiver,
+        content: r.content,
+        isAction: r.is_action === 1,
+        isSnippet: r.is_snippet === 1,
+        isE2EE: r.is_e2ee === 1,
+        retries: r.retries,
+        nextRetry: r.next_retry,
+        timestamp: r.timestamp
+      }));
+    } catch {
+      return [];
+    }
   }
 
   removeOutbox(id) {

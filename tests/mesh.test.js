@@ -2690,6 +2690,111 @@ async function runV2TestSuite() {
     record('7.60 [REVİZYON 29 / v2.4.6] Public Port Zehirlenmesi ve isSelfAddress Genel Port Desteği', !!test760Ok,
       `LocalPort: ${isSelfLocalPortOk}, PublicPort: ${isSelfPublicPortOk}, LoopbackPub: ${isSelfLoopbackPubOk}, RejectOther: ${isSelfOtherPortRejected}, PmSelfAddr: ${pmSelfNodeAddrOk}, FedNodeAddr: ${fedNodeAddrOk}`);
 
+    // Test 7.61: [REVİZYON 30 / v2.4.7] Devre Kurulumunda circuitId Korelasyonu ve Bayat Soket Yeniden Deneme
+    // 1. buildCircuit içinde araya giren alakasız paketleri yoksayıp circuitId yanıtına kilitlenme doğrulaması
+    const mockChannel761 = new EventEmitter();
+    mockChannel761.socket = { destroyed: false, writable: true };
+    let payloadSentToGuard = null;
+    mockChannel761.writePayload = (p) => {
+      payloadSentToGuard = p;
+      // Eşzamanlı yarış durumu: önce alakasız bir dedikodu ve varlık paketi gelsin
+      setTimeout(() => {
+        mockChannel761.emit('payload', { type: 'GOSSIP_RESPONSE', peers: ['1.2.3.4:8001'] });
+        mockChannel761.emit('payload', { type: 'PRESENCE_ANNOUNCE', nodeId: 'randomnode' });
+        // Ardından doğru circuitId ile devre hazır yanıtı gelsin
+        setTimeout(() => {
+          mockChannel761.emit('payload', { status: 'circuit_ready', circuitId: p.circuitId });
+        }, 20);
+      }, 10);
+    };
+
+    const mockFed761 = {
+      getOrCreateSecureChannel: async () => mockChannel761,
+      myIdentity: fedAutoNat.myIdentity
+    };
+    const onionRouter761 = new OnionRouter({
+      federation: mockFed761,
+      db: testDb2,
+      myIdentity: fedAutoNat.myIdentity,
+      rendezvousTunnels: new Map()
+    });
+
+    const testHopKem = CryptoHelper.generateKemKeyPair();
+    const builtCircuit761 = await onionRouter761.buildCircuit([
+      { address: '198.51.100.55:8001', kemPublicKey: testHopKem.publicKey }
+    ], 'corr_target_node');
+
+    const correlationOk = builtCircuit761 &&
+      builtCircuit761.circuitId === payloadSentToGuard?.circuitId &&
+      onionRouter761.clientCircuits.has(builtCircuit761.circuitId);
+
+    // 2. sendViaOnion içinde ilk denemede kopan/hata veren bayat soketin temizlenip anında ikinci denemede kurulması
+    const db761RetryPath = path.join(rootDir, 'v2_test_retry761.db');
+    if (fs.existsSync(db761RetryPath)) fs.unlinkSync(db761RetryPath);
+    const mockDb761Retry = new Database(db761RetryPath);
+    const fedRetry761 = new FederationEngine(mockDb761Retry, new PeerManager());
+
+    const destKem761 = CryptoHelper.generateKemKeyPair();
+    const destNodeId761 = 'destnode761retry';
+    fedRetry761.presenceTable.set(destNodeId761, {
+      nodeId: destNodeId761,
+      role: 'CAP_EDGE',
+      rendezvousNodes: ['198.51.100.99:8001'],
+      kemPublicKey: destKem761.publicKey,
+      lastSeen: Date.now()
+    });
+
+    let buildAttempts = 0;
+    fedRetry761.onionRouter.buildCircuit = async (hops, targetNodeId) => {
+      buildAttempts++;
+      if (buildAttempts === 1) {
+        throw new Error('Guard relay unacknowledged (ECONNRESET)');
+      }
+      return {
+        circuitId: 'retry_circuit_ok_761',
+        hops,
+        keys: [Buffer.alloc(32)],
+        targetNodeId,
+        createdAt: Date.now()
+      };
+    };
+
+    let cellSentOk = false;
+    fedRetry761.onionRouter.sendOnionCell = async (circuit, targetNodeId, payload) => {
+      cellSentOk = circuit.circuitId === 'retry_circuit_ok_761';
+      return { status: 'delivered' };
+    };
+
+    // Bayat soket benzetimi
+    let deadSocketDestroyed = false;
+    fedRetry761.connectionPool.set('198.51.100.99:8001', {
+      socket: {
+        destroy: () => { deadSocketDestroyed = true; }
+      }
+    });
+
+    const sendRes761 = await fedRetry761.sendViaOnion(destNodeId761, {
+      type: 'DIRECT_MESSAGE',
+      id: 'retry_msg_761',
+      from: '@sender:local.mesh',
+      to: `@recv:${destNodeId761}.mesh`,
+      content: 'test retry'
+    });
+
+    const retryOk = buildAttempts === 2 &&
+      deadSocketDestroyed &&
+      !fedRetry761.connectionPool.has('198.51.100.99:8001') &&
+      sendRes761?.status === 'delivered' &&
+      cellSentOk;
+
+    fedRetry761.close();
+    mockDb761Retry.close();
+    try { if (fs.existsSync(db761RetryPath)) fs.unlinkSync(db761RetryPath); } catch {}
+
+    const test761Ok = correlationOk && retryOk;
+    record('7.61 [REVİZYON 30 / v2.4.7] Devre Kurulumunda circuitId Korelasyonu ve Bayat Soket Yeniden Deneme', !!test761Ok,
+      `Correlation: ${correlationOk}, RetryAttempts: ${buildAttempts}, DeadSocketDestroyed: ${deadSocketDestroyed}, Delivered: ${sendRes761?.status === 'delivered'}`);
+
     // Temiz Kapanış
     testDbLocale.close();
     try { if (fs.existsSync(testDbLocalePath)) fs.unlinkSync(testDbLocalePath); } catch {}
