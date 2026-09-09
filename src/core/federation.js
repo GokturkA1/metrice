@@ -465,7 +465,8 @@ export class FederationEngine extends EventEmitter {
     this.kemKeyPair = identity.kemKeyPair;
     this.nodeId = identity.nodeId;
     this.meshAddress = `${this.nodeId}.mesh`;
-    this.nodeAddress = `${CONFIG.serverName}:${CONFIG.federationPort}`;
+    const publicPort = CONFIG.publicFederationPort || CONFIG.federationPort;
+    this.nodeAddress = `${CONFIG.serverName}:${publicPort}`;
 
     AddressHelper.setLocalNodeId(this.nodeId);
 

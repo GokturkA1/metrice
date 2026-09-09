@@ -2652,6 +2652,44 @@ async function runV2TestSuite() {
     record('7.59 [REVİZYON 28 / v2.4.5] Çapraz Dil Aktif Kanal Bildirim Bastırma ve Genel Kanal Broadcast Semantiği', !!test759Ok,
       `IsSameTarget: ${isSameTargetOk}, NotifSuppression: ${notificationSuppressionOk}, FedBroadcast: ${fedBroadcastOk}, CsBroadcast: ${csBroadcastOk}`);
 
+    // Test 7.60: [REVİZYON 29 / v2.4.6] Public Port Zehirlenmesi ve isSelfAddress Genel Port Desteği
+    const origFedPort = CONFIG.federationPort;
+    const origPubFedPort = CONFIG.publicFederationPort;
+
+    CONFIG.federationPort = 8002;
+    CONFIG.publicFederationPort = 8001;
+
+    const pm760Path = path.join(rootDir, 'test_pm760.json');
+    if (fs.existsSync(pm760Path)) fs.unlinkSync(pm760Path);
+    const pm760 = new PeerManager(pm760Path);
+
+    const isSelfLocalPortOk = pm760.isSelfAddress(CONFIG.serverName, 8002);
+    const isSelfPublicPortOk = pm760.isSelfAddress(CONFIG.serverName, 8001);
+    const isSelfLoopbackPubOk = pm760.isSelfAddress('127.0.0.1', 8001);
+    const isSelfOtherPortRejected = !pm760.isSelfAddress(CONFIG.serverName, 8003);
+    const pmSelfNodeAddrOk = pm760.selfNodeAddress === `${CONFIG.serverName}:8001`;
+
+    const db760Path = path.join(rootDir, 'v2_test_fed760.db');
+    if (fs.existsSync(db760Path)) fs.unlinkSync(db760Path);
+    const mockDb760 = new Database(db760Path);
+    const fed760 = new FederationEngine(mockDb760);
+
+    const fedNodeAddrOk = fed760.nodeAddress === `${CONFIG.serverName}:8001` &&
+      fed760.myIdentity.nodeAddress === `${CONFIG.serverName}:8001`;
+
+    fed760.close();
+    mockDb760.close();
+    pm760.close();
+    try { if (fs.existsSync(pm760Path)) fs.unlinkSync(pm760Path); } catch {}
+    try { if (fs.existsSync(db760Path)) fs.unlinkSync(db760Path); } catch {}
+
+    CONFIG.federationPort = origFedPort;
+    CONFIG.publicFederationPort = origPubFedPort;
+
+    const test760Ok = isSelfLocalPortOk && isSelfPublicPortOk && isSelfLoopbackPubOk && isSelfOtherPortRejected && pmSelfNodeAddrOk && fedNodeAddrOk;
+    record('7.60 [REVİZYON 29 / v2.4.6] Public Port Zehirlenmesi ve isSelfAddress Genel Port Desteği', !!test760Ok,
+      `LocalPort: ${isSelfLocalPortOk}, PublicPort: ${isSelfPublicPortOk}, LoopbackPub: ${isSelfLoopbackPubOk}, RejectOther: ${isSelfOtherPortRejected}, PmSelfAddr: ${pmSelfNodeAddrOk}, FedNodeAddr: ${fedNodeAddrOk}`);
+
     // Temiz Kapanış
     testDbLocale.close();
     try { if (fs.existsSync(testDbLocalePath)) fs.unlinkSync(testDbLocalePath); } catch {}

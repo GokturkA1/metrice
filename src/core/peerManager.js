@@ -13,12 +13,14 @@ export class PeerManager {
     this.peers = new Map();
     this.udpSocket = null;
     this.broadcastPort = 41234;
-    this.selfNodeAddress = `${CONFIG.serverName}:${CONFIG.federationPort}`;
+    const publicPort = CONFIG.publicFederationPort || CONFIG.federationPort;
+    this.selfNodeAddress = `${CONFIG.serverName}:${publicPort}`;
     this.loadPeers();
   }
 
   isSelfAddress(host, port) {
-    if (port !== CONFIG.federationPort) return false;
+    const pubPort = CONFIG.publicFederationPort || CONFIG.federationPort;
+    if (port !== CONFIG.federationPort && port !== pubPort) return false;
 
     // 1. Alan adı, localhost ve döngüsel adresler
     if (
@@ -153,7 +155,7 @@ export class PeerManager {
       try {
         const payload = JSON.parse(msg.toString());
         // Kendi yaydığımız paketi geri aldığımızda yut
-        if (payload.nodeAddress === this.selfNodeAddress) {
+        if (payload.nodeAddress === this.selfNodeAddress || payload.nodeAddress === `${CONFIG.serverName}:${CONFIG.federationPort}`) {
           return;
         }
 
@@ -189,16 +191,24 @@ export class PeerManager {
 
   sendBeacon() {
     if (!this.udpSocket) return;
+    const publicPort = CONFIG.publicFederationPort || CONFIG.federationPort;
     const payload = Buffer.from(
       JSON.stringify({
         type: 'P2P_BEACON',
         nodeAddress: this.selfNodeAddress,
-        port: CONFIG.federationPort,
+        port: publicPort,
         timestamp: Date.now()
       })
     );
 
     this.udpSocket.send(payload, 0, payload.length, this.broadcastPort, '255.255.255.255', () => {});
     this.udpSocket.send(payload, 0, payload.length, this.broadcastPort, '127.0.0.1', () => {});
+  }
+
+  close() {
+    if (this.udpSocket) {
+      try { this.udpSocket.close(); } catch {}
+      this.udpSocket = null;
+    }
   }
 }

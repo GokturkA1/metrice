@@ -1,6 +1,6 @@
 {
   "name": "metrice",
-  "version": "2.4.5",
+  "version": "2.4.6",
   "license": "GPL-3.0-only",
   "type": "module",
   "main": "src/index.js",
