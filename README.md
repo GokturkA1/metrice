@@ -1,4 +1,4 @@
-# Metrice v2.5.0
+# Metrice v2.5.1
 
 Metrice, harici bağımlılık içermeyen (Zero External Dependencies), doğrudan Node.js çekirdek kütüphaneleri (`node:crypto`, `node:net`, `node:dgram`, `node:sqlite`, `node:dns`) üzerinde çalışan, kuantum sonrası kriptografi (Post-Quantum Cryptography) ve Tor benzeri çok katmanlı yönlendirme (Onion Routing) mimarisine sahip dağıtık eşler arası (P2P) ağ protokolüdür.
 
@@ -45,7 +45,7 @@ Sistem; NIST FIPS 203 ML-KEM-768 anahtar kapsülleme, Ed25519 tabanlı RFC 4648 
 
 ### 6. Bellek İçi SSH-2 Sunucusu ve İki Faktörlü Kasa Doğrulaması (2FA Vault)
 - Harici SSH arka plan süreci (daemon) gerekmeksizin saf JavaScript ile yazılmış SSH-2 sunucusu barındırır.
-- Dinamik Sürüm Sistemi & Yapılandırılabilir Kimlik: Sunucu kimlik dizgesi (`sshServerVersion`) ve sistem sürümü merkezi sürüm sistemi (`src/version.js`) üzerinden `package.json` ile dinamik olarak senkronize edilir (varsayılan: `SSH-2.0-Metrice_2.5.0`), ortam değişkeni veya konfigürasyon üzerinden özelleştirilebilir.
+- Dinamik Sürüm Sistemi & Yapılandırılabilir Kimlik: Sunucu kimlik dizgesi (`sshServerVersion`) ve sistem sürümü merkezi sürüm sistemi (`src/version.js`) üzerinden `package.json` ile dinamik olarak senkronize edilir (varsayılan: `SSH-2.0-Metrice_2.5.1`), ortam değişkeni veya konfigürasyon üzerinden özelleştirilebilir.
 - Donanım Anahtarı Bağlama: Kullanıcı parolası, istemcinin Ed25519 açık anahtarı ile tuzlanarak Scrypt (N=16384, r=8, p=1) ve HKDF-SHA256 algoritmalarından geçirilir. Kayıtlı Ed25519 anahtarı olmaksızın doğru parola girilse dahi kimlik doğrulanamaz.
 
 ### 7. HAProxy PROXY Protocol v1 & v2 Desteği ve L4 Güvenliği
@@ -146,7 +146,7 @@ Tüm parametreler ortam değişkenleri (`process.env`) veya `src/config/index.js
 | `publicFederationPort` | `PUBLIC_FED_PORT` | `FED_PORT` (8001) | Dış ağa anons edilen ve dialback yapılan genel federasyon portu |
 | `publicSshPort` | `PUBLIC_SSH_PORT` | `SSH_PORT` (2224) | Dış ağa duyurulan genel SSH portu |
 | `publicClientPort` | `PUBLIC_CLIENT_PORT` | `CLIENT_PORT` (2222) | Dış ağa duyurulan genel Telnet TUI portu |
-| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.5.0'` | SSH sunucusu protokol kimlik dizgesi (Sürüm sistemi ile dinamik) |
+| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.5.1'` | SSH sunucusu protokol kimlik dizgesi (Sürüm sistemi ile dinamik) |
 | `meshRole` | `MESH_ROLE` | `'EDGE'` | Düğüm rolü (`'RELAY'` veya `'EDGE'`) |
 | `bootstrapPeers` | `BOOTSTRAP_PEERS` | `''` | Kalıcı başlangıç ve korumalı röle eş listesi (virgülle ayrılmış) |
 | `maxRendezvousTunnels`| `MAX_RENDEZVOUS_TUNNELS` | `64` | Bir RELAY düğümünün kabul edeceği azami ters tünel sayısı |
@@ -256,14 +256,14 @@ PROXY TCP4 203.0.113.195 198.51.100.1 56324 8001\r\n<payload>
 
 ## Doğrulama ve Testler
 
-Sistem bütünlüğü `tests/` klasöründeki üç kapsamlı test süiti (toplam 111 test) ile doğrulanır:
+Sistem bütünlüğü `tests/` klasöründeki üç kapsamlı test süiti (toplam 112 test) ile doğrulanır:
 
 ```bash
 # Tüm test süitlerini sırayla çalıştırmak için:
 npm test
 
 # Veya test süitlerini bağımsız çalıştırmak için:
-node tests/mesh.test.js      # 1. P2P-Mesh, AutoNAT, Rendezvous, PROXY ve Transit Spesifikasyon Süiti (79 Test)
+node tests/mesh.test.js      # 1. P2P-Mesh, AutoNAT, Rendezvous, PROXY ve Transit Spesifikasyon Süiti (80 Test)
 node tests/protocol.test.js  # 2. Protokol, Ağ Keşfi, Post-Quantum SSH-2 ve Veritabanı Süiti (24 Test)
 node tests/security.test.js  # 3. Protokol Güvenliği, Nonce Replay, DoS ve Enjeksiyon Denetim Süiti (8 Test)
 ```

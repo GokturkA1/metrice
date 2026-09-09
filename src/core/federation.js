@@ -1018,6 +1018,16 @@ export class FederationEngine extends EventEmitter {
             if (parsed && !parsed.isLocal) {
               const uNodeId = parsed.nodeId || nodeId;
               const canonicalUser = `@${parsed.name}:${uNodeId}.mesh`;
+
+              // Eski/çakışan NodeID temizliği
+              const incomingNick = parsed.name.toLowerCase();
+              for (const existingUser of Array.from(this.remoteOnlineUsers.keys())) {
+                const exParsed = AddressHelper.parse(existingUser);
+                if (exParsed && exParsed.name.toLowerCase() === incomingNick && exParsed.nodeId !== uNodeId) {
+                  this.remoteOnlineUsers.delete(existingUser);
+                }
+              }
+
               this.remoteOnlineUsers.set(canonicalUser, {
                 lastSeen: Date.now(),
                 channels: m.channels || [],
@@ -1039,6 +1049,17 @@ export class FederationEngine extends EventEmitter {
       this.emit('presence_change');
       if (channel && typeof channel.writePayload === 'function') {
         channel.writePayload({ status: 'ack', type: 'PRESENCE_ANNOUNCE', nodeId: this.nodeId });
+
+        // Bilateral Senkronizasyon: Karşı düğüm röle ise kendi güncel varlığımızı da kanala yaz
+        if (!payload.isBilateralReply && (role === 'RELAY' || role === 'CAP_RELAY')) {
+          const myState = this.getLocalStateFn ? this.getLocalStateFn() : { memberships: [] };
+          if (myState.memberships && myState.memberships.length > 0) {
+            const myPresence = this.createPresenceAnnouncePayload();
+            myPresence.isBilateralReply = true;
+            channel.writePayload(myPresence);
+            log.debug(I18n.t('FED_BILATERAL_SYNC', { node: nodeId }));
+          }
+        }
       }
 
       // Dedikodu (Gossip) Yayılımı: Röle düğümleri geçerli PRESENCE_ANNOUNCE paketlerini ağdaki diğer eşlere iletir
@@ -1585,15 +1606,24 @@ export class FederationEngine extends EventEmitter {
   async broadcastUserOffline(userAddress) {
     if (!userAddress) return;
     this.remoteOnlineUsers.delete(userAddress);
+    const parsed = AddressHelper.parse(userAddress);
+    if (parsed && parsed.name) {
+      for (const k of Array.from(this.remoteOnlineUsers.keys())) {
+        if (k.startsWith(`@${parsed.name}:`)) {
+          this.remoteOnlineUsers.delete(k);
+        }
+      }
+    }
     this.emit('presence_change');
+    log.debug(I18n.t('FED_USER_OFFLINE_BROADCAST', { user: userAddress }));
 
-    const peers = this.peerManager.getAllPeers();
     const payload = {
       type: 'USER_OFFLINE',
       user: userAddress,
       nodeAddress: this.nodeAddress
     };
 
+    const peers = this.peerManager ? this.peerManager.getAllPeers() : [];
     for (const peer of peers) {
       if (!peer || !peer.includes(':')) continue;
       const [host, portStr] = peer.split(':');
@@ -1601,6 +1631,22 @@ export class FederationEngine extends EventEmitter {
       if (!host || isNaN(port)) continue;
 
       this.sendPacket(host, port, payload).catch(() => {});
+    }
+
+    if (this.rendezvousTunnels) {
+      for (const [, tunnel] of this.rendezvousTunnels.entries()) {
+        if (tunnel?.channel?.socket?.writable) {
+          tunnel.channel.writePayload(payload);
+        }
+      }
+    }
+
+    if (this.rendezvousRelays) {
+      for (const [, relay] of this.rendezvousRelays.entries()) {
+        if (relay?.channel?.socket?.writable) {
+          relay.channel.writePayload(payload);
+        }
+      }
     }
   }
 
@@ -2071,7 +2117,7 @@ export class FederationEngine extends EventEmitter {
     }
   }
 
-  broadcastPresenceAnnounce() {
+  createPresenceAnnouncePayload() {
     const timestamp = Date.now();
     const channels = this.getLocalChannels();
     const relayAnnounceAddr = this.getRelayAnnounceAddress();
@@ -2082,8 +2128,8 @@ export class FederationEngine extends EventEmitter {
       const [host] = addr.split(':');
       return host.endsWith('.mesh') || host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
     };
-    let safeBoundRelays = Array.from(this.boundRendezvousRelays).filter((addr) => !isPoisoned(addr));
-    if (safeBoundRelays.length === 0 && this.boundRendezvousRelays.size > 0 && (process.env.NODE_ENV === 'test' || CONFIG.serverName === 'localhost')) {
+    let safeBoundRelays = Array.from(this.boundRendezvousRelays || []).filter((addr) => !isPoisoned(addr));
+    if (safeBoundRelays.length === 0 && this.boundRendezvousRelays?.size > 0 && (process.env.NODE_ENV === 'test' || CONFIG.serverName === 'localhost')) {
       safeBoundRelays = Array.from(this.boundRendezvousRelays).filter((addr) => {
         if (typeof addr !== 'string' || !addr.includes(':')) return false;
         const [host] = addr.split(':');
@@ -2102,9 +2148,9 @@ export class FederationEngine extends EventEmitter {
     });
 
     const sig = CryptoHelper.sign(dataToSign, this.identityKeyPair.privateKey);
-
     const myState = this.getLocalStateFn ? this.getLocalStateFn() : { memberships: [] };
-    const payload = {
+
+    return {
       type: 'PRESENCE_ANNOUNCE',
       nodeId: this.nodeId,
       role: this.role,
@@ -2116,6 +2162,11 @@ export class FederationEngine extends EventEmitter {
       timestamp,
       sig
     };
+  }
+
+  broadcastPresenceAnnounce() {
+    const payload = this.createPresenceAnnouncePayload();
+    const { timestamp, rendezvousNodes, channels } = payload;
 
     this.presenceTable.set(this.nodeId, {
       nodeId: this.nodeId,
@@ -2135,7 +2186,7 @@ export class FederationEngine extends EventEmitter {
       lastSeen: timestamp
     });
 
-    const peers = this.peerManager.getAllPeers();
+    const peers = this.peerManager ? this.peerManager.getAllPeers() : [];
     for (const peer of peers) {
       if (!peer || !peer.includes(':')) continue;
       const [host, portStr] = peer.split(':');

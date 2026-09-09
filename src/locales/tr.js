@@ -298,6 +298,8 @@ export default {
   FED_ONION_SEND_ERR: 'Onion gönderim hatası ({node}): {error}, outbox\'a ekleniyor',
   FED_TARGET_NO_RDV_ERR: 'Hedef {node} için aktif buluşma noktası bulunamadı',
   FED_INVALID_TARGET_ERR: 'Geçersiz hedef: {target}',
+  FED_USER_OFFLINE_BROADCAST: 'Kullanıcı çevrimdışı anonsu dağıtıldı: {user}',
+  FED_BILATERAL_SYNC: 'Bilateral varlık senkronizasyonu yapıldı: {node}',
 
   E2EE_ENCRYPTED_PLACEHOLDER: '🔒 [ŞİFRELİ METİN]'
 };

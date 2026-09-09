@@ -2921,6 +2921,123 @@ async function runV2TestSuite() {
     record('7.62 [REVİZYON 31 / v2.5.0] V1 PRESENCE_SYNC Tasfiyesi, PRESENCE_ANNOUNCE Standardizasyonu & Render Debounce', !!test762Ok,
       `V1Ignored: ${v1IgnoredOk}, V2Accepted: ${v2AcceptedOk}, CanonicalKEM: ${kemSavedCanonicalOk}, Debounce: ${debouncedSingleCall}, HttpDropped: ${httpScanDroppedOk}`);
 
+    // Test 7.63: [REVİZYON 32 / v2.5.1] Bilateral Varlık Senkronizasyonu, Tünel USER_OFFLINE Dağıtımı & Eski NodeID Temizliği
+    const db763Path = path.join(rootDir, 'v2_test_r32_bilateral.db');
+    if (fs.existsSync(db763Path)) fs.unlinkSync(db763Path);
+    const mockDb763 = new Database(db763Path);
+    const fed763 = new FederationEngine(mockDb763, new PeerManager());
+    fed763.role = 'RELAY';
+
+    // 1. broadcastUserOffline Tünel ve Röle Dağıtımı & Nick varyantı temizliği
+    let tunnelOfflineWritten = false;
+    let relayOfflineWritten = false;
+    fed763.rendezvousTunnels = new Map([
+      ['tunnel_edge_1', {
+        channel: { socket: { writable: true }, writePayload: (p) => { if (p?.type === 'USER_OFFLINE') tunnelOfflineWritten = true; } }
+      }]
+    ]);
+    fed763.rendezvousRelays = new Map([
+      ['relay_peer_1', {
+        channel: { socket: { writable: true }, writePayload: (p) => { if (p?.type === 'USER_OFFLINE') relayOfflineWritten = true; } }
+      }]
+    ]);
+
+    fed763.remoteOnlineUsers.set('@bob:oldnode11111111.mesh', { lastSeen: Date.now(), channels: ['#genel'] });
+    fed763.remoteOnlineUsers.set('@bob:newnode22222222.mesh', { lastSeen: Date.now(), channels: ['#genel'] });
+
+    await fed763.broadcastUserOffline('@bob:newnode22222222.mesh');
+    const offlineTunnelsNotifiedOk = tunnelOfflineWritten && relayOfflineWritten;
+    const allBobVariantsCleanedOk = !fed763.remoteOnlineUsers.has('@bob:oldnode11111111.mesh') &&
+      !fed763.remoteOnlineUsers.has('@bob:newnode22222222.mesh');
+
+    // 2. Bilateral PRESENCE_ANNOUNCE Değişimi
+    fed763.getLocalStateFn = () => ({
+      memberships: [{ user: `@charlie:${fed763.nodeId}.mesh`, channels: ['#genel'], isSsh: false, kemPublicKey: fed763.kemKeyPair.publicKey }]
+    });
+
+    const remoteRelayId = CryptoHelper.generateIdentityKeyPair();
+    const remoteRelayNodeId = CryptoHelper.deriveNodeId(remoteRelayId.publicKey);
+    const remoteRelayKem = CryptoHelper.generateKemKeyPair();
+    const ts763 = Date.now();
+    const dataToSign763 = JSON.stringify({
+      nodeId: remoteRelayNodeId,
+      role: 'RELAY',
+      rendezvousNodes: ['198.51.100.77:8001'],
+      kemPublicKey: remoteRelayKem.publicKey,
+      channels: ['#genel'],
+      timestamp: ts763
+    });
+    const sig763 = CryptoHelper.sign(dataToSign763, remoteRelayId.privateKey);
+
+    const writtenPackets = [];
+    const mockChannel763 = {
+      peerNodeAddress: `${remoteRelayNodeId}.mesh`,
+      writePayload: (p) => { writtenPackets.push(p); }
+    };
+
+    fed763.handleIncoming({
+      type: 'PRESENCE_ANNOUNCE',
+      nodeId: remoteRelayNodeId,
+      role: 'RELAY',
+      rendezvousNodes: ['198.51.100.77:8001'],
+      kemPublicKey: remoteRelayKem.publicKey,
+      identityPublicKey: remoteRelayId.publicKey,
+      channels: ['#genel'],
+      memberships: [{ user: `@alice:${remoteRelayNodeId}.mesh`, channels: ['#genel'] }],
+      timestamp: ts763,
+      sig: sig763
+    }, mockChannel763);
+
+    const ackPacket = writtenPackets.find((p) => p.status === 'ack' && p.type === 'PRESENCE_ANNOUNCE');
+    const bilateralPacket = writtenPackets.find((p) => p.type === 'PRESENCE_ANNOUNCE' && p.isBilateralReply === true);
+    const bilateralSyncOk = ackPacket && bilateralPacket &&
+      bilateralPacket.nodeId === fed763.nodeId &&
+      bilateralPacket.memberships.some((m) => m.user === `@charlie:${fed763.nodeId}.mesh`);
+
+    // 3. Yeniden başlayan düğümde aynı nick için eski NodeID kaydının temizliği
+    const restartedRemoteId = CryptoHelper.generateIdentityKeyPair();
+    const restartedRemoteNodeId = CryptoHelper.deriveNodeId(restartedRemoteId.publicKey);
+    const restartedKem = CryptoHelper.generateKemKeyPair();
+    const tsRestart = Date.now();
+    const dataRestart = JSON.stringify({
+      nodeId: restartedRemoteNodeId,
+      role: 'RELAY',
+      rendezvousNodes: ['198.51.100.88:8001'],
+      kemPublicKey: restartedKem.publicKey,
+      channels: ['#genel'],
+      timestamp: tsRestart
+    });
+    const sigRestart = CryptoHelper.sign(dataRestart, restartedRemoteId.privateKey);
+
+    // alice daha önce remoteRelayNodeId altında kayıtlıydı:
+    const aliceOldExists = fed763.remoteOnlineUsers.has(`@alice:${remoteRelayNodeId}.mesh`);
+
+    fed763.handleIncoming({
+      type: 'PRESENCE_ANNOUNCE',
+      nodeId: restartedRemoteNodeId,
+      role: 'RELAY',
+      rendezvousNodes: ['198.51.100.88:8001'],
+      kemPublicKey: restartedKem.publicKey,
+      identityPublicKey: restartedRemoteId.publicKey,
+      channels: ['#genel'],
+      memberships: [{ user: `@alice:${restartedRemoteNodeId}.mesh`, channels: ['#genel'] }],
+      timestamp: tsRestart,
+      sig: sigRestart
+    }, mockChannel763);
+
+    const aliceNewExists = fed763.remoteOnlineUsers.has(`@alice:${restartedRemoteNodeId}.mesh`);
+    const aliceOldPrunedOk = aliceOldExists && aliceNewExists && !fed763.remoteOnlineUsers.has(`@alice:${remoteRelayNodeId}.mesh`);
+
+    fed763.close();
+    mockDb763.close();
+    try { if (fs.existsSync(db763Path)) fs.unlinkSync(db763Path); } catch {}
+
+    const test763Ok = offlineTunnelsNotifiedOk && allBobVariantsCleanedOk &&
+      bilateralSyncOk && aliceOldPrunedOk;
+
+    record('7.63 [REVİZYON 32 / v2.5.1] Bilateral Varlık Senkronizasyonu, Tünel USER_OFFLINE Dağıtımı & Eski NodeID Temizliği', !!test763Ok,
+      `TunnelsOffline: ${offlineTunnelsNotifiedOk}, NickPruned: ${allBobVariantsCleanedOk}, BilateralSync: ${!!bilateralSyncOk}, OldNodePruned: ${aliceOldPrunedOk}`);
+
     // Temiz Kapanış
     testDbLocale.close();
     try { if (fs.existsSync(testDbLocalePath)) fs.unlinkSync(testDbLocalePath); } catch {}

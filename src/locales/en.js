@@ -290,6 +290,8 @@ export default {
   ONION_CELL_EXIT_REACHED: 'Onion cell reached exit node. Target: {node}',
   ONION_MSG_DELIVERED_TUNNEL: 'Onion message delivered via reverse tunnel -> NodeID: {node}',
   ONION_CELL_UNDELIVERABLE: 'Onion cell undeliverable: no active reverse tunnel found for {node}',
+  FED_USER_OFFLINE_BROADCAST: 'User offline announcement broadcasted: {user}',
+  FED_BILATERAL_SYNC: 'Bilateral presence synchronization performed: {node}',
 
   E2EE_ENCRYPTED_PLACEHOLDER: '🔒 [ENCRYPTED TEXT]'
 };
