@@ -358,30 +358,26 @@ export class Database {
       const stmt = this.db.prepare(`
         UPDATE messages 
         SET deleted_by = CASE 
-          WHEN deleted_by = '' THEN ? 
-          WHEN deleted_by NOT LIKE '%' || ? || '%' AND deleted_by NOT LIKE '%' || ? || '%' THEN deleted_by || ',' || ? 
+          WHEN deleted_by = '' THEN ?1 
+          WHEN deleted_by NOT LIKE '%' || ?1 || '%' AND deleted_by NOT LIKE '%' || ?2 || '%' THEN deleted_by || ',' || ?1 
           ELSE deleted_by 
         END
-        WHERE receiver = ? OR receiver = ? OR receiver LIKE ? || ':%'
+        WHERE receiver = ?3 OR receiver = ?4 OR receiver LIKE ?4 || ':%'
       `);
-      stmt.run(userAddress, userAddress, userPrefix, userAddress, target, chanPrefix, chanPrefix);
+      stmt.run(userAddress, userPrefix, target, chanPrefix);
     } else {
       const targetPrefix = target.split(':')[0];
       const stmt = this.db.prepare(`
         UPDATE messages 
         SET deleted_by = CASE 
-          WHEN deleted_by = '' THEN ? 
-          WHEN deleted_by NOT LIKE '%' || ? || '%' AND deleted_by NOT LIKE '%' || ? || '%' THEN deleted_by || ',' || ? 
+          WHEN deleted_by = '' THEN ?1 
+          WHEN deleted_by NOT LIKE '%' || ?1 || '%' AND deleted_by NOT LIKE '%' || ?2 || '%' THEN deleted_by || ',' || ?1 
           ELSE deleted_by 
         END
-        WHERE ((sender = ? OR sender = ? OR sender LIKE ? || ':%') AND (receiver = ? OR receiver = ? OR receiver LIKE ? || ':%'))
-           OR ((sender = ? OR sender = ? OR sender LIKE ? || ':%') AND (receiver = ? OR receiver = ? OR receiver LIKE ? || ':%'))
+        WHERE ((sender = ?1 OR sender = ?2 OR sender LIKE ?2 || ':%') AND (receiver = ?3 OR receiver = ?4 OR receiver LIKE ?4 || ':%'))
+           OR ((sender = ?3 OR sender = ?4 OR sender LIKE ?4 || ':%') AND (receiver = ?1 OR receiver = ?2 OR receiver LIKE ?2 || ':%'))
       `);
-      stmt.run(
-        userAddress, userAddress, userPrefix, userAddress,
-        userAddress, userPrefix, userPrefix, target, targetPrefix, targetPrefix,
-        target, targetPrefix, targetPrefix, userAddress, userPrefix, userPrefix
-      );
+      stmt.run(userAddress, userPrefix, target, targetPrefix);
     }
   }
 
@@ -568,10 +564,15 @@ export class Database {
     });
   }
 
-  deleteExpiredRoutes(ttlMs = 60000) {
+  deleteExpiredRoutes(ttlMs = 60000, relayTtlMs = ttlMs * 5) {
     const threshold = Date.now() - ttlMs;
-    const stmt = this.db.prepare('DELETE FROM routing_table WHERE last_seen < ?');
-    stmt.run(threshold);
+    const relayThreshold = Date.now() - relayTtlMs;
+    const stmt = this.db.prepare(`
+      DELETE FROM routing_table 
+      WHERE (role NOT IN ('RELAY', 'CAP_RELAY') AND last_seen < ?1)
+         OR (role IN ('RELAY', 'CAP_RELAY') AND last_seen < ?2)
+    `);
+    stmt.run(threshold, relayThreshold);
   }
 
   // --- V2.0 ONION CIRCUITS STORAGE ---

@@ -126,6 +126,7 @@ export class OnionRouter extends EventEmitter {
     const res = await this.federation.sendPacket(host, port, currentPayload);
     if (!res || res.status !== 'circuit_ready') {
       log.warn(`Circuit creation unacknowledged by Guard relay: ${firstHop.address}`);
+      throw new Error(`Circuit creation unacknowledged by Guard relay: ${firstHop.address}`);
     }
 
     const circuitRecord = {

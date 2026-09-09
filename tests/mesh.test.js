@@ -688,7 +688,7 @@ async function runV2TestSuite() {
     });
     CONFIG.sshServerVersion = prevVersion;
 
-    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.2.9' && customIdent === 'SSH-2.0-MyCustomNode';
+    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.2.10' && customIdent === 'SSH-2.0-MyCustomNode';
     record('7.8 [YAPILANDIRMA] SSH Sunucu Version String Özelleştirme & Fallback Uyumu', versionTestValid, `Fallback: ${fallbackIdent}, Custom: ${customIdent}`);
 
     // Test 7.9: RENDEZVOUS_BIND Yabancı relayAddress İmzası Reddi (Bypass & Reflection Önlemi)
@@ -1940,6 +1940,61 @@ async function runV2TestSuite() {
     const test751Ok = prioritizedMesh && rightPanelHasOnlineGreen;
     record('7.51 [REVİZYON 22] Presence Adres Formatı Normalizasyonu (.mesh Önceliği) ve Sağ Panel Flicker Koruması', !!test751Ok,
       `MeshPrioritized: ${prioritizedMesh}, TUIOnlineMatch: ${rightPanelHasOnlineGreen}`);
+
+    // Test 7.52: [REVİZYON 23] Gizli Kararsızlıklar ve Bug Onarımları
+    // 1. clearConversationForUser parametre indeksi doğrulaması
+    testDb2.saveMessage({
+      id: 'r23_sql_test',
+      from: '@alice:node1.mesh',
+      to: '@bob:node2.mesh',
+      content: 'r23 test message'
+    });
+    testDb2.clearConversationForUser('@alice:node1.mesh', '@bob:node2.mesh');
+    const r23Msg = testDb2.db.prepare("SELECT deleted_by FROM messages WHERE id = 'r23_sql_test'").get();
+    const r23SqlOk = r23Msg && r23Msg.deleted_by.includes('@alice');
+
+    // 2. sendHandshakeInit giden nonce'un replay tracker'a eklenmemesi
+    let trackedOutboundNonce = false;
+    const dummyMockSocket = { write: () => {}, on: () => {} };
+    const mockTracker = {
+      track: () => { trackedOutboundNonce = true; return true; }
+    };
+    new SecureChannel(dummyMockSocket, true, fedAutoNat.myIdentity, testDb2, mockTracker);
+    const r23NonceOk = trackedOutboundNonce === false;
+
+    // 3. buildCircuit yarım kalan devrede hata fırlatması
+    const failOnionRouter = new OnionRouter({
+      federation: {
+        sendPacket: async () => ({ status: 'timeout_or_error' })
+      },
+      db: testDb2,
+      myIdentity: fedAutoNat.myIdentity,
+      rendezvousTunnels: new Map()
+    });
+    let r23CircuitThrew = false;
+    try {
+      await failOnionRouter.buildCircuit([
+        { address: '127.0.0.1:8001', kemPublicKey: CryptoHelper.generateKemKeyPair().publicKey }
+      ], 'fail_target');
+    } catch {
+      r23CircuitThrew = true;
+    }
+    const r23CircuitPoolEmpty = failOnionRouter.clientCircuits.size === 0;
+
+    // 4. cleanupExpiredPresence içinde RELAY fiziksel adres koruması
+    const relayNodeIdToTest = 'relaynode_r23_test';
+    fedAutoNat.presenceTable.set(relayNodeIdToTest, {
+      role: 'RELAY',
+      rendezvousNodes: [],
+      lastSeen: Date.now() - 70000 // 60s TTL aşılmış
+    });
+    fedAutoNat.nodePhysicalAddresses.set(relayNodeIdToTest, '198.51.100.1:8001');
+    fedAutoNat.cleanupExpiredPresence();
+    const r23RelayAddrPreserved = fedAutoNat.nodePhysicalAddresses.has(relayNodeIdToTest);
+
+    const test752Ok = r23SqlOk && r23NonceOk && r23CircuitThrew && r23CircuitPoolEmpty && r23RelayAddrPreserved;
+    record('7.52 [REVİZYON 23] Gizli Kararsızlıklar ve Regresyon Koruması (SQL, Nonce, Onion, Presence)', !!test752Ok,
+      `SqlOk: ${r23SqlOk}, NonceOk: ${r23NonceOk}, CircuitThrew: ${r23CircuitThrew}, RelayPreserved: ${r23RelayAddrPreserved}`);
 
     // Temiz Kapanış
     relayEngine.close();

@@ -157,9 +157,6 @@ export class SecureChannel extends EventEmitter {
 
   sendHandshakeInit() {
     const nonce = CryptoHelper.generateRandomKey(16);
-    if (this.nonceTracker && typeof this.nonceTracker.track === 'function') {
-      this.nonceTracker.track(nonce);
-    }
 
     const isRelay = (typeof this.myIdentity?.role === 'function' ? this.myIdentity.role() : this.myIdentity?.role) === 'RELAY' ||
                     (typeof this.myIdentity?.role === 'function' ? this.myIdentity.role() : this.myIdentity?.role) === 'CAP_RELAY';
@@ -2087,9 +2084,24 @@ export class FederationEngine extends EventEmitter {
       const diff = now - rec.lastSeen;
       if (diff < 0) {
         rec.lastSeen = now;
-      } else if (diff > presenceTtl) {
-        this.presenceTable.delete(nodeId);
-        this.nodePhysicalAddresses.delete(nodeId);
+      } else {
+        const isRelay = rec.role === 'RELAY' || rec.role === 'CAP_RELAY';
+        const effectiveTtl = isRelay ? presenceTtl * 5 : presenceTtl;
+        if (diff > effectiveTtl) {
+          this.presenceTable.delete(nodeId);
+          const dbRoute = this.db && typeof this.db.getRoute === 'function' ? this.db.getRoute(nodeId) : null;
+          const hasValidDbRoute = dbRoute && (dbRoute.role === 'RELAY' || dbRoute.role === 'CAP_RELAY' || (now - dbRoute.lastSeen <= presenceTtl * 5));
+          if (!isRelay && !hasValidDbRoute) {
+            this.nodePhysicalAddresses.delete(nodeId);
+          }
+        } else if (diff > presenceTtl && !isRelay) {
+          this.presenceTable.delete(nodeId);
+          const dbRoute = this.db && typeof this.db.getRoute === 'function' ? this.db.getRoute(nodeId) : null;
+          const hasValidDbRoute = dbRoute && (dbRoute.role === 'RELAY' || dbRoute.role === 'CAP_RELAY' || (now - dbRoute.lastSeen <= presenceTtl * 5));
+          if (!hasValidDbRoute) {
+            this.nodePhysicalAddresses.delete(nodeId);
+          }
+        }
       }
     }
 
