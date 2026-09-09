@@ -7,7 +7,7 @@ export const CONFIG = {
   defaultFedPort: 8001,
 
   // SSH-2 Sunucu Ayarları
-  sshServerVersion: process.env.SSH_SERVER_VERSION || 'SSH-2.0-Metrice_2.2.10',
+  sshServerVersion: process.env.SSH_SERVER_VERSION || 'SSH-2.0-Metrice_2.4.0',
 
   // Metrice v2.0 P2P-Mesh, AutoNAT ve Buluşma Noktası (Rendezvous) Ayarları
   meshRole: process.env.MESH_ROLE || 'EDGE', // 'RELAY' veya 'EDGE'
@@ -21,6 +21,14 @@ export const CONFIG = {
 
   // Güvenlik, Proxy ve Çalışma Ortamı
   trustProxy: process.env.TRUST_PROXY === 'true' || process.env.DOCKER === 'true' || process.env.CONTAINER === 'true',
+  useProxyProtocol: process.env.USE_PROXY_PROTOCOL === 'true',
+  proxyProtocolTrustedIps: (process.env.PROXY_TRUSTED_IPS || '127.0.0.1,::1').split(',').map((ip) => ip.trim()).filter(Boolean),
+
+  // Metrice Faz 2: EDGE Transit Routing & Gossip Köprüleme
+  allowEdgeRouting: process.env.ALLOW_EDGE_ROUTING === 'true',
+  allowEdgeGossip: process.env.ALLOW_EDGE_GOSSIP !== 'false',
+  maxEdgeRendezvousRelays: parseInt(process.env.MAX_EDGE_RELAYS || '4', 10),
+
   strictPq: process.env.STRICT_PQ === 'true',
   environment: process.env.NODE_ENV || 'production',
 

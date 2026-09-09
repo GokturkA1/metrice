@@ -8,6 +8,7 @@ import { CryptoHelper } from '../utils/cryptoHelper.js';
 import { TerminalSession } from './terminalSession.js';
 import { createCommandRegistry } from '../commands/index.js';
 import { I18n } from '../locales/i18n.js';
+import { ProxyProtocolParser } from '../utils/proxyProtocol.js';
 
 const log = new Logger('CLIENT_SRV');
 
@@ -244,10 +245,11 @@ export class ClientServer {
 
   start() {
     this.server = net.createServer((socket) => {
-      const clientAddr = `${socket.remoteAddress}:${socket.remotePort}`;
-      log.info(I18n.t('CLIENT_NEW_CONN', { addr: clientAddr }));
+      const handleClient = () => {
+        const clientAddr = `${socket.realRemoteAddress || socket.remoteAddress}:${socket.realRemotePort || socket.remotePort}`;
+        log.info(I18n.t('CLIENT_NEW_CONN', { addr: clientAddr }));
 
-      this.sendHandshakeAndSizeQuery(socket);
+        this.sendHandshakeAndSizeQuery(socket);
 
       let authState = AUTH_STATE.USERNAME;
       let targetUserAddress = null;
@@ -673,9 +675,22 @@ export class ClientServer {
         log.info(I18n.t('CLIENT_CONN_CLOSED', { addr: clientAddr }));
       });
 
-      socket.on('error', (err) => {
-        log.error(I18n.t('CLIENT_SOCKET_ERROR', { addr: clientAddr, error: err.message }));
-      });
+        socket.on('error', (err) => {
+          log.error(I18n.t('CLIENT_SOCKET_ERROR', { addr: clientAddr, error: err.message }));
+        });
+      };
+
+      if (CONFIG.useProxyProtocol) {
+        ProxyProtocolParser.handle(socket, { trustedIps: CONFIG.proxyProtocolTrustedIps }, (err) => {
+          if (err) {
+            log.warn(`Client Proxy Protocol el sıkışma hatası: ${err.message}`);
+            return;
+          }
+          handleClient();
+        });
+      } else {
+        handleClient();
+      }
     });
 
     this.server.listen(CONFIG.clientPort, () => {

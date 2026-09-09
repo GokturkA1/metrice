@@ -277,11 +277,44 @@ export class OnionRouter extends EventEmitter {
           return;
         }
 
-        const nextExtendPayload = JSON.parse(decryptedJson);
-        const [nextHost, nextPortStr] = nextHop.split(':');
-        const nextPort = parseInt(nextPortStr, 10);
+        let res;
+        let targetChannel = null;
 
-        const res = await this.federation.sendPacket(nextHost, nextPort, nextExtendPayload);
+        // Transit Köprüleme Kontrolü (Açık ters tüneller)
+        if (this.rendezvousTunnels && this.rendezvousTunnels.has(nextHop)) {
+          const t = this.rendezvousTunnels.get(nextHop);
+          if (t && t.channel) targetChannel = t.channel;
+        }
+        if (!targetChannel && this.federation && this.federation.rendezvousRelays) {
+          for (const [relayAddr, rObj] of this.federation.rendezvousRelays.entries()) {
+            if (relayAddr === nextHop || rObj.channel?.peerNodeAddress === nextHop || (nextHop.includes(':') && relayAddr.endsWith(nextHop))) {
+              targetChannel = rObj.channel;
+              break;
+            }
+          }
+        }
+
+        if (targetChannel && typeof targetChannel.writePayload === 'function') {
+          res = await new Promise((resolve) => {
+            const onPayload = (p) => {
+              if (p && (p.circuitId === circuitId || p.status === 'circuit_ready')) {
+                targetChannel.off('payload', onPayload);
+                resolve(p);
+              }
+            };
+            targetChannel.on('payload', onPayload);
+            targetChannel.writePayload(nextExtendPayload);
+            setTimeout(() => {
+              targetChannel.off('payload', onPayload);
+              resolve({ status: 'circuit_ready', circuitId, warn: 'tunnel_pending' });
+            }, 3000);
+          });
+        } else {
+          const [nextHost, nextPortStr] = nextHop.split(':');
+          const nextPort = parseInt(nextPortStr, 10);
+          res = await this.federation.sendPacket(nextHost, nextPort, nextExtendPayload);
+        }
+
         if (res && res.status === 'circuit_ready') {
           channel.writePayload({ status: 'circuit_ready', circuitId });
         } else {
@@ -328,14 +361,51 @@ export class OnionRouter extends EventEmitter {
       return;
     }
 
-    // 1. Ara Atlama: Sonraki Relay'e İlet
+    // 1. Ara Atlama: Sonraki Relay veya Transit Düğüme İlet
     if (parsed.forwardTo && parsed.cell) {
+      const paddedObj = OnionRouter.getPaddedCellObject(parsed.cell);
+
+      // Transit Köprüleme: forwardTo açık bir tersine tünelimiz veya bağlı rölemiz mi?
+      let targetTunnelChannel = null;
+      if (this.rendezvousTunnels && this.rendezvousTunnels.has(parsed.forwardTo)) {
+        const tunnel = this.rendezvousTunnels.get(parsed.forwardTo);
+        if (tunnel && tunnel.channel && (!tunnel.channel.socket || tunnel.channel.socket.writable !== false)) {
+          targetTunnelChannel = tunnel.channel;
+        }
+      }
+
+      if (!targetTunnelChannel && this.federation && this.federation.rendezvousRelays) {
+        for (const [relayAddr, rObj] of this.federation.rendezvousRelays.entries()) {
+          const rChan = rObj.channel;
+          const rSock = rObj.socket || rChan?.socket;
+          if (rSock && rSock.writable === false) continue;
+          if (relayAddr === parsed.forwardTo || rChan?.peerNodeAddress === parsed.forwardTo || (parsed.forwardTo.includes(':') && relayAddr.endsWith(parsed.forwardTo))) {
+            targetTunnelChannel = rChan;
+            break;
+          }
+        }
+      }
+
+      if (targetTunnelChannel) {
+        try {
+          if (typeof targetTunnelChannel.writePayload === 'function') {
+            targetTunnelChannel.writePayload(paddedObj);
+          } else if (targetTunnelChannel.socket) {
+            targetTunnelChannel.socket.write(JSON.stringify(paddedObj) + '\n');
+          }
+          log.info(`Onion transit hücresi tünel köprüsüyle iletildi -> ${parsed.forwardTo} (Devre: ${circuitId})`);
+          return;
+        } catch (err) {
+          log.warn(`Onion transit tünel iletim hatası: ${err.message}`);
+        }
+      }
+
+      // Standart TCP iletimi
       const [nextHost, nextPortStr] = parsed.forwardTo.split(':');
       const nextPort = parseInt(nextPortStr, 10);
 
       try {
         const nextChannel = await this.federation.getOrCreateSecureChannel(nextHost, nextPort);
-        const paddedObj = OnionRouter.getPaddedCellObject(parsed.cell);
         if (nextChannel && typeof nextChannel.writePayload === 'function') {
           nextChannel.writePayload(paddedObj);
         } else if (nextChannel && nextChannel.socket) {

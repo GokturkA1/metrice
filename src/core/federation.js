@@ -7,6 +7,7 @@ import { AddressHelper } from '../utils/addressHelper.js';
 import { CryptoHelper } from '../utils/cryptoHelper.js';
 import { I18n } from '../locales/i18n.js';
 import { OnionRouter, UNIFORM_CELL_SIZE } from './onionRouter.js';
+import { ProxyProtocolParser } from '../utils/proxyProtocol.js';
 
 const log = new Logger('FEDERATION');
 
@@ -229,9 +230,9 @@ export class SecureChannel extends EventEmitter {
       this.sessionKey = CryptoHelper.deriveKey(sharedSecret, frame.nonce, 'p2p-mesh-transport-v1');
 
       // AutoNAT Reflected IP: socket fiziksel uzak adresi (Section 2.1)
-      const rawRemote = this.socket.remoteAddress || '';
+      const rawRemote = this.socket.realRemoteAddress || this.socket.remoteAddress || '';
       const cleanRemote = rawRemote.replace('::ffff:', '');
-      const remotePort = this.socket.remotePort;
+      const remotePort = this.socket.realRemotePort || this.socket.remotePort;
       const observedAddress = `${cleanRemote}:${remotePort}`;
 
       const replyDataToSign = JSON.stringify({
@@ -332,7 +333,7 @@ export class SecureChannel extends EventEmitter {
   async validatePeerIp(declaredNodeAddress) {
     if (!declaredNodeAddress || !declaredNodeAddress.includes(':')) return false;
     const [declaredHost] = declaredNodeAddress.split(':');
-    const rawRemote = this.socket.remoteAddress || '';
+    const rawRemote = this.socket.realRemoteAddress || this.socket.remoteAddress || '';
     const cleanRemote = rawRemote.replace('::ffff:', '');
 
     // 1. NAT / Ev Kullanıcısı / Edge toleransı (localhost veya döngüsel adreste çalışan istemciler)
@@ -472,13 +473,15 @@ export class FederationEngine extends EventEmitter {
 
     this.onionRouter.on('deliver_local', (msg) => this.handleLocalDeliveredMessage(msg));
 
-    log.info(I18n.t('FED_NODE_IDENTITY_READY', { address: `${this.nodeAddress} (${this.meshAddress}) [CAP_${this.role}]` }));
+    const roleLabel = this.role.startsWith('CAP_') ? this.role : `CAP_${this.role}`;
+    log.info(I18n.t('FED_NODE_IDENTITY_READY', { address: `${this.nodeAddress} (${this.meshAddress}) [${roleLabel}]` }));
   }
 
   setRole(newRole) {
     if (this.role !== newRole) {
       this.role = newRole;
-      log.info(`Düğüm rolü güncellendi -> CAP_${this.role}`);
+      const roleLabel = this.role.startsWith('CAP_') ? this.role : `CAP_${this.role}`;
+      log.info(`Düğüm rolü güncellendi -> ${roleLabel}`);
       this.emit('role_change', this.role);
       this.broadcastPresence();
     }
@@ -490,6 +493,23 @@ export class FederationEngine extends EventEmitter {
 
   isRelay() {
     return this.role === 'RELAY' || this.role === 'CAP_RELAY';
+  }
+
+  isTransitEdge() {
+    return this.role === 'CAP_EDGE_TRANSIT' || (CONFIG.allowEdgeRouting && this.rendezvousRelays && this.rendezvousRelays.size >= 2);
+  }
+
+  checkTransitEdgeRole() {
+    if (this.isRelay()) return;
+    if (CONFIG.allowEdgeRouting && this.rendezvousRelays && this.rendezvousRelays.size >= 2) {
+      if (this.role !== 'CAP_EDGE_TRANSIT') {
+        this.setRole('CAP_EDGE_TRANSIT');
+      }
+    } else {
+      if (this.role === 'CAP_EDGE_TRANSIT') {
+        this.setRole('EDGE');
+      }
+    }
   }
 
   setLocalStateGetter(fn) {
@@ -588,30 +608,44 @@ export class FederationEngine extends EventEmitter {
     this.peerManager.startLanDiscovery();
 
     this.server = net.createServer((socket) => {
-      const remotePeer = `${socket.remoteAddress}:${socket.remotePort}`;
-      log.info(I18n.t('FED_INCOMING_CONN', { peer: remotePeer }));
+      const setupChannel = () => {
+        const remotePeer = `${socket.realRemoteAddress || socket.remoteAddress}:${socket.realRemotePort || socket.remotePort}`;
+        log.info(I18n.t('FED_INCOMING_CONN', { peer: remotePeer }));
 
-      const secureChannel = new SecureChannel(socket, false, this.myIdentity, this.db, this.nonceTracker);
+        const secureChannel = new SecureChannel(socket, false, this.myIdentity, this.db, this.nonceTracker);
 
-      secureChannel.on('payload', (payload) => {
-        this.handleIncoming(payload, secureChannel, remotePeer);
-      });
+        secureChannel.on('payload', (payload) => {
+          this.handleIncoming(payload, secureChannel, remotePeer);
+        });
 
-      secureChannel.on('dialback_confirm', (frame) => {
-        this.handleDialbackConfirm(frame);
-      });
+        secureChannel.on('dialback_confirm', (frame) => {
+          this.handleDialbackConfirm(frame);
+        });
 
-      secureChannel.on('onion_cell', (cell) => {
-        this.onionRouter.handleOnionCell(cell, secureChannel);
-      });
+        secureChannel.on('onion_cell', (cell) => {
+          this.onionRouter.handleOnionCell(cell, secureChannel);
+        });
 
-      secureChannel.on('observed_address', (addr, peer) => {
-        this.handleObservedAddress(addr, peer);
-      });
+        secureChannel.on('observed_address', (addr, peer) => {
+          this.handleObservedAddress(addr, peer);
+        });
 
-      secureChannel.on('error', (err) => {
-        log.error(I18n.t('FED_SOCKET_ERROR', { peer: remotePeer, error: err.message }));
-      });
+        secureChannel.on('error', (err) => {
+          log.error(I18n.t('FED_SOCKET_ERROR', { peer: remotePeer, error: err.message }));
+        });
+      };
+
+      if (CONFIG.useProxyProtocol) {
+        ProxyProtocolParser.handle(socket, { trustedIps: CONFIG.proxyProtocolTrustedIps }, (err) => {
+          if (err) {
+            log.warn(`Proxy Protocol el sıkışma hatası: ${err.message}`);
+            return;
+          }
+          setupChannel();
+        });
+      } else {
+        setupChannel();
+      }
     });
 
     this.server.listen(CONFIG.federationPort, () => {
@@ -952,10 +986,19 @@ export class FederationEngine extends EventEmitter {
             if (!host || isNaN(port)) continue;
             this.sendPacket(host, port, payload).catch(() => {});
           }
+        } else if (CONFIG.allowEdgeGossip && this.rendezvousRelays && this.rendezvousRelays.size >= 2) {
+          // Faz 2: EDGE düğümü üzerinden bağlı Röleler arası Gossip (Presence) Köprüleme
+          for (const [relayAddr, rObj] of this.rendezvousRelays.entries()) {
+            if (remotePeer && (relayAddr === remotePeer || rObj.channel?.peerNodeAddress === remotePeer)) continue;
+            if (channel && (rObj.channel === channel || rObj.socket === channel.socket)) continue;
+            if (rObj && rObj.channel && (!rObj.socket || rObj.socket.writable !== false)) {
+              rObj.channel.writePayload(payload);
+            }
+          }
         }
       }
 
-      if (this.role === 'EDGE' && (role === 'RELAY' || role === 'CAP_RELAY')) {
+      if (!this.isRelay() && (role === 'RELAY' || role === 'CAP_RELAY')) {
         this.maintainRendezvousTunnels().catch(() => {});
       }
 
@@ -1085,7 +1128,7 @@ export class FederationEngine extends EventEmitter {
         }
       }
 
-      if (this.role === 'EDGE') {
+      if (!this.isRelay()) {
         this.maintainRendezvousTunnels().catch(() => {});
       }
 
@@ -1583,7 +1626,13 @@ export class FederationEngine extends EventEmitter {
       for (const [, tunnel] of this.rendezvousTunnels.entries()) {
         if (tunnel && tunnel.channel && tunnel.channel.socket && tunnel.channel.socket.writable) {
           const tunnelPeer = tunnel.channel.socket ? `${tunnel.channel.socket.remoteAddress}:${tunnel.channel.socket.remotePort}` : null;
-          if (exceptPeer && (tunnelPeer === exceptPeer || tunnel.channel.peerNodeAddress === exceptPeer)) continue;
+          if (exceptPeer && (
+            tunnelPeer === exceptPeer ||
+            tunnel.channel.peerNodeAddress === exceptPeer ||
+            tunnel.channel === exceptPeer ||
+            tunnel.channel.socket === exceptPeer ||
+            (exceptPeer.socket && tunnel.channel.socket === exceptPeer.socket)
+          )) continue;
           tunnel.channel.writePayload(payload);
         }
       }
@@ -1591,9 +1640,21 @@ export class FederationEngine extends EventEmitter {
 
     if (this.rendezvousRelays) {
       for (const [relayAddr, relay] of this.rendezvousRelays.entries()) {
-        if (relayAddr === exceptPeer) continue;
-        if (relay && relay.channel && relay.channel.socket && relay.channel.socket.writable) {
-          relay.channel.writePayload(payload);
+        const relayChan = relay.channel;
+        const relaySock = relay.socket || relayChan?.socket;
+        const sockPeer = relaySock ? `${relaySock.remoteAddress}:${relaySock.remotePort}` : null;
+        if (exceptPeer && (
+          relayAddr === exceptPeer ||
+          sockPeer === exceptPeer ||
+          relayChan?.peerNodeAddress === exceptPeer ||
+          relayChan === exceptPeer ||
+          relaySock === exceptPeer ||
+          (exceptPeer.socket && relaySock === exceptPeer.socket)
+        )) {
+          continue;
+        }
+        if (relay && relayChan && (!relaySock || relaySock.writable !== false)) {
+          relayChan.writePayload(payload);
         }
       }
     }
@@ -1740,7 +1801,7 @@ export class FederationEngine extends EventEmitter {
   // --- V2.0 RENDEZVOUS & REVERSE TUNNELS METHODS ---
 
   async maintainRendezvousTunnels() {
-    if (this.role !== 'EDGE' || this.isMaintainingTunnels) return;
+    if (this.isRelay() || this.isMaintainingTunnels) return;
 
     this.isMaintainingTunnels = true;
     try {
@@ -1789,7 +1850,9 @@ export class FederationEngine extends EventEmitter {
         if (p && !targets.includes(p)) targets.push(p);
       }
 
+      const maxRelays = (CONFIG && CONFIG.maxEdgeRendezvousRelays) ? CONFIG.maxEdgeRendezvousRelays : 4;
       for (const relayAddr of targets) {
+        if (this.boundRendezvousRelays.size >= maxRelays) break;
         if (this.boundRendezvousRelays.has(relayAddr)) continue;
         await this.bindToRendezvousRelay(relayAddr);
       }
@@ -1825,6 +1888,7 @@ export class FederationEngine extends EventEmitter {
       if (res && res.status === 'bound') {
         this.boundRendezvousRelays.add(relayAddr);
         this.rendezvousRelays.set(relayAddr, { channel, socket: channel.socket });
+        this.checkTransitEdgeRole();
         log.info(`Rendezvous tüneli bağlandı -> ${relayAddr}`);
 
         this.broadcastPresenceAnnounce();
@@ -1857,6 +1921,7 @@ export class FederationEngine extends EventEmitter {
             channel._hasRendezvousCloseHandler = false;
             this.boundRendezvousRelays.delete(relayAddr);
             this.rendezvousRelays.delete(relayAddr);
+            this.checkTransitEdgeRole();
             log.warn(`Rendezvous bağlantısı kesildi -> ${relayAddr}, yenileniyor...`);
             setTimeout(() => this.maintainRendezvousTunnels(), 2000);
           });
@@ -1874,7 +1939,7 @@ export class FederationEngine extends EventEmitter {
   }
 
   sendRendezvousHeartbeat() {
-    if (this.role !== 'EDGE' || this.boundRendezvousRelays.size === 0) return;
+    if (this.isRelay() || this.boundRendezvousRelays.size === 0) return;
 
     const now = Date.now();
     let needsMaintenance = false;
@@ -1892,6 +1957,8 @@ export class FederationEngine extends EventEmitter {
           channel.socket.destroy();
           this.connectionPool.delete(key);
           this.boundRendezvousRelays.delete(relayAddr);
+          this.rendezvousRelays.delete(relayAddr);
+          this.checkTransitEdgeRole();
           needsMaintenance = true;
           continue;
         }
@@ -1903,6 +1970,8 @@ export class FederationEngine extends EventEmitter {
         }
       } else {
         this.boundRendezvousRelays.delete(relayAddr);
+        this.rendezvousRelays.delete(relayAddr);
+        this.checkTransitEdgeRole();
         needsMaintenance = true;
       }
     }
@@ -2181,6 +2250,7 @@ export class FederationEngine extends EventEmitter {
 
     const allRoutes = this.db.getAllRoutes();
     const relayPool = [];
+    const isRelayOrTransit = (role) => role === 'RELAY' || role === 'CAP_RELAY' || role === 'CAP_EDGE_TRANSIT';
 
     const addRelayToPool = (nodeId, address, kemPublicKey) => {
       if (!address || !kemPublicKey) return;
@@ -2191,7 +2261,7 @@ export class FederationEngine extends EventEmitter {
     };
 
     for (const r of allRoutes) {
-      if ((r.role === 'RELAY' || r.role === 'CAP_RELAY') && r.nodeId !== this.nodeId) {
+      if (isRelayOrTransit(r.role) && r.nodeId !== this.nodeId) {
         if (Array.isArray(r.rendezvousNodes)) {
           for (const rn of r.rendezvousNodes) {
             addRelayToPool(r.nodeId, rn, r.kemPublicKey);
@@ -2204,7 +2274,7 @@ export class FederationEngine extends EventEmitter {
     }
 
     for (const [nid, p] of this.presenceTable.entries()) {
-      if ((p.role === 'RELAY' || p.role === 'CAP_RELAY') && nid !== this.nodeId) {
+      if (isRelayOrTransit(p.role) && nid !== this.nodeId) {
         if (Array.isArray(p.rendezvousNodes)) {
           for (const rn of p.rendezvousNodes) {
             addRelayToPool(nid, rn, p.kemPublicKey);
@@ -2226,7 +2296,7 @@ export class FederationEngine extends EventEmitter {
           (Array.isArray(pr.rendezvousNodes) && pr.rendezvousNodes.includes(p)) ||
           this.nodePhysicalAddresses.get(pr.nodeId) === p
         );
-        if (peerRoute && (peerRoute.role === 'RELAY' || peerRoute.role === 'CAP_RELAY')) {
+        if (peerRoute && isRelayOrTransit(peerRoute.role)) {
           addRelayToPool(peerRoute.nodeId, p, peerRoute.kemPublicKey);
         }
       }
@@ -2237,14 +2307,14 @@ export class FederationEngine extends EventEmitter {
       exitHop = relayPool.find((r) => r.address === exitRelayAddress);
       if (!exitHop) {
         const relayMatch = allRoutes.find((r) =>
-          (r.role === 'RELAY' || r.role === 'CAP_RELAY') &&
+          isRelayOrTransit(r.role) &&
           (
             (Array.isArray(r.rendezvousNodes) && r.rendezvousNodes.includes(exitRelayAddress)) ||
             (r.nodeId && exitRelayAddress.includes(r.nodeId)) ||
             this.nodePhysicalAddresses.get(r.nodeId) === exitRelayAddress
           )
         ) || Array.from(this.presenceTable.values()).find((p) =>
-          (p.role === 'RELAY' || p.role === 'CAP_RELAY') &&
+          isRelayOrTransit(p.role) &&
           (
             (Array.isArray(p.rendezvousNodes) && p.rendezvousNodes.includes(exitRelayAddress)) ||
             (p.nodeId && exitRelayAddress.includes(p.nodeId)) ||
@@ -2261,7 +2331,7 @@ export class FederationEngine extends EventEmitter {
         }
       }
 
-      if (!exitHop && route && (route.role === 'RELAY' || route.role === 'CAP_RELAY') && route.kemPublicKey) {
+      if (!exitHop && route && isRelayOrTransit(route.role) && route.kemPublicKey) {
         exitHop = {
           nodeId: route.nodeId,
           address: exitRelayAddress,

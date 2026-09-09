@@ -1,4 +1,4 @@
-# Metrice v2.2.10
+# Metrice v2.4.0
 
 Metrice, harici bağımlılık içermeyen (Zero External Dependencies), doğrudan Node.js çekirdek kütüphaneleri (`node:crypto`, `node:net`, `node:dgram`, `node:sqlite`, `node:dns`) üzerinde çalışan, kuantum sonrası kriptografi (Post-Quantum Cryptography) ve Tor benzeri çok katmanlı yönlendirme (Onion Routing) mimarisine sahip dağıtık eşler arası (P2P) ağ protokolüdür.
 
@@ -111,7 +111,7 @@ Tüm parametreler ortam değişkenleri (`process.env`) veya `src/config/index.js
 | `clientPort` | `CLIENT_PORT` | `2222` | Telnet TUI dinleme TCP portu |
 | `sshPort` | `SSH_PORT` | `2224` | Post-Quantum SSH-2 sunucusu dinleme TCP portu |
 | `federationPort` | `FED_PORT` | `8001` | P2P Federasyon ve Onion dinleme TCP portu |
-| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.2.10'` | SSH sunucusu protokol kimlik dizgesi |
+| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.4.0'` | SSH sunucusu protokol kimlik dizgesi |
 | `meshRole` | `MESH_ROLE` | `'EDGE'` | Düğüm rolü (`'RELAY'` veya `'EDGE'`) |
 | `bootstrapPeers` | `BOOTSTRAP_PEERS` | `''` | Kalıcı başlangıç ve korumalı röle eş listesi (virgülle ayrılmış) |
 | `maxRendezvousTunnels`| `MAX_RENDEZVOUS_TUNNELS` | `64` | Bir RELAY düğümünün kabul edeceği azami ters tünel sayısı |
@@ -121,6 +121,11 @@ Tüm parametreler ortam değişkenleri (`process.env`) veya `src/config/index.js
 | `uniformCellSize` | `UNIFORM_CELL_SIZE` | `2048` | Sabit soğan hücresi boyutu (bayt) |
 | `secureBufferLimit` | `SECURE_BUFFER_LIMIT` | `65536` | Çerçeveleme tampon üst sınırı (64 KB) |
 | `trustProxy` | `TRUST_PROXY` | `false` | Vekil sunucu arkasında IP doğrulama toleransı |
+| `useProxyProtocol` | `USE_PROXY_PROTOCOL` | `false` | HAProxy PROXY Protocol v1 & v2 ayrıştırma desteği |
+| `proxyProtocolTrustedIps` | `PROXY_TRUSTED_IPS` | `'127.0.0.1,::1'` | PROXY başlığı kabul edilecek güvenilir IP'ler |
+| `allowEdgeRouting` | `ALLOW_EDGE_ROUTING` | `true` | EDGE düğümlerinde dinamik CAP_EDGE_TRANSIT geçişi |
+| `allowEdgeGossip` | `ALLOW_EDGE_GOSSIP` | `true` | Çoklu bağlı röleler arasında homojen varlık köprüleme |
+| `maxEdgeRendezvousRelays` | `MAX_EDGE_RENDEZVOUS_RELAYS` | `4` | EDGE düğümünün bağlanacağı azami röle sayısı |
 | `strictPq` | `STRICT_PQ` | `false` | Klasik algoritmaları tamamen engelleme modu |
 | `dbFile` | `DB_FILE` | `./data_<PORT>.db` | SQLite veritabanı dosya yolu |
 | `peerCacheFile` | `PEER_FILE` | `./peers_<PORT>.json` | Bilinen eşler önbellek dosya yolu |

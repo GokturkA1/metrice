@@ -15,6 +15,7 @@ import { OnionRouter, UNIFORM_CELL_SIZE } from '../src/core/onionRouter.js';
 import { ClientServer } from '../src/core/clientServer.js';
 import { TerminalSession } from '../src/core/terminalSession.js';
 import { CONFIG } from '../src/config/index.js';
+import { ProxyProtocolParser } from '../src/utils/proxyProtocol.js';
 
 // ==========================================
 // TEST KONFİGÜRASYONU VE YARDIMCILAR
@@ -688,7 +689,7 @@ async function runV2TestSuite() {
     });
     CONFIG.sshServerVersion = prevVersion;
 
-    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.2.10' && customIdent === 'SSH-2.0-MyCustomNode';
+    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.4.0' && customIdent === 'SSH-2.0-MyCustomNode';
     record('7.8 [YAPILANDIRMA] SSH Sunucu Version String Özelleştirme & Fallback Uyumu', versionTestValid, `Fallback: ${fallbackIdent}, Custom: ${customIdent}`);
 
     // Test 7.9: RENDEZVOUS_BIND Yabancı relayAddress İmzası Reddi (Bypass & Reflection Önlemi)
@@ -1995,6 +1996,233 @@ async function runV2TestSuite() {
     const test752Ok = r23SqlOk && r23NonceOk && r23CircuitThrew && r23CircuitPoolEmpty && r23RelayAddrPreserved;
     record('7.52 [REVİZYON 23] Gizli Kararsızlıklar ve Regresyon Koruması (SQL, Nonce, Onion, Presence)', !!test752Ok,
       `SqlOk: ${r23SqlOk}, NonceOk: ${r23NonceOk}, CircuitThrew: ${r23CircuitThrew}, RelayPreserved: ${r23RelayAddrPreserved}`);
+
+    // Test 7.53: [FAZ 1] HAProxy PROXY Protocol v1 & v2 Ayrıştırma, IP Spoofing Koruması ve Doğrulama
+    // 1. PROXY v1 TCP4 doğrulaması
+    const v1Payload = Buffer.from('PROXY TCP4 203.0.113.195 198.51.100.1 56324 8001\r\n{"type":"PING"}');
+    const v1Result = ProxyProtocolParser.parse(v1Payload);
+    const v1Ok = v1Result.success &&
+      v1Result.version === 1 &&
+      v1Result.realRemoteAddress === '203.0.113.195' &&
+      v1Result.realRemotePort === 56324 &&
+      v1Result.remainder.toString() === '{"type":"PING"}';
+
+    // 2. PROXY v2 Binary IPv4 doğrulaması
+    const v2Header = Buffer.concat([
+      ProxyProtocolParser.V2_SIGNATURE,
+      Buffer.from([0x21, 0x11]), // v2 PROXY, AF_INET STREAM
+      Buffer.from([0x00, 0x0c]), // length = 12 bytes
+      Buffer.from([198, 51, 100, 42]), // src IP 198.51.100.42
+      Buffer.from([192, 0, 2, 1]),     // dst IP 192.0.2.1
+      Buffer.from([0xad, 0x21]),       // src port 44321
+      Buffer.from([0x1f, 0x41]),       // dst port 8001
+      Buffer.from('{"type":"PONG"}')   // payload
+    ]);
+    const v2Result = ProxyProtocolParser.parse(v2Header);
+    const v2Ok = v2Result.success &&
+      v2Result.version === 2 &&
+      v2Result.realRemoteAddress === '198.51.100.42' &&
+      v2Result.realRemotePort === 44321 &&
+      v2Result.remainder.toString() === '{"type":"PONG"}';
+
+    // 3. Güvensiz IP Spoofing Reddi (Untrusted IP sends PROXY header)
+    let spoofRejected = false;
+    const fakeUntrustedSocket = new EventEmitter();
+    fakeUntrustedSocket.remoteAddress = '185.220.101.5';
+    fakeUntrustedSocket.remotePort = 33333;
+    fakeUntrustedSocket.destroyed = false;
+    fakeUntrustedSocket.destroy = () => { fakeUntrustedSocket.destroyed = true; };
+    fakeUntrustedSocket.unshift = () => {};
+
+    ProxyProtocolParser.wrapSocket(fakeUntrustedSocket, ['127.0.0.1', '10.0.0.1'], (err) => {
+      if (err && err.message.toLowerCase().includes('untrusted')) {
+        spoofRejected = true;
+      }
+    });
+    fakeUntrustedSocket.emit('data', Buffer.from('PROXY TCP4 1.1.1.1 198.51.100.1 12345 8001\r\n'));
+    const spoofGuardOk = spoofRejected && fakeUntrustedSocket.destroyed;
+
+    // 4. Güvenli IP'den PROXY header işleme ve unshift ile şeffaf geçiş
+    let trustedProcessed = false;
+    let unshiftedData = null;
+    const fakeTrustedSocket = new EventEmitter();
+    fakeTrustedSocket.remoteAddress = '127.0.0.1';
+    fakeTrustedSocket.remotePort = 50000;
+    fakeTrustedSocket.destroyed = false;
+    fakeTrustedSocket.destroy = () => { fakeTrustedSocket.destroyed = true; };
+    fakeTrustedSocket.unshift = (chunk) => { unshiftedData = chunk; };
+
+    ProxyProtocolParser.wrapSocket(fakeTrustedSocket, ['127.0.0.1'], (err, sock) => {
+      if (!err && sock && sock.realRemoteAddress === '203.0.113.88' && sock.realRemotePort === 54321) {
+        trustedProcessed = true;
+      }
+    });
+    fakeTrustedSocket.emit('data', Buffer.from('PROXY TCP4 203.0.113.88 127.0.0.1 54321 8001\r\nHELLO_METRICE'));
+    const trustedUnshiftOk = trustedProcessed && unshiftedData && unshiftedData.toString() === 'HELLO_METRICE';
+
+    // 5. Güvensiz IP'den normal paket geldiğinde passthrough geçişi
+    let passthroughOk = false;
+    let passthroughUnshifted = null;
+    const fakePassSocket = new EventEmitter();
+    fakePassSocket.remoteAddress = '198.51.100.90';
+    fakePassSocket.remotePort = 40000;
+    fakePassSocket.destroyed = false;
+    fakePassSocket.destroy = () => { fakePassSocket.destroyed = true; };
+    fakePassSocket.unshift = (chunk) => { passthroughUnshifted = chunk; };
+
+    ProxyProtocolParser.wrapSocket(fakePassSocket, ['127.0.0.1'], (err, sock) => {
+      if (!err && sock && sock.realRemoteAddress === '198.51.100.90') {
+        passthroughOk = true;
+      }
+    });
+    fakePassSocket.emit('data', Buffer.from('{"type":"AUTH_INIT"}'));
+    const normalPassthroughOk = passthroughOk && passthroughUnshifted && passthroughUnshifted.toString() === '{"type":"AUTH_INIT"}';
+
+    const test753Ok = v1Ok && v2Ok && spoofGuardOk && trustedUnshiftOk && normalPassthroughOk;
+    record('7.53 [FAZ 1] HAProxy PROXY Protocol v1 & v2 Ayrıştırma, IP Spoofing Koruması ve Doğrulama', !!test753Ok,
+      `v1: ${v1Ok}, v2: ${v2Ok}, SpoofGuard: ${spoofGuardOk}, TrustedUnshift: ${trustedUnshiftOk}, Passthrough: ${normalPassthroughOk}`);
+
+    // Test 7.54: [FAZ 2] EDGE Transit Routing (CAP_EDGE_TRANSIT), Reverse Tünel Çapraz Atlama & Gossip Varlık Köprüleme
+    // 1. Dinamik CAP_EDGE_TRANSIT Rol Geçişi
+    const transitEdgeDb = new Database(path.join(rootDir, 'v2_test_transit_edge.db'));
+    const transitEdgeEngine = new FederationEngine(transitEdgeDb, new PeerManager());
+    transitEdgeEngine.role = 'EDGE';
+
+    CONFIG.allowEdgeRouting = true;
+    CONFIG.allowEdgeGossip = true;
+
+    // 1. röleye bağlan
+    const relay1Addr = '198.51.100.10:8001';
+    const mockChannel1 = {
+      peerNodeAddress: relay1Addr,
+      socket: { writable: true, remoteAddress: '198.51.100.10', remotePort: 8001 },
+      writePayload: () => {}
+    };
+    transitEdgeEngine.rendezvousRelays.set(relay1Addr, { channel: mockChannel1, socket: mockChannel1.socket });
+    transitEdgeEngine.checkTransitEdgeRole();
+    const stage1Role = transitEdgeEngine.role; // EDGE kalmalı
+
+    // 2. röleye bağlan
+    const relay2Addr = '198.51.100.20:8001';
+    let relay2ForwardedCell = null;
+    const mockChannel2 = {
+      peerNodeAddress: relay2Addr,
+      socket: { writable: true, remoteAddress: '198.51.100.20', remotePort: 8001 },
+      writePayload: (p) => {
+        if (p && p.type === 'ONION_CELL') {
+          relay2ForwardedCell = p;
+        }
+      }
+    };
+    transitEdgeEngine.rendezvousRelays.set(relay2Addr, { channel: mockChannel2, socket: mockChannel2.socket });
+    transitEdgeEngine.checkTransitEdgeRole();
+    const stage2Role = transitEdgeEngine.role; // CAP_EDGE_TRANSIT olmalı
+    const isTransit = transitEdgeEngine.isTransitEdge();
+
+    // 1 röle bağlantısını kopar
+    transitEdgeEngine.rendezvousRelays.delete(relay1Addr);
+    transitEdgeEngine.checkTransitEdgeRole();
+    const stage3Role = transitEdgeEngine.role; // Geri EDGE'e düşmeli
+
+    const roleTransitionOk = stage1Role === 'EDGE' && stage2Role === 'CAP_EDGE_TRANSIT' && isTransit && stage3Role === 'EDGE';
+
+    // Yeniden transit durumuna al (Tersine Tünel ve Gossip köprü testleri için)
+    transitEdgeEngine.rendezvousRelays.set(relay1Addr, { channel: mockChannel1, socket: mockChannel1.socket });
+    transitEdgeEngine.checkTransitEdgeRole();
+
+    // 2. Reverse Tünel Çapraz Atlama (In-and-Out Transit Onion Routing)
+    const transitSymKey = CryptoHelper.generateRandomKey(32);
+    transitEdgeDb.saveCircuit({
+      circuitId: 'circ_transit_phase2',
+      prevHop: relay1Addr,
+      nextHop: relay2Addr,
+      symmetricKey: transitSymKey
+    });
+
+    const innerPayload = JSON.stringify({
+      forwardTo: relay2Addr,
+      cell: {
+        type: 'ONION_CELL',
+        circuitId: 'next_circuit_phase2',
+        iv: 'sample_iv_123',
+        authTag: 'sample_authTag_123',
+        ciphertext: 'sample_ciphertext_123'
+      }
+    });
+    const encryptedCell = CryptoHelper.encrypt(innerPayload, transitSymKey);
+    const transitOnionCell = {
+      type: 'ONION_CELL',
+      circuitId: 'circ_transit_phase2',
+      iv: encryptedCell.iv,
+      authTag: encryptedCell.authTag,
+      ciphertext: encryptedCell.ciphertext
+    };
+
+    await transitEdgeEngine.onionRouter.handleOnionCell(transitOnionCell, mockChannel1);
+    const forwardedCellOk = relay2ForwardedCell &&
+      relay2ForwardedCell.type === 'ONION_CELL' &&
+      relay2ForwardedCell.circuitId === 'next_circuit_phase2' &&
+      relay2ForwardedCell.pad &&
+      relay2ForwardedCell.pad.length > 0;
+
+    // 3. Homojen Eşler Arası Gossip Varlık Köprüleme (Bidirectional Presence & Channel Bridging)
+    const remoteKp = CryptoHelper.generateIdentityKeyPair();
+    const remoteKem = CryptoHelper.generateKemKeyPair();
+    const remoteNodeId = CryptoHelper.deriveNodeId(remoteKp.publicKey);
+    const remotePresenceFromRelay1 = {
+      type: 'PRESENCE_ANNOUNCE',
+      nodeId: remoteNodeId,
+      role: 'EDGE',
+      rendezvousNodes: [relay1Addr],
+      kemPublicKey: remoteKem.publicKey,
+      identityPublicKey: remoteKp.publicKey,
+      channels: ['#genel'],
+      memberships: [{ user: `@remUser:${remoteNodeId}.mesh`, channels: ['#genel'] }],
+      timestamp: Date.now()
+    };
+    const presenceData = JSON.stringify({
+      nodeId: remotePresenceFromRelay1.nodeId,
+      role: remotePresenceFromRelay1.role,
+      rendezvousNodes: remotePresenceFromRelay1.rendezvousNodes,
+      kemPublicKey: remotePresenceFromRelay1.kemPublicKey,
+      channels: remotePresenceFromRelay1.channels,
+      timestamp: remotePresenceFromRelay1.timestamp
+    });
+    remotePresenceFromRelay1.sig = CryptoHelper.sign(presenceData, remoteKp.privateKey);
+
+    let bridgedPresencePayload = null;
+    mockChannel2.writePayload = (p) => {
+      if (p && p.type === 'PRESENCE_ANNOUNCE' && p.nodeId === remoteNodeId) {
+        bridgedPresencePayload = p;
+      }
+    };
+
+    transitEdgeEngine.handleIncoming(remotePresenceFromRelay1, mockChannel1, relay1Addr);
+    const presenceBridgedOk = bridgedPresencePayload !== null && bridgedPresencePayload.nodeId === remoteNodeId;
+
+    // Kanal Mesajı (#genel) Köprüleme
+    let bridgedChannelPayload = null;
+    mockChannel2.writePayload = (p) => {
+      if (p && p.type === 'CHANNEL_MESSAGE' && p.to === '#genel') {
+        bridgedChannelPayload = p;
+      }
+    };
+
+    await transitEdgeEngine.broadcastChannelMessage({
+      id: 'transit_genel_msg_1',
+      from: `@someone:${remoteNodeId}.mesh`,
+      to: '#genel',
+      content: 'Homogeneous transit cross-bridging message',
+      timestamp: new Date().toISOString()
+    }, mockChannel1);
+    const channelBridgedOk = bridgedChannelPayload !== null && bridgedChannelPayload.id === 'transit_genel_msg_1';
+
+    transitEdgeEngine.close();
+    transitEdgeDb.close();
+
+    const test754Ok = roleTransitionOk && forwardedCellOk && presenceBridgedOk && channelBridgedOk;
+    record('7.54 [FAZ 2] EDGE Transit Routing (CAP_EDGE_TRANSIT), Reverse Tünel Çapraz Atlama & Gossip Varlık Köprüleme', !!test754Ok,
+      `RoleTransition: ${roleTransitionOk}, ForwardedCell: ${forwardedCellOk}, PresenceBridged: ${presenceBridgedOk}, ChannelBridged: ${channelBridgedOk}`);
 
     // Temiz Kapanış
     relayEngine.close();

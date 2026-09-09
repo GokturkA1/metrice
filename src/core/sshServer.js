@@ -9,6 +9,7 @@ import { InputParser } from '../utils/inputParser.js';
 import { TerminalSession } from './terminalSession.js';
 import { I18n } from '../locales/i18n.js';
 import { CONFIG } from '../config/index.js';
+import { ProxyProtocolParser } from '../utils/proxyProtocol.js';
 
 const log = new Logger('SSH_SRV');
 
@@ -59,7 +60,7 @@ class SshClientConnection extends EventEmitter {
       const clean = configuredVersion.trim();
       this.serverVersion = clean.startsWith('SSH-2.0-') ? clean : `SSH-2.0-${clean}`;
     } else {
-      this.serverVersion = 'SSH-2.0-Metrice_2.2.10';
+      this.serverVersion = 'SSH-2.0-Metrice_2.4.0';
     }
 
     this.clientKexPayload = null;
@@ -1069,7 +1070,21 @@ export class SshServer {
 
   start(port) {
     this.server = net.createServer((socket) => {
-      new SshClientConnection(socket, this.hostKey, this.db, this.clientServer, this.options);
+      const setupSsh = () => {
+        new SshClientConnection(socket, this.hostKey, this.db, this.clientServer, this.options);
+      };
+
+      if (CONFIG.useProxyProtocol) {
+        ProxyProtocolParser.handle(socket, { trustedIps: CONFIG.proxyProtocolTrustedIps }, (err) => {
+          if (err) {
+            log.warn(`SSH Proxy Protocol el sıkışma hatası: ${err.message}`);
+            return;
+          }
+          setupSsh();
+        });
+      } else {
+        setupSsh();
+      }
     });
 
     this.server.listen(port, () => {
