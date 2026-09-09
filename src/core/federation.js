@@ -134,7 +134,12 @@ export class SecureChannel extends EventEmitter {
       this.buffer = lines.pop();
 
       for (const line of lines) {
-        if (!line.trim()) continue;
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (!trimmed.startsWith('{')) {
+          this.socket.destroy();
+          return;
+        }
         try {
           const frame = JSON.parse(line);
           if (frame.type === 'DIALBACK_CONFIRM') {
@@ -1011,15 +1016,17 @@ export class FederationEngine extends EventEmitter {
           if (m && m.user) {
             const parsed = AddressHelper.parse(m.user);
             if (parsed && !parsed.isLocal) {
-              this.remoteOnlineUsers.set(m.user, {
+              const uNodeId = parsed.nodeId || nodeId;
+              const canonicalUser = `@${parsed.name}:${uNodeId}.mesh`;
+              this.remoteOnlineUsers.set(canonicalUser, {
                 lastSeen: Date.now(),
                 channels: m.channels || [],
                 isSsh: !!m.isSsh,
                 kemPublicKey: m.kemPublicKey || ''
               });
-            }
-            if (m.kemPublicKey) {
-              this.db.saveRemoteUserKemKey(m.user, m.kemPublicKey);
+              if (m.kemPublicKey) {
+                this.db.saveRemoteUserKemKey(canonicalUser, m.kemPublicKey);
+              }
             }
           }
         });
@@ -1030,6 +1037,9 @@ export class FederationEngine extends EventEmitter {
       }
 
       this.emit('presence_change');
+      if (channel && typeof channel.writePayload === 'function') {
+        channel.writePayload({ status: 'ack', type: 'PRESENCE_ANNOUNCE', nodeId: this.nodeId });
+      }
 
       // Dedikodu (Gossip) Yayılımı: Röle düğümleri geçerli PRESENCE_ANNOUNCE paketlerini ağdaki diğer eşlere iletir
       const announceKey = `${nodeId}:${timestamp}`;
@@ -1285,40 +1295,25 @@ export class FederationEngine extends EventEmitter {
       }
       this.emit('typing', payload);
     } else if (payload.type === 'USER_OFFLINE') {
-      if (payload.user && this.remoteOnlineUsers.has(payload.user)) {
-        this.remoteOnlineUsers.delete(payload.user);
-        this.emit('presence_change');
+      if (payload.user) {
+        let deleted = false;
+        if (this.remoteOnlineUsers.has(payload.user)) {
+          this.remoteOnlineUsers.delete(payload.user);
+          deleted = true;
+        }
+        const parsed = AddressHelper.parse(payload.user);
+        if (parsed && parsed.name && parsed.nodeId) {
+          const canonical = `@${parsed.name}:${parsed.nodeId}.mesh`;
+          if (this.remoteOnlineUsers.has(canonical)) {
+            this.remoteOnlineUsers.delete(canonical);
+            deleted = true;
+          }
+        }
+        if (deleted) {
+          this.emit('presence_change');
+        }
       }
       channel.writePayload({ status: 'ack', type: 'USER_OFFLINE', user: payload.user });
-    } else if (payload.type === 'PRESENCE_SYNC') {
-      if (Array.isArray(payload.memberships)) {
-        payload.memberships.forEach((m) => {
-          if (m.user) {
-            const parsed = AddressHelper.parse(m.user);
-            if (parsed && !parsed.isLocal) {
-              this.remoteOnlineUsers.set(m.user, {
-                lastSeen: Date.now(),
-                channels: m.channels || [],
-                isSsh: !!m.isSsh,
-                kemPublicKey: m.kemPublicKey || ''
-              });
-              if (m.kemPublicKey) {
-                this.db.saveRemoteUserKemKey(m.user, m.kemPublicKey);
-              }
-            }
-          }
-        });
-      }
-
-      this.emit('presence_change');
-      setImmediate(() => this.processOutbox(true));
-
-      const myState = this.getLocalStateFn ? this.getLocalStateFn() : { memberships: [] };
-      channel.writePayload({
-        type: 'PRESENCE_ACK',
-        sourceNode: this.nodeAddress,
-        memberships: myState.memberships
-      });
     } else if (payload.type === 'GOSSIP_DISCOVERY') {
       if (payload.selfNode && payload.selfNode.includes(':')) this.peerManager.addOrUpdate(payload.selfNode, true);
       if (Array.isArray(payload.peers)) {
@@ -1582,71 +1577,6 @@ export class FederationEngine extends EventEmitter {
       for (const [tNodeId, tunnel] of this.rendezvousTunnels.entries()) {
         if (tunnel && tunnel.boundRendezvousAddr) {
           this.broadcastRouteUpdate(tNodeId, tunnel.boundRendezvousAddr, tunnel.edgeKemKey, tunnel.identityPublicKey);
-        }
-      }
-    }
-
-    // 2. V1.x Geriye Dönük Uyumluluk (PRESENCE_SYNC)
-    const peers = this.peerManager.getAllPeers();
-    const myState = this.getLocalStateFn ? this.getLocalStateFn() : { memberships: [] };
-
-    await Promise.allSettled(peers.map(async (peer) => {
-      if (!peer || !peer.includes(':')) return;
-      const [host, portStr] = peer.split(':');
-      const port = parseInt(portStr, 10);
-      if (!host || isNaN(port)) return;
-
-      try {
-        const res = await this.sendPacket(host, port, {
-          type: 'PRESENCE_SYNC',
-          sourceNode: this.nodeAddress,
-          memberships: myState.memberships
-        });
-
-        if (res && res.type === 'PRESENCE_ACK' && Array.isArray(res.memberships)) {
-          res.memberships.forEach((m) => {
-            if (m.user) {
-              const parsed = AddressHelper.parse(m.user);
-              if (parsed && !parsed.isLocal) {
-                this.remoteOnlineUsers.set(m.user, {
-                  lastSeen: Date.now(),
-                  channels: m.channels || [],
-                  isSsh: !!m.isSsh,
-                  kemPublicKey: m.kemPublicKey || ''
-                });
-                if (m.kemPublicKey) {
-                  this.db.saveRemoteUserKemKey(m.user, m.kemPublicKey);
-                }
-              }
-            }
-          });
-
-          this.emit('presence_change');
-          setImmediate(() => this.processOutbox(true));
-        }
-      } catch {
-        this.peerManager.addOrUpdate(peer, false);
-      }
-    }));
-
-    const presenceSyncPayload = {
-      type: 'PRESENCE_SYNC',
-      sourceNode: this.nodeAddress,
-      memberships: myState.memberships
-    };
-
-    if (this.rendezvousRelays) {
-      for (const [, relay] of this.rendezvousRelays.entries()) {
-        if (relay && relay.channel && relay.channel.isReady !== false && relay.channel.socket && relay.channel.socket.writable) {
-          relay.channel.writePayload(presenceSyncPayload);
-        }
-      }
-    }
-
-    if (this.rendezvousTunnels) {
-      for (const [, tunnel] of this.rendezvousTunnels.entries()) {
-        if (tunnel && tunnel.channel && tunnel.channel.socket && tunnel.channel.socket.writable) {
-          tunnel.channel.writePayload(presenceSyncPayload);
         }
       }
     }

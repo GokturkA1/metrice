@@ -49,7 +49,10 @@ export class ClientServer {
 
   initFederationListeners() {
     this.federation.on('presence_change', () => {
-      this.notifyAllSessionsRender();
+      if (this.renderDebounceTimer) clearTimeout(this.renderDebounceTimer);
+      this.renderDebounceTimer = setTimeout(() => {
+        this.notifyAllSessionsRender();
+      }, 50);
     });
 
     this.federation.on('message', (msg) => {
@@ -118,10 +121,11 @@ export class ClientServer {
 
   getLocalMemberships() {
     const list = [];
-    const localNodeId = this.federation ? (this.federation.nodeId || this.federation.myIdentity?.nodeId) : AddressHelper.getLocalNodeId();
+    const localNodeId = (this.federation && (this.federation.nodeId || this.federation.myIdentity?.nodeId)) || AddressHelper.getLocalNodeId() || 'local';
     for (const [userAddr, session] of this.sessions.entries()) {
-      const nick = userAddr.split(':')[0].replace('@', '');
-      const canonicalUser = localNodeId ? `@${nick}:${localNodeId}.mesh` : userAddr;
+      const parsed = AddressHelper.parse(userAddr);
+      const nick = parsed?.name || userAddr.split(':')[0].replace('@', '');
+      const canonicalUser = `@${nick}:${localNodeId}.mesh`;
       list.push({
         user: canonicalUser,
         channels: typeof session.getMyChannels === 'function' ? session.getMyChannels() : [],
@@ -148,11 +152,12 @@ export class ClientServer {
     }
 
     const localMembers = [];
-    const localNodeId = this.federation ? (this.federation.nodeId || this.federation.myIdentity?.nodeId) : AddressHelper.getLocalNodeId();
+    const localNodeId = (this.federation && (this.federation.nodeId || this.federation.myIdentity?.nodeId)) || AddressHelper.getLocalNodeId() || 'local';
     for (const [userAddr, session] of this.sessions.entries()) {
       if (session.isMemberOf(target)) {
-        const nick = userAddr.split(':')[0].replace('@', '');
-        const canonicalUser = localNodeId ? `@${nick}:${localNodeId}.mesh` : userAddr;
+        const parsed = AddressHelper.parse(userAddr);
+        const nick = parsed?.name || userAddr.split(':')[0].replace('@', '');
+        const canonicalUser = `@${nick}:${localNodeId}.mesh`;
         localMembers.push(canonicalUser);
       }
     }
@@ -820,6 +825,10 @@ export class ClientServer {
   }
 
   close() {
+    if (this.renderDebounceTimer) {
+      clearTimeout(this.renderDebounceTimer);
+      this.renderDebounceTimer = null;
+    }
     for (const session of this.sessions.values()) {
       try {
         session.socket.write(I18n.t('TUI_SERVER_SHUTDOWN'));

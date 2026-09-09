@@ -695,16 +695,38 @@ async function main() {
       record('Test 2: Şifreli Gossip & Eş Havuzu Değişimi', false, e.message);
     }
 
-    // Test 3: Şifreli PRESENCE_SYNC & ACK
+    // Test 3: Ed25519 İmzalı PRESENCE_ANNOUNCE & ACK
     try {
-      const presence = await sendSecureFedPacket(SUITE_CONFIG.host, n2.fedPort, {
-        type: 'PRESENCE_SYNC',
-        memberships: [{ user: '@test_user:127.0.0.1:9999', channels: ['#genel'] }]
+      const myId3 = CryptoHelper.generateIdentityKeyPair();
+      const myNodeId3 = CryptoHelper.deriveNodeId(myId3.publicKey);
+      const myKem3 = CryptoHelper.generateKemKeyPair();
+      const ts3 = Date.now();
+      const dataToSign3 = JSON.stringify({
+        nodeId: myNodeId3,
+        role: 'EDGE',
+        rendezvousNodes: [],
+        kemPublicKey: myKem3.publicKey,
+        channels: ['#genel'],
+        timestamp: ts3
       });
-      const ok = presence?.type === 'PRESENCE_ACK' && Array.isArray(presence.memberships);
-      record('Test 3: Varlık (Presence) Çift Taraflı Senkronizasyonu', ok);
+      const sig3 = CryptoHelper.sign(dataToSign3, myId3.privateKey);
+
+      const presence = await sendSecureFedPacket(SUITE_CONFIG.host, n2.fedPort, {
+        type: 'PRESENCE_ANNOUNCE',
+        nodeId: myNodeId3,
+        role: 'EDGE',
+        rendezvousNodes: [],
+        kemPublicKey: myKem3.publicKey,
+        identityPublicKey: myId3.publicKey,
+        channels: ['#genel'],
+        memberships: [{ user: `@test_user:${myNodeId3}.mesh`, channels: ['#genel'] }],
+        timestamp: ts3,
+        sig: sig3
+      });
+      const ok = presence?.type === 'PRESENCE_ANNOUNCE' && presence?.status === 'ack';
+      record('Test 3: Kuantum Sonrası Varlık (PRESENCE_ANNOUNCE) Doğrulaması', ok);
     } catch (e) {
-      record('Test 3: Varlık (Presence) Çift Taraflı Senkronizasyonu', false, e.message);
+      record('Test 3: Kuantum Sonrası Varlık (PRESENCE_ANNOUNCE) Doğrulaması', false, e.message);
     }
 
     // --- GRUP 2: UZAK KANAL ABONELİĞİ & ŞİFRELİ TAŞIMA ---

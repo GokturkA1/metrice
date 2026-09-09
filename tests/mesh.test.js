@@ -1231,8 +1231,8 @@ async function runV2TestSuite() {
     fedAutoNat.rendezvousRelays.delete('relay_addr_737');
 
     const test737Ok = rdvAnnouncePayload && rdvAnnouncePayload.type === 'PRESENCE_ANNOUNCE' &&
-                      rdvSyncPayload && rdvSyncPayload.type === 'PRESENCE_SYNC';
-    record('7.37 [KRİTİK/E2EE] SSH Girişi Sonrasında PRESENCE_ANNOUNCE & SYNC Tünel Dağıtımı', !!test737Ok);
+                      rdvSyncPayload === null;
+    record('7.37 [KRİTİK/E2EE] SSH Girişi Sonrasında PRESENCE_ANNOUNCE Tünel Dağıtımı (V1 PRESENCE_SYNC Tasfiye Edildi)', !!test737Ok);
 
     // Test 7.38: [KRİTİK/DEŞİFRE] getCurrentConversation İçinde .mesh / Localhost Karışık Adreslerde isSender Normalizasyonu
     const senderKemKey = CryptoHelper.generateKemKeyPair();
@@ -1427,14 +1427,34 @@ async function runV2TestSuite() {
     const queuedItem = pendingOutbox.find((m) => m.to === offlineUserAddr);
     const offlineE2EEOk = queuedItem && queuedItem.isE2EE && queuedItem.content.startsWith('e2ee:v2:');
 
+    const newRemoteId = CryptoHelper.generateIdentityKeyPair();
+    const newRemoteNodeId = CryptoHelper.deriveNodeId(newRemoteId.publicKey);
     const newRemoteKem = CryptoHelper.generateKemKeyPair();
-    fedOffline.handleIncoming({
-      type: 'PRESENCE_SYNC',
-      sourceNode: 'node_sync_742.mesh',
-      memberships: [{ user: '@sync_user:node_sync_742.mesh', channels: ['#genel'], kemPublicKey: newRemoteKem.publicKey }]
-    }, { peerNodeAddress: 'node_sync_742.mesh', writePayload: () => {} });
+    const ts42 = Date.now();
+    const data42 = JSON.stringify({
+      nodeId: newRemoteNodeId,
+      role: 'EDGE',
+      rendezvousNodes: [],
+      kemPublicKey: newRemoteKem.publicKey,
+      channels: ['#genel'],
+      timestamp: ts42
+    });
+    const sig42 = CryptoHelper.sign(data42, newRemoteId.privateKey);
 
-    const syncUserProfile = testDbOffline.getUserProfile('@sync_user:node_sync_742.mesh');
+    fedOffline.handleIncoming({
+      type: 'PRESENCE_ANNOUNCE',
+      nodeId: newRemoteNodeId,
+      role: 'EDGE',
+      rendezvousNodes: [],
+      kemPublicKey: newRemoteKem.publicKey,
+      identityPublicKey: newRemoteId.publicKey,
+      channels: ['#genel'],
+      memberships: [{ user: `@sync_user:${newRemoteNodeId}.mesh`, channels: ['#genel'], kemPublicKey: newRemoteKem.publicKey }],
+      timestamp: ts42,
+      sig: sig42
+    }, { peerNodeAddress: `${newRemoteNodeId}.mesh`, writePayload: () => {} });
+
+    const syncUserProfile = testDbOffline.getUserProfile(`@sync_user:${newRemoteNodeId}.mesh`);
     const syncKemPersisted = syncUserProfile && syncUserProfile.kemPublicKey === newRemoteKem.publicKey;
 
     fedOffline.close();
@@ -1442,7 +1462,7 @@ async function runV2TestSuite() {
     testDbOffline.close();
 
     const test742Ok = kemKeyPersisted && offlineE2EEOk && syncKemPersisted;
-    record('7.42 [ASENKRON E2EE & OUTBOX] saveRemoteUserKemKey Kalıcılığı, Çevrimdışı E2EE Kuyruklama ve PRESENCE_SYNC Entegrasyonu', !!test742Ok);
+    record('7.42 [ASENKRON E2EE & OUTBOX] saveRemoteUserKemKey Kalıcılığı, Çevrimdışı E2EE Kuyruklama ve PRESENCE_ANNOUNCE Entegrasyonu', !!test742Ok);
 
     // Test 7.43: [REVİZYON 15] Presence Salt-Okunurluk, Saat Skew Koruması, rowid Sıralaması ve resetOutboxForTarget
     const testDb743 = new Database(path.join(rootDir, 'v2_test_r15.db'));
@@ -2794,6 +2814,112 @@ async function runV2TestSuite() {
     const test761Ok = correlationOk && retryOk;
     record('7.61 [REVİZYON 30 / v2.4.7] Devre Kurulumunda circuitId Korelasyonu ve Bayat Soket Yeniden Deneme', !!test761Ok,
       `Correlation: ${correlationOk}, RetryAttempts: ${buildAttempts}, DeadSocketDestroyed: ${deadSocketDestroyed}, Delivered: ${sendRes761?.status === 'delivered'}`);
+
+    // Test 7.62: [REVİZYON 31 / v2.5.0] V1 PRESENCE_SYNC Tasfiyesi, PRESENCE_ANNOUNCE Standardizasyonu & Render Debounce
+    // 1. V1 PRESENCE_SYNC paketlerinin artık işlenmediği ve yanıt verilmediğinin doğrulanması
+    const db762Path = path.join(rootDir, 'v2_test_r31_presence.db');
+    if (fs.existsSync(db762Path)) fs.unlinkSync(db762Path);
+    const mockDb762 = new Database(db762Path);
+    const fed762 = new FederationEngine(mockDb762, new PeerManager());
+
+    let v1WrittenPayload = null;
+    const mockChannelV1 = {
+      peerNodeAddress: 'v1legacy.mesh',
+      writePayload: (p) => { v1WrittenPayload = p; }
+    };
+
+    fed762.handleIncoming({
+      type: 'PRESENCE_SYNC',
+      sourceNode: 'v1legacy.mesh',
+      memberships: [{ user: '@v1user:v1legacy.mesh', channels: ['#genel'] }]
+    }, mockChannelV1);
+
+    const v1IgnoredOk = !fed762.remoteOnlineUsers.has('@v1user:v1legacy.mesh') && v1WrittenPayload === null;
+
+    // 2. V2 PRESENCE_ANNOUNCE paketinin tekil yetkili olarak kabulü, kanonik @user:nodeId.mesh dönüşümü ve ACK
+    const remoteId762 = CryptoHelper.generateIdentityKeyPair();
+    const remoteNodeId762 = CryptoHelper.deriveNodeId(remoteId762.publicKey);
+    const remoteKem762 = CryptoHelper.generateKemKeyPair();
+    const ts762 = Date.now();
+    const dataToSign762 = JSON.stringify({
+      nodeId: remoteNodeId762,
+      role: 'EDGE',
+      rendezvousNodes: [],
+      kemPublicKey: remoteKem762.publicKey,
+      channels: ['#genel'],
+      timestamp: ts762
+    });
+    const sig762 = CryptoHelper.sign(dataToSign762, remoteId762.privateKey);
+
+    let v2WrittenPayload = null;
+    const mockChannelV2 = {
+      peerNodeAddress: `${remoteNodeId762}.mesh`,
+      writePayload: (p) => { v2WrittenPayload = p; }
+    };
+
+    fed762.handleIncoming({
+      type: 'PRESENCE_ANNOUNCE',
+      nodeId: remoteNodeId762,
+      role: 'EDGE',
+      rendezvousNodes: [],
+      kemPublicKey: remoteKem762.publicKey,
+      identityPublicKey: remoteId762.publicKey,
+      channels: ['#genel'],
+      memberships: [{ user: '@alice:192.168.1.50:8001', channels: ['#genel'], kemPublicKey: remoteKem762.publicKey }],
+      timestamp: ts762,
+      sig: sig762
+    }, mockChannelV2);
+
+    const expectedCanonicalUser = `@alice:${remoteNodeId762}.mesh`;
+    const v2AcceptedOk = fed762.remoteOnlineUsers.has(expectedCanonicalUser) &&
+      !fed762.remoteOnlineUsers.has('@alice:192.168.1.50:8001') &&
+      v2WrittenPayload?.status === 'ack' &&
+      v2WrittenPayload?.type === 'PRESENCE_ANNOUNCE';
+
+    const savedKem762 = mockDb762.getUserProfile(expectedCanonicalUser);
+    const kemSavedCanonicalOk = savedKem762 && savedKem762.kemPublicKey === remoteKem762.publicKey;
+
+    // 3. ClientServer Render Debounce (50ms) Doğrulaması
+    const cs762 = new ClientServer(mockDb762, fed762);
+    let renderCallsCount = 0;
+    cs762.notifyAllSessionsRender = () => { renderCallsCount++; };
+
+    // Peş peşe 5 presence_change yayını tetikle
+    for (let i = 0; i < 5; i++) {
+      fed762.emit('presence_change');
+    }
+    const immediateZeroCalls = renderCallsCount === 0;
+
+    // 70ms bekle ve debounce'un tek bir çağrı ürettiğini doğrula
+    await new Promise((r) => setTimeout(r, 70));
+    const debouncedSingleCall = renderCallsCount === 1;
+
+    // 4. SecureChannel HTTP Bot / Scanner Erken Tahliye Doğrulaması
+    let socketDestroyed762 = false;
+    const fakeSocket762 = new EventEmitter();
+    fakeSocket762.destroy = () => { socketDestroyed762 = true; };
+    fakeSocket762.write = () => {};
+
+    const secChan762 = new SecureChannel(fakeSocket762, false, {
+      identityKeyPair: fed762.myIdentity.identityKeyPair,
+      kemKeyPair: fed762.myIdentity.kemKeyPair,
+      nodeAddress: 'localhost:8001',
+      nodeId: fed762.nodeId
+    }, mockDb762, { track: () => true });
+
+    fakeSocket762.emit('data', Buffer.from('GET / HTTP/1.1\r\nHost: example.com\r\n\r\n'));
+    const httpScanDroppedOk = socketDestroyed762;
+
+    cs762.close();
+    fed762.close();
+    mockDb762.close();
+    try { if (fs.existsSync(db762Path)) fs.unlinkSync(db762Path); } catch {}
+
+    const test762Ok = v1IgnoredOk && v2AcceptedOk && kemSavedCanonicalOk &&
+      immediateZeroCalls && debouncedSingleCall && httpScanDroppedOk;
+
+    record('7.62 [REVİZYON 31 / v2.5.0] V1 PRESENCE_SYNC Tasfiyesi, PRESENCE_ANNOUNCE Standardizasyonu & Render Debounce', !!test762Ok,
+      `V1Ignored: ${v1IgnoredOk}, V2Accepted: ${v2AcceptedOk}, CanonicalKEM: ${kemSavedCanonicalOk}, Debounce: ${debouncedSingleCall}, HttpDropped: ${httpScanDroppedOk}`);
 
     // Temiz Kapanış
     testDbLocale.close();
