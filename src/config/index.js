@@ -1,4 +1,10 @@
+import { VERSION, DEFAULT_SSH_SERVER_VERSION } from '../version.js';
+
 export const CONFIG = {
+  // Sürüm ve Protokol Tanımlayıcıları
+  version: VERSION,
+  defaultSshServerVersion: DEFAULT_SSH_SERVER_VERSION,
+
   // Temel Sunucu ve Ağ Portları
   serverName: process.env.SERVER_NAME || 'localhost',
   clientPort: parseInt(process.env.CLIENT_PORT || '2222', 10),
@@ -10,7 +16,7 @@ export const CONFIG = {
   defaultFedPort: 8001,
 
   // SSH-2 Sunucu Ayarları
-  sshServerVersion: process.env.SSH_SERVER_VERSION || 'SSH-2.0-Metrice_2.4.2',
+  sshServerVersion: process.env.SSH_SERVER_VERSION || DEFAULT_SSH_SERVER_VERSION,
 
   // Metrice v2.0 P2P-Mesh, AutoNAT ve Buluşma Noktası (Rendezvous) Ayarları
   meshRole: process.env.MESH_ROLE || 'EDGE', // 'RELAY' veya 'EDGE'

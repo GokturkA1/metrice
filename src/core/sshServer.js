@@ -10,6 +10,7 @@ import { TerminalSession } from './terminalSession.js';
 import { I18n } from '../locales/i18n.js';
 import { CONFIG } from '../config/index.js';
 import { ProxyProtocolParser } from '../utils/proxyProtocol.js';
+import { formatSshServerVersion } from '../version.js';
 
 const log = new Logger('SSH_SRV');
 
@@ -56,12 +57,7 @@ class SshClientConnection extends EventEmitter {
 
     // SSH Sunucu Versiyon Dizgesi (Öncelik: options.serverVersion -> CONFIG.sshServerVersion -> Fallback)
     const configuredVersion = (options && options.serverVersion) || (CONFIG && CONFIG.sshServerVersion);
-    if (typeof configuredVersion === 'string' && configuredVersion.trim().length > 0) {
-      const clean = configuredVersion.trim();
-      this.serverVersion = clean.startsWith('SSH-2.0-') ? clean : `SSH-2.0-${clean}`;
-    } else {
-      this.serverVersion = 'SSH-2.0-Metrice_2.4.2';
-    }
+    this.serverVersion = formatSshServerVersion(configuredVersion);
 
     this.clientKexPayload = null;
     this.serverKexPayload = null;

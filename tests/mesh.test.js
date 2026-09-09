@@ -653,6 +653,7 @@ async function runV2TestSuite() {
 
     // Test 7.8: SSH Sunucu Version String Özelleştirme & Fallback Uyumu
     const { SshServer } = await import('../src/core/sshServer.js');
+    const { DEFAULT_SSH_SERVER_VERSION } = await import('../src/version.js');
     const sshTestDb = { getNodeIdentity: () => ({ identityKeyPair: CryptoHelper.generateIdentityKeyPair() }) };
 
     // 1. Fallback Testi (tanımsızsa varsayılana düşer)
@@ -689,7 +690,7 @@ async function runV2TestSuite() {
     });
     CONFIG.sshServerVersion = prevVersion;
 
-    const versionTestValid = fallbackIdent === 'SSH-2.0-Metrice_2.4.2' && customIdent === 'SSH-2.0-MyCustomNode';
+    const versionTestValid = fallbackIdent === DEFAULT_SSH_SERVER_VERSION && customIdent === 'SSH-2.0-MyCustomNode';
     record('7.8 [YAPILANDIRMA] SSH Sunucu Version String Özelleştirme & Fallback Uyumu', versionTestValid, `Fallback: ${fallbackIdent}, Custom: ${customIdent}`);
 
     // Test 7.9: RENDEZVOUS_BIND Yabancı relayAddress İmzası Reddi (Bypass & Reflection Önlemi)
