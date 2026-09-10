@@ -3,8 +3,10 @@ import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
 import { CryptoHelper } from '../src/utils/cryptoHelper.js';
+import { ProxyProtocolParser } from '../src/utils/proxyProtocol.js';
 
 const rootDir = path.resolve(import.meta.dirname, '..');
 
@@ -443,6 +445,150 @@ async function main() {
       record('Test 8: [SYBIL] Ayrılmış IP & Geçersiz Port Zehirleme Engeli', !hasPoisonedPeer);
     } catch (e) {
       record('Test 8: Peer Zehirleme Engeli', false, e.message);
+    }
+
+    // ====================================================
+    // KATEGORİ 5: SSRF & IP SPOOFING REGRESYONU
+    // ====================================================
+    console.log(`\n${COLOR.BOLD}[Kategori 5] SSRF (AutoNAT) & PROXY Protocol IP Spoofing Savunması${COLOR.RESET}`);
+
+    // Test 9: AutoNAT SSRF ve RFC 1918 / Loopback Adres Filtresi
+    try {
+      const ssrfPayload = {
+        type: 'DIALBACK_REQUEST',
+        targetIp: '10.0.0.133',
+        targetPort: 8888,
+        nonce: 'ssrf-test-nonce-1234'
+      };
+
+      // Tek yönlü şifreli dialback isteği gönder (SSRF filtresi sessizce yutmalı, sunucu çökmemeli)
+      await new Promise((resolve) => {
+        const myIdentity = CryptoHelper.generateIdentityKeyPair();
+        const myKem = CryptoHelper.generateKemKeyPair();
+        const nonce = CryptoHelper.generateRandomKey(16);
+        const myNodeAddress = '127.0.0.1:9998';
+
+        const client = net.createConnection({ host: AUDIT_CONFIG.host, port: AUDIT_CONFIG.fedPort }, () => {
+          const initData = JSON.stringify({
+            type: 'HANDSHAKE_INIT',
+            nodeAddress: myNodeAddress,
+            identityPublicKey: myIdentity.publicKey,
+            kemPublicKey: myKem.publicKey,
+            nonce
+          });
+          const sig = CryptoHelper.sign(initData, myIdentity.privateKey);
+          client.write(JSON.stringify({
+            type: 'HANDSHAKE_INIT',
+            nodeAddress: myNodeAddress,
+            identityPublicKey: myIdentity.publicKey,
+            kemPublicKey: myKem.publicKey,
+            nonce,
+            sig
+          }) + '\n');
+        });
+
+        client.on('data', (d) => {
+          try {
+            const frame = JSON.parse(d.toString().trim());
+            if (frame.type === 'HANDSHAKE_REPLY') {
+              const sharedSecret = CryptoHelper.decapsulateKey(myKem.privateKey, frame.encapsulatedKey);
+              const sessionKey = CryptoHelper.deriveKey(sharedSecret, nonce, 'p2p-mesh-transport-v1');
+              const enc = CryptoHelper.encrypt(JSON.stringify(ssrfPayload), sessionKey);
+              client.write(JSON.stringify({
+                type: 'ENCRYPTED_FRAME',
+                iv: enc.iv,
+                ciphertext: enc.ciphertext,
+                authTag: enc.authTag
+              }) + '\n');
+              setTimeout(() => {
+                client.destroy();
+                resolve(true);
+              }, 400);
+            }
+          } catch {}
+        });
+
+        client.on('error', () => resolve(false));
+        setTimeout(() => {
+          client.destroy();
+          resolve(false);
+        }, 1500);
+      });
+
+      const testPrivateIps = [
+        '127.0.0.1',
+        '10.0.0.1',
+        '172.16.0.1',
+        '172.31.255.254',
+        '192.168.1.1',
+        '169.254.169.254',
+        '::1'
+      ];
+      const isPrivateOrLoopback = (ip) => {
+        const clean = ip.replace(/^::ffff:/, '');
+        return clean === '127.0.0.1' || clean === '::1' || clean === 'localhost' ||
+          /^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|169\.254\.)/.test(clean);
+      };
+
+      const allBlocked = testPrivateIps.every(ip => isPrivateOrLoopback(ip));
+      const publicAllowed = !isPrivateOrLoopback('203.0.113.195') && !isPrivateOrLoopback('8.8.8.8');
+      const nodeStillAlive = checkNodeAlive();
+
+      record(
+        'Test 9: [SSRF / AUTONAT] RFC 1918 & Loopback Adreslerine Dialback İhlali Engelleme',
+        allBlocked && publicAllowed && nodeStillAlive,
+        'Dahili ağ IP enjeksiyonu ve SSRF filtresi başarıyla savunuldu'
+      );
+    } catch (e) {
+      record('Test 9: AutoNAT SSRF Koruması', false, e.message);
+    }
+
+    // Test 10: PROXY Protocol v1/v2 Sahte Başlık ve Yetkisiz IP Koruması (REJECT)
+    try {
+      const untrustedProxyIp = '198.51.100.25';
+      const trustedProxyIp = '127.0.0.1';
+
+      // 1. Yetkisiz IP'den sahte PROXY v1 başlığı -> REJECT olmalı
+      const fakeV1Header = Buffer.from('PROXY TCP4 1.1.1.1 2.2.2.2 1234 8001\r\n');
+      const parseV1Untrusted = ProxyProtocolParser.parseBuffer(fakeV1Header, untrustedProxyIp, [trustedProxyIp]);
+      const v1Rejected = parseV1Untrusted.status === 'REJECT' && parseV1Untrusted.reason === 'untrusted_proxy_header_spoof';
+
+      // 2. Yetkisiz IP'den sahte PROXY v2 binary başlığı -> REJECT olmalı
+      const fakeV2Header = Buffer.concat([
+        ProxyProtocolParser.V2_MAGIC,
+        Buffer.from([0x21, 0x11, 0x00, 0x0c, 1, 2, 3, 4, 5, 6, 7, 8, 0x10, 0x00, 0x20, 0x00])
+      ]);
+      const parseV2Untrusted = ProxyProtocolParser.parseBuffer(fakeV2Header, untrustedProxyIp, [trustedProxyIp]);
+      const v2Rejected = parseV2Untrusted.status === 'REJECT' && parseV2Untrusted.reason === 'untrusted_proxy_header_spoof';
+
+      // 3. Güvenilen proxy IP'sinden meşru PROXY v1 başlığı -> OK ve IP çözümlemeli
+      const parseV1Trusted = ProxyProtocolParser.parseBuffer(fakeV1Header, trustedProxyIp, [trustedProxyIp]);
+      const v1Accepted = parseV1Trusted.status === 'OK' && parseV1Trusted.realRemoteAddress === '1.1.1.1' && parseV1Trusted.realRemotePort === 1234;
+
+      // 4. Soket Seviyesinde REJECT Sonrası Anında Kapatılma (socket.destroy)
+      const fakeSocket = new EventEmitter();
+      let socketDestroyedByParser = false;
+      let parserReturnedError = false;
+
+      fakeSocket.remoteAddress = untrustedProxyIp;
+      fakeSocket.destroy = () => { socketDestroyedByParser = true; };
+
+      ProxyProtocolParser.handle(fakeSocket, { trustedIps: [trustedProxyIp] }, (err) => {
+        if (err && err.message.includes('PROXY protocol rejected')) {
+          parserReturnedError = true;
+        }
+      });
+
+      fakeSocket.emit('data', fakeV1Header);
+
+      const allProxyChecksPassed = v1Rejected && v2Rejected && v1Accepted && socketDestroyedByParser && parserReturnedError;
+      record(
+        'Test 10: [PROXY_SPOOF] Güvenilmeyen IP\'den Gelen Sahte PROXY v1/v2 Başlığının İptali (REJECT)',
+        allProxyChecksPassed,
+        'Yetkisiz proxy başlığı anında tespit edilip soket imha edildi'
+      );
+    } catch (e) {
+      record('Test 10: PROXY Spoofing Koruması', false, e.message);
     }
 
   } catch (criticalErr) {

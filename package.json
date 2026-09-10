@@ -6,10 +6,11 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node tests/mesh.test.js && node tests/protocol.test.js && node tests/security.test.js && node tests/presence.test.js",
+    "test": "node tests/mesh.test.js && node tests/protocol.test.js && node tests/security.test.js && node tests/presence.test.js && node tests/crypto-kat.test.js",
     "test:mesh": "node tests/mesh.test.js",
     "test:protocol": "node tests/protocol.test.js",
     "test:security": "node tests/security.test.js",
-    "test:presence": "node tests/presence.test.js"
+    "test:presence": "node tests/presence.test.js",
+    "test:crypto": "node tests/crypto-kat.test.js"
   }
 }
