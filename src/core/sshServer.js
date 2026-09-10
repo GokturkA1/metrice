@@ -572,9 +572,9 @@ export class SshClientConnection extends EventEmitter {
     this.encryptCipher = crypto.createCipheriv(this.cipherName, this.keyS2C, this.ivS2C);
   }
 
-  async handleUserAuth(reader, rawPayload) {
+  async handleUserAuth(reader, _rawPayload) {
     const username = reader.readString();
-    const service = reader.readString();
+    reader.readString(); // service
     const method = reader.readString();
 
     const formattedAddr = AddressHelper.formatUser(username);
@@ -589,7 +589,7 @@ export class SshClientConnection extends EventEmitter {
     }
 
     if (method === 'publickey') {
-      const hasSig = reader.readBoolean();
+      reader.readBoolean(); // hasSig
       const algo = reader.readString();
       const pubKeyBlob = reader.readBuffer();
 

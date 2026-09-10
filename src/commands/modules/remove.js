@@ -7,7 +7,6 @@ export default {
   description: I18n.t('CMD_REMOVE_DESC'),
   usage: '/remove [@kisi]',
   execute({ args, session, db, userAddress }) {
-    const defaultChannel = I18n.t('DEFAULT_CHANNEL_NAME');
     const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
 
     let targetUser = args[0] ? AddressHelper.parse(args[0])?.raw : session.activeTarget;

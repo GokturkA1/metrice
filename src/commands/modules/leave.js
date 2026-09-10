@@ -7,7 +7,6 @@ export default {
   description: I18n.t('CMD_LEAVE_DESC'),
   usage: '/leave [#kanal]',
   async execute({ args, session, db, federation, userAddress }) {
-    const defaultChannel = I18n.t('DEFAULT_CHANNEL_NAME');
     const targetChannel = args[0] ? AddressHelper.parse(args[0])?.raw : session.activeTarget;
 
     if (!targetChannel || !targetChannel.startsWith('#')) {

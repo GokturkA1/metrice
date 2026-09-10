@@ -1,0 +1,69 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-lint:
+    name: Lint & Test (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        node-version: [ "24.x", "26.x" ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Verify Zero-Dependency Principle
+        run: |
+          node -e "
+            const pkg = JSON.parse(require('fs').readFileSync('package.json', 'utf8'));
+            if (pkg.dependencies && Object.keys(pkg.dependencies).length > 0) {
+              console.error('Zero-dependency violation: package.json must not have external dependencies.');
+              process.exit(1);
+            }
+            console.log('Zero-dependency verified: 0 external dependencies found.');
+          "
+
+      - name: Static Analysis & Lint (Oxlint)
+        run: npx --yes oxlint@latest src/ --deny-warnings
+
+      - name: Execute Test Suite
+        run: npm test
+
+  docker-validation:
+    name: Docker Build & Sanity Check
+    runs-on: ubuntu-latest
+    needs: test-and-lint
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Compose Configuration
+        run: docker compose config
+
+      - name: Build Docker Image
+        run: docker build -t metrice:ci .
+
+      - name: Verify Container Startup
+        run: |
+          docker run --rm -d --name metrice-test -e LOG_LEVEL=DEBUG metrice:ci
+          sleep 3
+          docker ps | grep metrice-test
+          docker logs metrice-test
+          docker stop metrice-test

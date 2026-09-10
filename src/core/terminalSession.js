@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex */
 import { EventEmitter } from 'node:events';
 import { ANSI } from '../utils/ansi.js';
 import { I18n } from '../locales/i18n.js';
@@ -546,9 +547,8 @@ export class TerminalSession extends EventEmitter {
         return;
       }
 
-      const systemConsole = I18n.t('SYSTEM_CONSOLE_NAME');
       const isSystemWindow = AddressHelper.isSystemConsole(this.activeTarget);
-      const newFrame = new Array(this.height);
+      const newFrame = Array.from({ length: this.height });
 
       const innerLeftWidth = Math.max(10, this.leftSidebarWidth - 2);
       const innerRightWidth = Math.max(10, this.rightSidebarWidth - 2);

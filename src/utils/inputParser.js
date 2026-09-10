@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex */
 import { StringDecoder } from 'node:string_decoder';
 
 export class InputParser {

@@ -1,4 +1,4 @@
-# Metrice Güvenlik Politikası ve Tehdit Modeli (v2.0)
+# Metrice Güvenlik Politikası ve Tehdit Modeli (v2.5)
 
 Metrice, geleneksel ağ dinleme, kimlik sahteciliği, yönlendirme zehirleme, derin paket analizi (DPI) ve gelecekteki kuantum bilgisayar tehditlerine (*Harvest Now, Decrypt Later*) karşı sıfır-güven (Zero-Trust) çok katmanlı savunma mimarisi uygular.
 
@@ -8,9 +8,10 @@ Metrice, geleneksel ağ dinleme, kimlik sahteciliği, yönlendirme zehirleme, de
 
 | Sürüm | Destek Durumu | Güvenlik Düzeltmeleri |
 | :--- | :--- | :--- |
-| **2.1.x** | :white_check_mark: Aktif Destek | Tam Güvenlik Yamaları (PQ, Onion, AutoNAT) |
-| **2.0.x** | :white_check_mark: Aktif Destek | Tam Güvenlik Yamaları (PQ, Onion, AutoNAT) |
-| < 2.0.0 | :x: Kullanım Dışı | Desteklenmiyor (v2.0'a yükseltme zorunludur) |
+| **2.5.x** | Aktif Destek | Tam Güvenlik Yamaları (PQ ML-KEM-768, Onion, AutoNAT, Presence Sync) |
+| **2.4.x** | Aktif Destek | Güvenlik Yamaları |
+| **2.0.x - 2.3.x** | Güvenlik Destek Sonu | 2.5.x sürümüne yükseltme önerilir |
+| < 2.0.0 | Kullanım Dışı | Desteklenmiyor (v2.x mimarisine yükseltme zorunludur) |
 
 ---
 
@@ -20,13 +21,13 @@ Metrice, geleneksel ağ dinleme, kimlik sahteciliği, yönlendirme zehirleme, de
 - **KEM Algoritması**: Tüm eşler arası (P2P) ve federasyon el sıkışmalarında yalnızca **ML-KEM-768 (Kyber-768)** kullanılır. Geleneksel zayıf asimetrik algoritmalar (RSA, DH, salt ECDH) çekirdek katmanda kabul edilmez.
 - **Kapsülleme & Paylaşılan Sır**: Alıcı eşin Kyber açık anahtarına yönelik kapsülleme (encapsulation) gerçekleştirilir; dekapulasyon sonucu elde edilen paylaşılan sır (shared secret) simetrik anahtara genişletilir.
 - **Simetrik Şifreleme**: 256-bit paylaşılan sır ile **AES-256-GCM** başlatılır. Her pakette 12 baytlık benzersiz IV (Initialization Vector) ve 16 baytlık kimlik doğrulama etiketi (Authentication Tag - GMAC) bulunur.
-- **Strict Post-Quantum Modu**: `METRICE_STRICT_PQ=1` ortam değişkeniyle klasik veya eksik anahtar takasları anında soket düzeyinde reddedilir.
+- **Strict Post-Quantum Modu**: `METRICE_STRICT_PQ=1` (veya `STRICT_PQ=true`) ortam değişkeniyle klasik veya eksik anahtar takasları anında soket düzeyinde reddedilir.
 
 ### 2. Çok Katmanlı Tor-Benzeri Onion Routing (3-Hop) & DPI Koruması
 - **Anonim Devreler**: Düğümler arasındaki iletişim doğrudan IP yerine en az 3 atlamalı (Giriş / Röle / Çıkış) anonim devreler üzerinden tünellenir.
 - **Ters Katmanlı Şifreleme**: Gönderici, paketi çıkıştan başlayarak geriye doğru her aktarım düğümünün açık anahtarıyla şifreler. Her düğüm yalnızca kendi katmanını soyabilir; bir önceki ve bir sonraki atlama haricinde devrenin başını ve sonunu bilemez.
 - **Trafik Analizi ve DPI Koruması (Uniform Cell Padding)**:
-  - Paket boyutu analizine dayalı parmak izi çıkarma saldırılarını engellemek için tüm Onion hücreleri sabit **2048 bayt** boyuta PKCS#7 benzeri rastgele dolgu (padding) ile hizalanır. Ham kullanıcı yükü azami 768 bayt ile sınırlandırılır.
+  - Paket boyutu analizine dayalı parmak izi çıkarma saldırılarını engellemek için tüm Onion hücreleri sabit **2048 bayt** boyuta rastgele dolgu (padding) ile hizalanır. Ham kullanıcı yükü azami 768 bayt ile sınırlandırılır.
   - Veri boyutu ne olursa olsun hat üzerindeki tüm paketler kriptografik olarak ayırt edilemez tek tip (uniform) bloklar halinde iletilir.
 - **Devre İzolasyonu & TTL Temizliği**: Devre durumları 10 dakikalık (600.000 ms) zaman aşımına tabidir. Süresi dolan anahtar materyali ve devre eşlemeleri bellekten güvenli biçimde silinir.
 
@@ -45,43 +46,45 @@ Metrice, geleneksel ağ dinleme, kimlik sahteciliği, yönlendirme zehirleme, de
 - **Zaman Aşımı**: Diyal-geri işlemleri 5 saniyelik agresif zaman aşımı ve kaynak kısıtlaması ile korunur.
 
 ### 5. DoS, Bellek Güvenliği ve Tampon (Buffer) Sınırları
-- **SecureChannel Çerçeveleme Sınırı**:
-  - Parçalı veya kötü niyetli veri akışlarında bellek tüketim saldırılarını (OOM DoS) engellemek amacıyla gelen tampon birikimi **65536 bayt (64 KB)** ile sınırlandırılmıştır.
-  - Bu eşiği aşan veya 4 baytlık uzunluk başlığına uymayan hatalı paketler derhal `socket.destroy()` ile düşürülür.
-- **Rendezvous Tünel Kapasite Limiti**:
-  - NAT arkası düğümler için sağlanan rendezvous tünelleri düğüm başına azami **64 eşzamanlı oturum** ile sınırlandırılmıştır.
-  - Tünel tablosunun şişirilmesine yönelik DoS denemelerinde `MAX_TUNNELS_REACHED` hatası verilir ve eski/inaktif oturumlar temizlenir.
+- **SecureChannel Çerçeveleme Sınırı**: Parçalı veya kötü niyetli veri akışlarında bellek tüketim saldırılarını (OOM DoS) engellemek amacıyla gelen tampon birikimi **65536 bayt (64 KB)** ile sınırlandırılmıştır. Eşiği aşan soketler derhal kapatılır.
+- **Rendezvous Tünel Kapasite Limiti**: NAT arkası düğümler için sağlanan rendezvous tünelleri düğüm başına azami **64 eşzamanlı oturum** ile sınırlandırılmıştır.
 - **Eş Havuzu Kısıtlaması**: Düğüm tablosu azami 100 aktif komşu eş ile sınırlandırılmıştır.
 
 ### 6. Tekrar Oynatma (Anti-Replay) ve Kimlik Bütünlüğü
-- **Nonce Takipçisi (NonceTracker)**: Her el sıkışma ve yönetim paketi 16 baytlık CSPRNG (Kriptografik Güvenli Rastgele Sayı) nonce değeri taşır. Son 60 saniye içinde görülmüş olan nonce'lar anında reddedilir.
-- **NodeID Doğrulaması**: Düğüm kimlikleri, eşin Ed25519 açık anahtarının SHA-256 özetinin RFC 4648 Base32 kodlamasıdır. Kendisini başka bir düğüm olarak tanıtmaya çalışan veya sahte kimlik üreten istekler açık anahtar imza doğrulamasında düşürülür.
+- **Nonce Takipçisi (NonceTracker)**: Her el sıkışma ve yönetim paketi 16 baytlık CSPRNG nonce değeri taşır. Son 60 saniye içinde görülmüş olan nonce'lar anında reddedilir.
+- **NodeID Doğrulaması**: Düğüm kimlikleri, eşin Ed25519 açık anahtarının SHA-256 özetinin RFC 4648 Base32 kodlamasıdır.
 
 ### 7. ANSI Kaçış Koruması ve Enjeksiyon Önleme
-- **Terminal Sanitizasyonu**: SSH terminal arayüzüne veya istemci çıktılarına yansıtılan tüm kullanıcı kaynaklı veriler (kullanıcı adları, mesajlar, komut parametreleri) OSC (`\x1b]`), CSI (`\x1b[`), ve ham ANSI kaçış dizilerinden arındırılır. Terminal emülatörlerinin istismar edilmesi (terminal escape injection) engellenir.
-- **SQL Enjeksiyon Koruması**: SQLite veritabanı işlemlerinde (`node:sqlite`) string birleştirme kesinlikle yasaktır; tüm sorgular parametrize edilmiş prepared statement'lar üzerinden çalıştırılır.
+- **Terminal Sanitizasyonu**: SSH terminal arayüzüne veya istemci çıktılarına yansıtılan tüm kullanıcı kaynaklı veriler OSC (`\x1b]`), CSI (`\x1b[`), ve kontrol karakterlerinden arındırılır.
+- **SQL Enjeksiyon Koruması**: SQLite veritabanı işlemlerinde string birleştirme yasaktır; tüm sorgular parametrize prepared statement'lar üzerinden çalıştırılır.
 
 ---
 
-## Güvenlik En İyi Uygulamaları (Best Practices)
+## Kriptografik Anahtar İfşa ve İptal Protokolleri (Key Compromise Protocols)
 
-1. **SSH Sürüm Maskeleme**:
-   - `SSH_SERVER_VERSION` ortam değişkeni ile sunucunuzun versiyon başlığını özelleştirerek otomatik tarayıcıların (shodan, censys vb.) işletim sistemi ve servis tespiti yapmasını zorlaştırabilirsiniz.
-2. **Güvenlik Duvarı & Ağ İzolasyonu**:
-   - Yalnızca SSH (varsayılan `2222/tcp`) ve Federasyon (varsayılan `9001/tcp`) portlarını dış dünyaya açın.
-   - İstemci yönetim arayüzünü (`clientPort: 8080`) ters vekil (Nginx, Traefik vb.) arkasında tutun ve mTLS veya güvenli erişim belirteçleri ile koruyun.
-3. **Kök Yetkisi Olmadan Çalıştırma (Rootless)**:
-   - Metrice'i imtiyazsız bir kullanıcı hesabı (`metrice` veya `nobody`) veya rootless Docker/Podman konteyneri içerisinde çalıştırınız.
+### 1. Düğüm Düzeyi (Ed25519 ve ML-KEM-768 Düğüm Kimliği İfşası)
+Bir düğümün özel anahtarlarının ifşa olması durumunda aşağıdaki acil müdahale adımları izlenmelidir:
+1. **Düğümü Durdurun**: Düğüm sürecini (`kill -TERM` veya `docker compose down`) derhal kapatın.
+2. **Kimlik Verisini Sıfırlayın**: SQLite veritabanı içerisindeki `node_identity` tablosu sıfırlanmalıdır. Düğüm yeniden başladığında otomatik olarak yeni Ed25519 ve Kyber-768 anahtar çifti oluşturacaktır.
+3. **Eş Önbelleklerini Temizleyin**: Düğümün eski Base32 `.mesh` adresini kullanan komşuların eş önbellek dosyalarından (`peers_*.json`) eski kayıt temizlenmelidir.
+4. **Yeni Kimliği Duyurun**: Yeni düğüm kimliği aktif edildikten sonra komşu düğümlere yeniden el sıkışma (Federation Handshake) gönderilir.
+
+### 2. Kullanıcı Düzeyi (SSH Ed25519 Anahtar İfşası)
+Kullanıcının istemci tarafındaki SSH özel anahtarı çalındığında veya yetkisiz erişim şüphesinde:
+1. Yedek bir yetkili anahtarla veya doğrudan konsol erişimiyle terminale bağlanın.
+2. `/keys list` komutuyla kayıtlı anahtarları listeleyin.
+3. `/keys remove <key_index_veya_pubkey>` komutuyla ifşa olmuş anahtarı kullanıcı profilinden anında silin.
+4. Parolanızı `/passwd` (veya ilgili profil komutu) ile değiştirin.
 
 ---
 
-## Güvenlik Açığı Bildirimi (Vulnerability Disclosure)
+## Güvenlik Açığı Bildirimi ve Sorumlu İfşa (Responsible Disclosure)
 
-Metrice güvenliğine katkıda bulunmak isteyen araştırmacıları memnuniyetle karşılıyoruz.
+Metrice güvenliğine katkıda bulunmak isteyen güvenlik araştırmacılarını memnuniyetle karşılıyoruz.
 
 - **Bildirim Kanalı**: Bir güvenlik açığı tespit ettiyseniz, lütfen GitHub üzerinde genel hata kaydı (**Public Issue**) açmayınız.
-- **İletişim**: Güvenlik bulgularınızı doğrudan GitHub Security Advisory sekmesinden veya e-posta yoluyla proje yöneticilerine şifreli olarak iletiniz.
-- **Müdahale Süresi**:
-  - İlk geri bildirim ve teyit: **24 - 48 saat**
-  - Kritik zafiyetler için yama yayınlama hedefi: **7 gün**
-  - Koordineli açıklama (Coordinated Disclosure): Güvenlik yaması yayınlanana kadar detayların gizli tutulması rica olunur.
+- **İletişim**: Güvenlik bulgularınızı doğrudan GitHub Security Advisory ("Report a vulnerability") sekmesinden veya proje yöneticilerine şifreli olarak iletiniz.
+- **Süreç ve Taahhütler**:
+  - **İlk Geri Bildirim**: Bildiriminiz 24 ila 48 saat içerisinde değerlendirilir ve teyit edilir.
+  - **Düzeltme & Yama Hedefi**: Kritik ve yüksek dereceli açıklar için azami 7 iş günü içinde yama yayınlanır.
+  - **Koordineli Açıklama (Coordinated Disclosure)**: Güvenlik yaması tüm kullanıcılara dağıtılana kadar detayların gizli tutulması rica olunur. Güvenlik bülteninde araştırmacıya teşekkür edilir.

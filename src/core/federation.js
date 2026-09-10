@@ -6,7 +6,7 @@ import { Logger } from '../utils/logger.js';
 import { AddressHelper } from '../utils/addressHelper.js';
 import { CryptoHelper } from '../utils/cryptoHelper.js';
 import { I18n } from '../locales/i18n.js';
-import { OnionRouter, UNIFORM_CELL_SIZE } from './onionRouter.js';
+import { OnionRouter } from './onionRouter.js';
 import { ProxyProtocolParser } from '../utils/proxyProtocol.js';
 
 const log = new Logger('FEDERATION');
@@ -2617,7 +2617,7 @@ export class FederationEngine extends EventEmitter {
 
       try {
         circuit = await this.onionRouter.buildCircuit(hops, targetNodeId);
-      } catch (firstErr) {
+      } catch {
         const guardAddr = hops[0].address;
         let deadChannel = this.connectionPool.get(guardAddr);
         if (!deadChannel && guardAddr.includes(':')) {

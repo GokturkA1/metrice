@@ -1,4 +1,3 @@
-import net from 'node:net';
 import { CONFIG } from '../config/index.js';
 import { I18n } from '../locales/i18n.js';
 
@@ -82,7 +81,7 @@ export class AddressHelper {
     if (totalProvided > 8) return ip;
 
     const numZeros = 8 - totalProvided;
-    const zeros = new Array(Math.max(0, numZeros)).fill(0);
+    const zeros = Array.from({ length: Math.max(0, numZeros) }).fill(0);
     const words = [...headWords, ...zeros, ...tailWords];
     if (words.length !== 8) return ip;
 
@@ -202,7 +201,6 @@ export class AddressHelper {
     // --- KANAL AYRIŞTIRMA (#channel[:target]) ---
     if (type === 'CHANNEL') {
       const channelName = name;
-      const globalChannelName = I18n.t('DEFAULT_CHANNEL_NAME').replace('#', '');
 
       // 1. Küresel Mesh Kanalı (Örn: #genel / #general)
       if (this.isGlobalChannel(channelName) && !target) {
