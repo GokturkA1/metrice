@@ -18,6 +18,7 @@ import { ClientServer } from '../src/core/clientServer.js';
 import { SshClientConnection } from '../src/core/sshServer.js';
 import { AddressHelper } from '../src/utils/addressHelper.js';
 import { CryptoHelper } from '../src/utils/cryptoHelper.js';
+import { Logger } from '../src/utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -418,6 +419,49 @@ async function runPresenceTestSuite() {
 
     fed7.close();
     db7.close();
+
+    // -------------------------------------------------------------
+    // TEST 8: LOG_LEVEL Dinamik Filtreleme (INFO Seviyesinde DEBUG Engeli)
+    // -------------------------------------------------------------
+    const originalLogLevel = process.env.LOG_LEVEL;
+    const originalGlobalLevel = Logger.globalLevel;
+
+    let interceptedLogs = [];
+    const originalConsoleLog = console.log;
+    console.log = (msg) => {
+      interceptedLogs.push(msg);
+    };
+
+    try {
+      Logger.setGlobalLevel('INFO');
+      const testLogger = new Logger('TEST_MOD');
+
+      testLogger.debug('Gizli debug mesaji');
+      testLogger.info('Gorunur info mesaji');
+
+      const debugBlocked = !interceptedLogs.some((l) => l.includes('Gizli debug mesaji'));
+      const infoEmitted = interceptedLogs.some((l) => l.includes('Gorunur info mesaji'));
+
+      Logger.setGlobalLevel('WARN');
+      interceptedLogs = [];
+      testLogger.info('Engellenen info mesaji');
+      testLogger.warn('Gorunur warn mesaji');
+
+      const infoBlockedOnWarn = !interceptedLogs.some((l) => l.includes('Engellenen info mesaji'));
+      const warnEmitted = interceptedLogs.some((l) => l.includes('Gorunur warn mesaji'));
+
+      const test8Ok = debugBlocked && infoEmitted && infoBlockedOnWarn && warnEmitted;
+      record('P.8 [LOGLAMA / LOG_LEVEL] INFO/WARN Seviyesinde Alt Düzey Logların Başarıyla Filtrelenmesi', !!test8Ok,
+        `DebugEngellendi: ${debugBlocked}, InfoYazildi: ${infoEmitted}, InfoWarnEngellendi: ${infoBlockedOnWarn}, WarnYazildi: ${warnEmitted}`);
+    } finally {
+      console.log = originalConsoleLog;
+      Logger.globalLevel = originalGlobalLevel;
+      if (originalLogLevel !== undefined) {
+        process.env.LOG_LEVEL = originalLogLevel;
+      } else {
+        delete process.env.LOG_LEVEL;
+      }
+    }
 
   } catch (err) {
     console.error(`\n${COLOR.RED}[HATA] Test sırasında beklenmeyen hata: ${err.message}${COLOR.RESET}`);
