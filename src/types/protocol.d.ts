@@ -152,3 +152,51 @@ export interface PeerInfo {
   viaRendezvous?: boolean;
   rendezvousRelay?: string;
 }
+
+/**
+ * TCP Saglik & Kalp Atisi (Health / Heartbeat) Protokolu Tip Tanimlari
+ */
+export type HealthCommand = 'PING' | 'HEALTH' | 'CHECK' | 'STATUS' | 'INFO' | 'QUIT';
+
+export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy';
+
+export interface HealthCheckResponse {
+  status: HealthStatus;
+  uptime: number;
+  database: 'healthy' | 'unhealthy';
+  timestamp: number;
+  error?: string;
+}
+
+export interface HeartbeatStatusResponse {
+  status: HealthStatus;
+  version: string;
+  serverName: string;
+  nodeAddress: string;
+  meshRole: MeshRole | string;
+  uptimeSeconds: number;
+  timestamp: number;
+  database: {
+    status: 'healthy' | 'unhealthy';
+    walMode: boolean;
+  };
+  federation: {
+    port: number;
+    activeRendezvousTunnels: number;
+    maxRendezvousTunnels: number;
+    activeCircuits: number;
+  };
+  peers: {
+    totalKnown: number;
+    verified: number;
+  };
+  quantumSecurity: {
+    mlkem768: boolean;
+    strictPq: boolean;
+  };
+  memory: {
+    rssMb: number;
+    heapUsedMb: number;
+  };
+}
+

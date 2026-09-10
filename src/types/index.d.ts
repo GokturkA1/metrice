@@ -2,6 +2,7 @@ export * from './protocol.d.ts';
 export * from '../core/federation.d.ts';
 export * from '../core/onionRouter.d.ts';
 export * from '../core/sshServer.d.ts';
+export * from '../core/healthServer.d.ts';
 export * from '../core/clientServer.d.ts';
 export * from '../core/peerManager.d.ts';
 export * from '../core/terminalSession.d.ts';

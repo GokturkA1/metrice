@@ -9,10 +9,15 @@ export default {
   BOOTSTRAP_FED_PORT: 'Federation Port: {port}',
   BOOTSTRAP_CLIENT_PORT: 'Client TUI Port: {port}',
   BOOTSTRAP_SSH_PORT: 'SSH Sunucu Portu: {port}',
+  BOOTSTRAP_HEALTH_PORT: 'Sağlık / Kalp Atışı Portu: {port} ({outer})',
   BOOTSTRAP_LOG_LEVEL: 'Log Seviyesi: {level}',
   BOOTSTRAP_SHUTTING_DOWN: 'Düğüm kapatılıyor, bağlantılar ve veritabanı temizleniyor...',
   BOOTSTRAP_CLEAN_EXIT: 'Temiz kapanış tamamlandı. Hoşça kalın!',
   BOOTSTRAP_SHUTDOWN_ERROR: 'Kapanış sırasında hata: {error}',
+
+  // Health & Heartbeat Server Logs
+  HEALTH_SRV_LISTENING: 'TCP Sağlık ve Kalp Atışı Sunucusu Hazır -> {host}:{port}',
+  HEALTH_SRV_CLOSED: 'TCP Sağlık ve Kalp Atışı Sunucusu kapatıldı.',
 
   // Database Logs
   DB_LOADED: 'Veritabanı yüklendi: {path}',

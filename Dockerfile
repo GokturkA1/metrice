@@ -20,6 +20,7 @@ ENV NODE_ENV=production \
     FED_PORT=8001 \
     SSH_PORT=2224 \
     CLIENT_PORT=2222 \
+    HEALTH_PORT=8050 \
     DB_FILE=/app/data/data_8001.db \
     PEER_FILE=/app/data/peers_8001.json
 
@@ -28,14 +29,15 @@ ENV NODE_ENV=production \
 # 2222: Telnet / Istemci Terminali
 # 2223: Ozel SSH Portu (Compose eslemesi)
 # 2224: Varsayilan SSH Portu
-EXPOSE 8001 2222 2223 2224
+# 8050: TCP Saglik / Kalp Atisi (Heartbeat) Portu
+EXPOSE 8001 2222 2223 2224 8050
 
 # Ayrik ve guvenli non-root calistirma
 USER node
 
-# Saglik denetimi (Federasyon portuna yerlesik TCP soket kontrolu)
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node --input-type=module -e "import net from 'node:net'; const s = net.connect(process.env.FED_PORT || 8001, '127.0.0.1', () => { s.end(); process.exit(0); }); s.on('error', () => process.exit(1));"
+# Saglik denetimi (Ozel TCP Saglik ve Kalp Atisi portuna yerlesik PING kontrolu)
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD node --input-type=module -e "import net from 'node:net'; const s = net.connect(process.env.HEALTH_PORT || 8050, '127.0.0.1'); s.write('PING\n'); s.on('data', d => { if (d.toString().includes('PONG')) process.exit(0); }); s.on('error', () => process.exit(1)); setTimeout(() => process.exit(1), 2500);"
 
 # Uygulama baslangici
 CMD ["node", "src/index.js"]

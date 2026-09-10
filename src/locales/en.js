@@ -9,10 +9,15 @@ export default {
   BOOTSTRAP_FED_PORT: 'Federation Port: {port}',
   BOOTSTRAP_CLIENT_PORT: 'Client TUI Port: {port}',
   BOOTSTRAP_SSH_PORT: 'SSH Server Port: {port}',
+  BOOTSTRAP_HEALTH_PORT: 'Health / Heartbeat Port: {port} ({outer})',
   BOOTSTRAP_LOG_LEVEL: 'Log Level: {level}',
   BOOTSTRAP_SHUTTING_DOWN: 'Shutting down node, cleaning up connections and database...',
   BOOTSTRAP_CLEAN_EXIT: 'Graceful exit completed. Goodbye!',
   BOOTSTRAP_SHUTDOWN_ERROR: 'Error during shutdown: {error}',
+
+  // Health & Heartbeat Server Logs
+  HEALTH_SRV_LISTENING: 'TCP Health & Heartbeat Server Ready -> {host}:{port}',
+  HEALTH_SRV_CLOSED: 'TCP Health & Heartbeat Server closed.',
 
   // Database Logs
   DB_LOADED: 'Database loaded: {path}',

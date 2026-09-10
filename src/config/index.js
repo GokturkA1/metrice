@@ -15,6 +15,10 @@ export const CONFIG = {
   publicClientPort: parseInt(process.env.PUBLIC_CLIENT_PORT || process.env.CLIENT_PUBLIC_PORT || process.env.CLIENT_PORT || '2222', 10),
   defaultFedPort: 8001,
 
+  // TCP Saglik ve Kalp Atisi (Health / Heartbeat) Ayarlari
+  healthPort: parseInt(process.env.HEALTH_PORT || '8050', 10),
+  allowOuterHeartbeat: process.env.ALLOW_OUTER_HEARTBEAT === 'true' || process.env.ALLOW_OUTER_HEARTBEAK === 'true',
+
   // SSH-2 Sunucu Ayarları
   sshServerVersion: process.env.SSH_SERVER_VERSION || DEFAULT_SSH_SERVER_VERSION,
 

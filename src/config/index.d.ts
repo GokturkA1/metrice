@@ -12,6 +12,8 @@ export interface AppConfig {
   publicSshPort: number;
   publicClientPort: number;
   defaultFedPort: number;
+  healthPort: number;
+  allowOuterHeartbeat: boolean;
   sshServerVersion: string;
   meshRole: MeshRole | string;
   bootstrapPeers: string[];
