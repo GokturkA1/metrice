@@ -735,9 +735,12 @@ export class ClientServer {
         if (userAddress && session) {
           const exitingUser = userAddress;
           this.db.updateUserProfile(exitingUser, session.contacts, session.history);
-          this.sessions.delete(exitingUser);
-          this.notifyAllSessionsRender();
-          this.federation.broadcastUserOffline(exitingUser);
+          const currentActiveSession = this.sessions.get(exitingUser);
+          if (currentActiveSession === session) {
+            this.sessions.delete(exitingUser);
+            this.notifyAllSessionsRender();
+            this.federation.broadcastUserOffline(exitingUser);
+          }
         }
         log.info(I18n.t('CLIENT_CONN_CLOSED', { addr: clientAddr }));
       });

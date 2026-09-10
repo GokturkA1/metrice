@@ -42,7 +42,7 @@ const SSH_MSG = {
   CHANNEL_FAILURE: 100
 };
 
-class SshClientConnection extends EventEmitter {
+export class SshClientConnection extends EventEmitter {
   constructor(socket, hostKey, db, clientServer, options = {}) {
     super();
     this.socket = socket;
@@ -1031,9 +1031,14 @@ class SshClientConnection extends EventEmitter {
       this.authenticatedUser = null;
       try {
         this.db.updateUserProfile(exitingUser, session.contacts, session.history);
-        this.clientServer.sessions.delete(exitingUser);
-        this.clientServer.notifyAllSessionsRender();
-        this.clientServer.federation.broadcastUserOffline(exitingUser);
+
+        // SADECE aktif oturum halen bu sokete aitse sil ve offline anonsu yap
+        const currentActiveSession = this.clientServer.sessions.get(exitingUser);
+        if (currentActiveSession === session) {
+          this.clientServer.sessions.delete(exitingUser);
+          this.clientServer.notifyAllSessionsRender();
+          this.clientServer.federation.broadcastUserOffline(exitingUser);
+        }
       } catch (err) {
         log.error(I18n.t('SSH_CLEANUP_ERROR', { error: err.message }));
       }

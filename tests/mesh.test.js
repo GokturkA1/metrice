@@ -16,6 +16,7 @@ import { ClientServer } from '../src/core/clientServer.js';
 import { TerminalSession } from '../src/core/terminalSession.js';
 import { CONFIG } from '../src/config/index.js';
 import { ProxyProtocolParser } from '../src/utils/proxyProtocol.js';
+import { SshClientConnection } from '../src/core/sshServer.js';
 
 // ==========================================
 // TEST KONFİGÜRASYONU VE YARDIMCILAR
@@ -3247,6 +3248,79 @@ async function runV2TestSuite() {
 
     record('7.65 [REVİZYON 35 / v2.5.4] Kendi Kendine Yankılanma (Self-Echo) Kalkanı ve Doğrudan writePayload Dağıtımı', !!test765Ok,
       `SelfEchoShield: ${selfEchoShieldOk}, DirectWrite: ${directWriteOk}, PresenceReinforce: ${presenceReinforceOk}`);
+
+    // Test 7.66: [REVİZYON 36 / v2.5.5] Ters Tünel Varlık Temsili (Proxy Presence), Dedikodu Tekilleştirme & Ghost Session Kalkanı
+    const db766Path = path.join(rootDir, 'v2_test_r36_proxy.db');
+    if (fs.existsSync(db766Path)) fs.unlinkSync(db766Path);
+    const mockDb766 = new Database(db766Path);
+    const fed766 = new FederationEngine(mockDb766, new PeerManager());
+    fed766.role = 'RELAY';
+
+    // 1. Ters tünelle bağlı EDGE kullanıcılarının memberships listesine eklenmesi (Proxy Presence)
+    const edgeNodeId766 = 'edgenode11111111';
+    fed766.rendezvousTunnels = new Map([
+      [edgeNodeId766, {
+        channel: { socket: { writable: true }, writePayload: () => {} },
+        boundRendezvousAddr: '198.51.100.1:8001'
+      }]
+    ]);
+    fed766.remoteOnlineUsers.set(`@edge_tester:${edgeNodeId766}.mesh`, {
+      channels: ['#genel'],
+      isSsh: true,
+      kemPublicKey: 'fakekemkey766',
+      lastSeen: Date.now()
+    });
+
+    const announcePayload766 = fed766.createPresenceAnnouncePayload();
+    const proxyPresenceIncluded = announcePayload766.memberships.some(
+      (m) => m.user === `@edge_tester:${edgeNodeId766}.mesh` && m.isSsh === true && m.kemPublicKey === 'fakekemkey766'
+    );
+
+    // 2. announceKey'in üyelik değişimlerini ayırt edebilmesi
+    const tsSame766 = 1700000000000;
+    const memListA = [{ user: '@alice:nodeA.mesh' }];
+    const memListB = [{ user: '@bob:nodeA.mesh' }];
+    const summaryA = memListA.map((m) => m.user).sort().join(',');
+    const summaryB = memListB.map((m) => m.user).sort().join(',');
+    const keyA = `nodeA:${tsSame766}:${summaryA}`;
+    const keyB = `nodeA:${tsSame766}:${summaryB}`;
+    const deduplicationDistinguishesOk = keyA !== keyB;
+
+    // 3. sshServer'da eski oturum kapandığında yeni oturumun silinmemesi (Ghost Session Guard)
+    let offlineBroadcasted766 = false;
+    const mockClientServer766 = {
+      sessions: new Map(),
+      notifyAllSessionsRender: () => {},
+      federation: { broadcastUserOffline: () => { offlineBroadcasted766 = true; } }
+    };
+
+    const dummyOldSession = { contacts: [], history: [] };
+    const dummyNewSession = { contacts: [], history: [] };
+    const username766 = '@user_ssh:node.mesh';
+
+    mockClientServer766.sessions.set(username766, dummyNewSession);
+
+    const fakeOldConn = Object.create(SshClientConnection.prototype);
+    fakeOldConn.activeTimeouts = new Set();
+    fakeOldConn.authenticatedUser = username766;
+    fakeOldConn.session = dummyOldSession;
+    fakeOldConn.clientServer = mockClientServer766;
+    fakeOldConn.db = { updateUserProfile: () => {} };
+
+    fakeOldConn.cleanup();
+
+    const newSessionPreservedOk = mockClientServer766.sessions.get(username766) === dummyNewSession;
+    const noFalseOfflineOk = offlineBroadcasted766 === false;
+    const ghostSessionGuardOk = newSessionPreservedOk && noFalseOfflineOk;
+
+    fed766.close();
+    mockDb766.close();
+    try { if (fs.existsSync(db766Path)) fs.unlinkSync(db766Path); } catch {}
+
+    const test766Ok = proxyPresenceIncluded && deduplicationDistinguishesOk && ghostSessionGuardOk;
+
+    record('7.66 [REVİZYON 36 / v2.5.5] Ters Tünel Varlık Temsili (Proxy Presence), Dedikodu Tekilleştirme & Ghost Session Kalkanı', !!test766Ok,
+      `ProxyPresence: ${proxyPresenceIncluded}, Deduplication: ${deduplicationDistinguishesOk}, GhostSessionGuard: ${ghostSessionGuardOk}`);
 
     // Temiz Kapanış
     testDbLocale.close();

@@ -1068,7 +1068,10 @@ export class FederationEngine extends EventEmitter {
       }
 
       // Dedikodu (Gossip) Yayılımı: Röle düğümleri geçerli PRESENCE_ANNOUNCE paketlerini ağdaki diğer eşlere iletir
-      const announceKey = `${nodeId}:${timestamp}`;
+      const membershipSummary = Array.isArray(payload.memberships)
+        ? payload.memberships.map((m) => m?.user || '').sort().join(',')
+        : '';
+      const announceKey = `${nodeId}:${timestamp}:${membershipSummary}`;
       if (!this.seenPresenceAnnounces) this.seenPresenceAnnounces = new Set();
       if (!this.seenPresenceAnnounces.has(announceKey)) {
         this.seenPresenceAnnounces.add(announceKey);
@@ -1085,7 +1088,14 @@ export class FederationEngine extends EventEmitter {
             const [host, portStr] = peer.split(':');
             const port = parseInt(portStr, 10);
             if (!host || isNaN(port)) continue;
-            this.sendPacket(host, port, payload).catch(() => {});
+            
+            this.getOrCreateSecureChannel(host, port)
+              .then((ch) => {
+                if (ch && ch.isReady && ch.socket && ch.socket.writable) {
+                  ch.writePayload(payload);
+                }
+              })
+              .catch(() => {});
           }
         } else if (CONFIG.allowEdgeGossip && this.rendezvousRelays && this.rendezvousRelays.size >= 2) {
           // Faz 2: EDGE düğümü üzerinden bağlı Röleler arası Gossip (Presence) Köprüleme
@@ -2174,6 +2184,26 @@ export class FederationEngine extends EventEmitter {
 
     const sig = CryptoHelper.sign(dataToSign, this.identityKeyPair.privateKey);
     const myState = this.getLocalStateFn ? this.getLocalStateFn() : { memberships: [] };
+    const allMemberships = [...(myState.memberships || [])];
+
+    // Röle isek, bize ters tünelle bağlı olan EDGE kullanıcılarını da anonsa dahil et (Proxy Presence)
+    if (this.isRelay() && this.rendezvousTunnels) {
+      for (const [tNodeId] of this.rendezvousTunnels.entries()) {
+        for (const [userAddr, uData] of this.remoteOnlineUsers.entries()) {
+          if (userAddr.includes(`:${tNodeId}.mesh`)) {
+            // Mükerrer eklemeyi önle
+            if (!allMemberships.some((m) => m.user === userAddr)) {
+              allMemberships.push({
+                user: userAddr,
+                channels: uData.channels || [],
+                isSsh: !!uData.isSsh,
+                kemPublicKey: uData.kemPublicKey || ''
+              });
+            }
+          }
+        }
+      }
+    }
 
     return {
       type: 'PRESENCE_ANNOUNCE',
@@ -2183,7 +2213,7 @@ export class FederationEngine extends EventEmitter {
       kemPublicKey: this.kemKeyPair.publicKey,
       identityPublicKey: this.identityKeyPair.publicKey,
       channels,
-      memberships: myState.memberships || [],
+      memberships: allMemberships,
       timestamp,
       sig
     };
