@@ -930,6 +930,12 @@ export class FederationEngine extends EventEmitter {
       // Ağdaki diğer eşlere / rölelere (TR) bu EDGE'in bu röleye tünellendiğini anons et
       this.broadcastRouteUpdate(nodeId, boundRendezvousAddr, edgeKemKey, identityPublicKey);
 
+      const rawRemoteSock = channel?.socket?.realRemoteAddress || channel?.socket?.remoteAddress || '';
+      const cleanRemoteSock = rawRemoteSock.replace(/^::ffff:/, '');
+      if (cleanRemoteSock && this.peerManager && typeof this.peerManager.registerEdgeIp === 'function') {
+        this.peerManager.registerEdgeIp(cleanRemoteSock);
+      }
+
       log.info(I18n.t('FED_RDV_TUNNEL_BOUND', { node: nodeId, current: this.rendezvousTunnels.size }));
       channel.writePayload({
         type: 'RENDEZVOUS_ACK',
@@ -1016,6 +1022,14 @@ export class FederationEngine extends EventEmitter {
       };
       this.presenceTable.set(nodeId, record);
 
+      if (record.role === 'EDGE') {
+        const rawRemote = channel?.socket?.realRemoteAddress || channel?.socket?.remoteAddress || '';
+        const cleanRemote = rawRemote.replace(/^::ffff:/, '');
+        if (cleanRemote && this.peerManager && typeof this.peerManager.registerEdgeIp === 'function') {
+          this.peerManager.registerEdgeIp(cleanRemote);
+        }
+      }
+
       // Dinamik port koruması: Yalnızca RELAY ve Transit düğümlerin fiziksel host:port çiftini sakla (EDGE arkası CGNAT portları saklanmaz)
       if (role === 'RELAY' || role === 'CAP_RELAY' || role === 'CAP_EDGE_TRANSIT') {
         if (Array.isArray(safeRendezvous) && safeRendezvous.length > 0) {
@@ -1041,7 +1055,7 @@ export class FederationEngine extends EventEmitter {
             const [h, p] = rdvAddr.split(':');
             const pNum = parseInt(p, 10);
             if (h && !isNaN(pNum) && !this.isSelfPeerAddress(h, pNum)) {
-              this.peerManager.addOrUpdate(rdvAddr, true);
+              this.peerManager.addOrUpdate(rdvAddr, true, true);
             }
           }
         }
@@ -1256,7 +1270,7 @@ export class FederationEngine extends EventEmitter {
         this.db.upsertRoute(relayRecord);
         this.nodePhysicalAddresses.set(relayNodeId, canonicalRelayAddr);
         if (this.peerManager && canonicalRelayAddr.includes(':') && !canonicalRelayAddr.endsWith('.mesh')) {
-          this.peerManager.addOrUpdate(canonicalRelayAddr, true);
+          this.peerManager.addOrUpdate(canonicalRelayAddr, true, true);
         }
       }
 
@@ -1274,6 +1288,14 @@ export class FederationEngine extends EventEmitter {
       this.presenceTable.set(nodeId, edgeRecord);
       this.db.upsertRoute(edgeRecord);
 
+      if (edgeRecord.role === 'EDGE') {
+        const rawRemote = channel?.socket?.realRemoteAddress || channel?.socket?.remoteAddress || '';
+        const cleanRemote = rawRemote.replace(/^::ffff:/, '');
+        if (cleanRemote && this.peerManager && typeof this.peerManager.registerEdgeIp === 'function') {
+          this.peerManager.registerEdgeIp(cleanRemote);
+        }
+      }
+
       // Opportunistic Relay Peering: Anons edilen düğüm bir Röle ise doğrudan eş havuzuna ekle
       if (this.peerManager && Array.isArray(safeRdv) && (role === 'RELAY' || role === 'CAP_RELAY')) {
         for (const rdvAddr of safeRdv) {
@@ -1281,7 +1303,7 @@ export class FederationEngine extends EventEmitter {
             const [h, p] = rdvAddr.split(':');
             const pNum = parseInt(p, 10);
             if (h && !isNaN(pNum) && !this.isSelfPeerAddress(h, pNum)) {
-              this.peerManager.addOrUpdate(rdvAddr, true);
+              this.peerManager.addOrUpdate(rdvAddr, true, true);
             }
           }
         }
@@ -1363,7 +1385,7 @@ export class FederationEngine extends EventEmitter {
           this.emit('presence_change');
 
           if (parsedSender.host && parsedSender.port) {
-            this.peerManager.addOrUpdate(`${parsedSender.host}:${parsedSender.port}`, true);
+            this.peerManager.addOrUpdate(`${parsedSender.host}:${parsedSender.port}`, true, true);
           }
         }
       }
@@ -1394,7 +1416,7 @@ export class FederationEngine extends EventEmitter {
         }
         this.channelSubscribers.get(payload.channel).add(payload.subscriberNode);
         log.info(I18n.t('FED_CHANNEL_SUBSCRIBED', { peer: payload.subscriberNode, channel: payload.channel }));
-        this.peerManager.addOrUpdate(payload.subscriberNode, true);
+        this.peerManager.addOrUpdate(payload.subscriberNode, true, true);
         channel.writePayload({ status: 'subscribed', channel: payload.channel });
       }
     } else if (payload.type === 'CHANNEL_UNSUBSCRIBE') {
@@ -1518,7 +1540,7 @@ export class FederationEngine extends EventEmitter {
           const [h, p] = payload.selfNode.split(':');
           const pNum = parseInt(p, 10);
           if (h && !isNaN(pNum) && !this.isSelfPeerAddress(h, pNum)) {
-            this.peerManager.addOrUpdate(payload.selfNode, true);
+            this.peerManager.addOrUpdate(payload.selfNode, true, true);
           }
         }
         if (Array.isArray(payload.peers)) {
@@ -1527,7 +1549,7 @@ export class FederationEngine extends EventEmitter {
               const [h, port] = p.split(':');
               const pNum = parseInt(port, 10);
               if (h && !isNaN(pNum) && !this.isSelfPeerAddress(h, pNum)) {
-                this.peerManager.addOrUpdate(p, true);
+                this.peerManager.addOrUpdate(p, true, true);
               }
             }
           });
@@ -1734,6 +1756,9 @@ export class FederationEngine extends EventEmitter {
       secureChannel.on('ready', () => {
         rawSocket.setTimeout(0);
         log.info(I18n.t('FED_CONNECTED', { host, port }));
+        if (this.peerManager && typeof this.peerManager.addOrUpdate === 'function') {
+          this.peerManager.addOrUpdate(`${targetHost}:${targetPort}`, true, false);
+        }
         resolve(secureChannel);
       });
 
@@ -1832,7 +1857,11 @@ export class FederationEngine extends EventEmitter {
             channel.writePayload(payload);
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          if (this.peerManager && typeof this.peerManager.addOrUpdate === 'function') {
+            this.peerManager.addOrUpdate(`${host}:${port}`, false);
+          }
+        });
     }
 
     if (this.connectionPool) {
@@ -1941,12 +1970,12 @@ export class FederationEngine extends EventEmitter {
         });
 
         if (res && res.type === 'GOSSIP_RESPONSE') {
-          this.peerManager.addOrUpdate(peer, true);
+          this.peerManager.addOrUpdate(peer, true, false);
           if (res.selfNode && res.selfNode.includes(':') && !res.selfNode.endsWith('.mesh')) {
             const [h, p] = res.selfNode.split(':');
             const pNum = parseInt(p, 10);
             if (h && !isNaN(pNum) && !this.isSelfPeerAddress(h, pNum)) {
-              this.peerManager.addOrUpdate(res.selfNode, true);
+              this.peerManager.addOrUpdate(res.selfNode, true, true);
             }
           }
           if (Array.isArray(res.peers)) {
@@ -1955,7 +1984,7 @@ export class FederationEngine extends EventEmitter {
                 const [h, pPort] = p.split(':');
                 const pNum = parseInt(pPort, 10);
                 if (h && !isNaN(pNum) && !this.isSelfPeerAddress(h, pNum)) {
-                  this.peerManager.addOrUpdate(p, true);
+                  this.peerManager.addOrUpdate(p, true, true);
                 }
               }
             });
@@ -2352,7 +2381,11 @@ export class FederationEngine extends EventEmitter {
       const [host, portStr] = peer.split(':');
       const port = parseInt(portStr, 10);
       if (!host || isNaN(port)) continue;
-      this.sendPacket(host, port, updatePayload).catch(() => {});
+      this.sendPacket(host, port, updatePayload).catch(() => {
+        if (this.peerManager && typeof this.peerManager.addOrUpdate === 'function') {
+          this.peerManager.addOrUpdate(`${host}:${port}`, false);
+        }
+      });
     }
 
     if (this.rendezvousRelays) {
@@ -2508,7 +2541,11 @@ export class FederationEngine extends EventEmitter {
               channel.writePayload(payload);
             }
           })
-          .catch(() => {});
+          .catch(() => {
+            if (this.peerManager && typeof this.peerManager.addOrUpdate === 'function') {
+              this.peerManager.addOrUpdate(poolKey, false);
+            }
+          });
       }
     }
   }

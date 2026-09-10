@@ -3398,6 +3398,37 @@ async function runV2TestSuite() {
     record('7.67 [REVİZYON 37 / v2.5.9] AutoNAT Edge Zehirlenme Kalkanı, Reflected IP İzolasyonu ve Tekilleştirilmiş Varlık Dağıtımı', !!test767Ok,
       `AddrProtected: ${edgeNodeAddrProtected}, PublicRecognized: ${selfPublicRecognized}, Evicted: ${evictedFromPeers}, ReAddBlocked: ${reAddBlocked}, RendezvousSafe: ${rendezvousSelfAvoided}, BroadcastDedup: ${broadcastDeduplicated}`);
 
+    // Test 7.68: [REVİZYON 38 / v2.5.10] Rendezvous Edge Client IP İzolasyonu, Dedikodu (Gossip) Karantinası ve Hızlı Hata Tahliyesi
+    const pm768 = new PeerManager();
+    // 1. Edge IP kaydı ve anında tahliye
+    pm768.addOrUpdate('78.174.205.111:9001', true);
+    const inPoolBeforeReg = pm768.peers.has('78.174.205.111:9001');
+    pm768.registerEdgeIp('78.174.205.111');
+    const evictedOnEdgeReg = !pm768.peers.has('78.174.205.111:9001');
+    pm768.addOrUpdate('78.174.205.111:9001', true);
+    const edgeReAddBlocked = !pm768.peers.has('78.174.205.111:9001');
+
+    // 2. Gossip bağışıklığı: Mevcut hata sayısının dedikoduyla sıfırlanamaması
+    pm768.addOrUpdate('198.51.100.5:8001', false); // 1. hata
+    const initialFailures = pm768.peers.get('198.51.100.5:8001').failures;
+    pm768.addOrUpdate('198.51.100.5:8001', true, true); // Dedikodudan gelen bildirim
+    const gossipDidNotResetFailure = pm768.peers.get('198.51.100.5:8001').failures === 1 && pm768.peers.get('198.51.100.5:8001').score === 95;
+
+    // 3. Hatalı eşin dedikodu örneğine (getRandomSample) dahil edilmemesi
+    const sampleExcludesFailed = !pm768.getRandomSample(10).includes('198.51.100.5:8001');
+
+    // 4. Dedikodudan yeni öğrenilen eşin ilk hatada derhal tahliye edilmesi
+    pm768.addOrUpdate('198.51.100.6:8001', true, true); // Dedikodudan yeni eş
+    const gossipAdded = pm768.peers.has('198.51.100.6:8001');
+    pm768.addOrUpdate('198.51.100.6:8001', false); // İlk doğrudan bağlantı başarısız
+    const evictedImmediatelyOnGossipFailure = !pm768.peers.has('198.51.100.6:8001');
+
+    pm768.close();
+
+    const test768Ok = inPoolBeforeReg && evictedOnEdgeReg && edgeReAddBlocked && gossipDidNotResetFailure && sampleExcludesFailed && gossipAdded && evictedImmediatelyOnGossipFailure;
+    record('7.68 [REVİZYON 38 / v2.5.10] Rendezvous Edge Client IP İzolasyonu, Dedikodu Karantinası ve Hızlı Hata Tahliyesi', !!test768Ok,
+      `InPool: ${inPoolBeforeReg}, Evicted: ${evictedOnEdgeReg}, Blocked: ${edgeReAddBlocked}, GossipImmune: ${gossipDidNotResetFailure}, SampleClean: ${sampleExcludesFailed}, QuickEvict: ${evictedImmediatelyOnGossipFailure}`);
+
     // Temiz Kapanış
     testDbLocale.close();
     try { if (fs.existsSync(testDbLocalePath)) fs.unlinkSync(testDbLocalePath); } catch {}

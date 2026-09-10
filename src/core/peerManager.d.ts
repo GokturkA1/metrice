@@ -14,14 +14,17 @@ export class PeerManager {
   broadcastPort: number;
   selfNodeAddress: string;
   publicIp: string | null;
+  edgeIps: Set<string>;
 
   constructor(storagePath?: string | null);
 
+  registerEdgeIp(ip: string): void;
+  evictHost(host: string): void;
   isSelfAddress(host: string, port?: number | null): boolean;
   setPublicIp(ip: string): void;
   loadPeers(): void;
   savePeers(): void;
-  addOrUpdate(peerAddr: string, success?: boolean): void;
+  addOrUpdate(peerAddr: string, success?: boolean, fromGossip?: boolean): void;
   getRandomSample(k?: number): string[];
   getAllPeers(): string[];
   startLanDiscovery(): void;

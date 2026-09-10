@@ -1,4 +1,4 @@
-# Metrice v2.5.9
+# Metrice v2.5.10
 
 [English](README.md) | [Türkçe](README.tr.md)
 
@@ -47,7 +47,7 @@ The system incorporates NIST FIPS 203 ML-KEM-768 key encapsulation, Ed25519-base
 
 ### 6. In-Memory SSH-2 Server & Two-Factor Vault Authentication
 - Pure JavaScript SSH-2 server operates natively without requiring external system daemons (`sshd`).
-- **Dynamic Version Synchronisation:** Server identification string (`sshServerVersion`) dynamically aligns with `package.json` through `src/version.js` (default: `SSH-2.0-Metrice_2.5.9`) and remains configurable via environment variables.
+- **Dynamic Version Synchronisation:** Server identification string (`sshServerVersion`) dynamically aligns with `package.json` through `src/version.js` (default: `SSH-2.0-Metrice_2.5.10`) and remains configurable via environment variables.
 - **Two-Factor Ephemeral Vault Derivation:** User passwords are salted with the client's Ed25519 public key and derived via Scrypt (N=16384, r=8, p=1) and HKDF-SHA256. Authentication fails without the registered physical Ed25519 key, even if the password is correct.
 
 ### 7. Layer 4 HAProxy PROXY Protocol v1 & v2 Support
@@ -203,7 +203,7 @@ All settings can be configured via environment variables (`process.env`) or `src
 | `publicFederationPort` | `PUBLIC_FED_PORT` / `FED_PUBLIC_PORT` | `FED_PORT` (8001) | Public federation port announced to peers and dialback target |
 | `publicSshPort` | `PUBLIC_SSH_PORT` / `SSH_PUBLIC_PORT` | `SSH_PORT` (2224) | Public SSH port announced to peers |
 | `publicClientPort` | `PUBLIC_CLIENT_PORT` / `CLIENT_PUBLIC_PORT` | `CLIENT_PORT` (2222) | Public Telnet TUI port announced to peers |
-| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.5.9'` | SSH server identification banner |
+| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.5.10'` | SSH server identification banner |
 | `meshRole` | `MESH_ROLE` | `'EDGE'` | Node routing role (`'RELAY'` or `'EDGE'`) |
 | `bootstrapPeers` | `BOOTSTRAP_PEERS` | `''` | Comma-separated list of static bootstrap relay peers |
 | `maxRendezvousTunnels`| `MAX_RENDEZVOUS_TUNNELS` | `64` | Maximum incoming reverse tunnels a RELAY accepts |

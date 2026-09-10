@@ -1,4 +1,4 @@
-# Metrice v2.5.9
+# Metrice v2.5.10
 
 [English](README.md) | [Türkçe](README.tr.md)
 
@@ -47,7 +47,7 @@ Sistem; NIST FIPS 203 ML-KEM-768 anahtar kapsülleme, Ed25519 tabanlı RFC 4648 
 
 ### 6. Bellek İçi SSH-2 Sunucusu ve İki Faktörlü Kasa Doğrulaması (2FA Vault)
 - Harici SSH arka plan süreci (daemon) gerekmeksizin saf JavaScript ile yazılmış SSH-2 sunucusu barındırır.
-- Dinamik Sürüm Sistemi & Yapılandırılabilir Kimlik: Sunucu kimlik dizgesi (`sshServerVersion`) ve sistem sürümü merkezi sürüm sistemi (`src/version.js`) üzerinden `package.json` ile dinamik olarak senkronize edilir (varsayılan: `SSH-2.0-Metrice_2.5.9`), ortam değişkeni veya konfigürasyon üzerinden özelleştirilebilir.
+- Dinamik Sürüm Sistemi & Yapılandırılabilir Kimlik: Sunucu kimlik dizgesi (`sshServerVersion`) ve sistem sürümü merkezi sürüm sistemi (`src/version.js`) üzerinden `package.json` ile dinamik olarak senkronize edilir (varsayılan: `SSH-2.0-Metrice_2.5.10`), ortam değişkeni veya konfigürasyon üzerinden özelleştirilebilir.
 - Donanım Anahtarı Bağlama: Kullanıcı parolası, istemcinin Ed25519 açık anahtarı ile tuzlanarak Scrypt (N=16384, r=8, p=1) ve HKDF-SHA256 algoritmalarından geçirilir. Kayıtlı Ed25519 anahtarı olmaksızın doğru parola girilse dahi kimlik doğrulanamaz.
 
 ### 7. HAProxy PROXY Protocol v1 & v2 Desteği ve L4 Güvenliği
@@ -203,7 +203,7 @@ Tüm parametreler ortam değişkenleri (`process.env`) veya `src/config/index.js
 | `publicFederationPort` | `PUBLIC_FED_PORT` / `FED_PUBLIC_PORT` | `FED_PORT` (8001) | Dış ağa anons edilen ve dialback yapılan genel federasyon portu |
 | `publicSshPort` | `PUBLIC_SSH_PORT` / `SSH_PUBLIC_PORT` | `SSH_PORT` (2224) | Dış ağa duyurulan genel SSH portu |
 | `publicClientPort` | `PUBLIC_CLIENT_PORT` / `CLIENT_PUBLIC_PORT` | `CLIENT_PORT` (2222) | Dış ağa duyurulan genel Telnet TUI portu |
-| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.5.9'` | SSH sunucusu protokol kimlik dizgesi (Sürüm sistemi ile dinamik) |
+| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.5.10'` | SSH sunucusu protokol kimlik dizgesi (Sürüm sistemi ile dinamik) |
 | `meshRole` | `MESH_ROLE` | `'EDGE'` | Düğüm rolü (`'RELAY'` veya `'EDGE'`) |
 | `bootstrapPeers` | `BOOTSTRAP_PEERS` | `''` | Kalıcı başlangıç ve korumalı röle eş listesi (virgülle ayrılmış) |
 | `maxRendezvousTunnels`| `MAX_RENDEZVOUS_TUNNELS` | `64` | Bir RELAY düğümünün kabul edeceği azami ters tünel sayısı |

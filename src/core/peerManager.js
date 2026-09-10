@@ -14,9 +14,36 @@ export class PeerManager {
     this.udpSocket = null;
     this.broadcastPort = 41234;
     this.publicIp = null;
+    this.edgeIps = new Set();
     const publicPort = CONFIG.publicFederationPort || CONFIG.federationPort;
     this.selfNodeAddress = `${CONFIG.serverName}:${publicPort}`;
     this.loadPeers();
+  }
+
+  registerEdgeIp(ip) {
+    if (!ip) return;
+    const cleanIp = ip.replace(/^::ffff:/, '');
+    this.edgeIps.add(cleanIp);
+    this.evictHost(cleanIp);
+  }
+
+  evictHost(host) {
+    if (!host) return;
+    const cleanHost = host.replace(/^::ffff:/, '');
+    let modified = false;
+    for (const addr of Array.from(this.peers.keys())) {
+      if (!addr || !addr.includes(':')) continue;
+      const [h] = addr.split(':');
+      const cleanH = h.replace(/^::ffff:/, '');
+      if (cleanH === cleanHost) {
+        this.peers.delete(addr);
+        modified = true;
+        log.info(I18n.t('PEER_EVICTED', { peer: addr }));
+      }
+    }
+    if (modified) {
+      this.savePeers();
+    }
   }
 
   isSelfAddress(host, port) {
@@ -85,9 +112,21 @@ export class PeerManager {
           if (!addr || !addr.includes(':')) return;
           const [host, portStr] = addr.split(':');
           const port = parseInt(portStr, 10);
+          const cleanHost = host.replace(/^::ffff:/, '');
           
-          // Dosyada kalan eski kendi IP'lerini ve loopback adreslerini temizle
-          if (!this.isSelfAddress(host, port) && host !== 'localhost' && host !== '127.0.0.1' && host !== '::1' && host !== '0.0.0.0' && host !== '255.255.255.255') {
+          // Dosyada kalan eski kendi IP'lerini, loopback adreslerini ve yüksek hatalı eşleri temizle
+          if (
+            !this.isSelfAddress(host, port) &&
+            cleanHost !== 'localhost' &&
+            cleanHost !== '127.0.0.1' &&
+            cleanHost !== '::1' &&
+            cleanHost !== '0.0.0.0' &&
+            cleanHost !== '255.255.255.255' &&
+            (!this.edgeIps || (!this.edgeIps.has(cleanHost) && !this.edgeIps.has(host)))
+          ) {
+            if (meta && (meta.failures >= 3 || meta.score <= 0)) {
+              return;
+            }
             this.peers.set(addr, meta);
           }
         });
@@ -108,18 +147,25 @@ export class PeerManager {
     }
   }
 
-  addOrUpdate(peerAddr, success = true) {
+  addOrUpdate(peerAddr, success = true, fromGossip = false) {
     if (!peerAddr || !peerAddr.includes(':')) return;
 
     const [host, portStr] = peerAddr.split(':');
     const port = parseInt(portStr, 10);
     if (!host || isNaN(port) || port <= 0 || port > 65535) return;
 
+    const cleanHost = host.replace(/^::ffff:/, '');
+
     // Loopback, localhost ve broadcast adreslerini engelle (Gossip havuzunu kirletmeyi önler)
-    if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0' || host === '255.255.255.255') return;
+    if (cleanHost === 'localhost' || cleanHost === '127.0.0.1' || cleanHost === '::1' || cleanHost === '0.0.0.0' || cleanHost === '255.255.255.255') return;
 
     // Kendi IP veya domainimiz ise havuza ekleme (IP sızıntısını önler)
     if (this.isSelfAddress(host, port)) return;
+
+    // Bilinen EDGE düğümü IP'si ise havuza ekleme (CGNAT arkası port zehirlenmesini önler)
+    if (this.edgeIps && (this.edgeIps.has(cleanHost) || this.edgeIps.has(host))) return;
+
+    const isBootstrap = Array.isArray(CONFIG && CONFIG.bootstrapPeers) && CONFIG.bootstrapPeers.includes(peerAddr);
 
     if (this.peers.size >= 250 && !this.peers.has(peerAddr)) {
       let lowestKey = null;
@@ -133,20 +179,38 @@ export class PeerManager {
       if (lowestKey) this.peers.delete(lowestKey);
     }
 
-    const current = this.peers.get(peerAddr) || { score: 100, lastSeen: Date.now(), failures: 0 };
+    const current = this.peers.get(peerAddr) || {
+      score: fromGossip ? 60 : 100,
+      lastSeen: Date.now(),
+      failures: 0,
+      fromGossip: !!fromGossip
+    };
 
     if (success) {
-      current.score = 100;
-      current.failures = 0;
-      current.lastSeen = Date.now();
+      if (fromGossip) {
+        // Üçüncü taraf dedikodusu (gossip) mevcut yerel başarısızlık sayısını ve skorunu sıfırlayamaz
+        if (this.peers.has(peerAddr)) {
+          current.lastSeen = Date.now();
+          this.savePeers();
+          return;
+        }
+        current.score = 60;
+        current.failures = 0;
+        current.fromGossip = true;
+        current.lastSeen = Date.now();
+      } else {
+        // Doğrudan bağlantı doğrulaması
+        current.score = 100;
+        current.failures = 0;
+        current.fromGossip = false;
+        current.lastSeen = Date.now();
+      }
     } else {
       current.score -= 5;
       current.failures += 1;
     }
 
-    const isBootstrap = Array.isArray(CONFIG && CONFIG.bootstrapPeers) && CONFIG.bootstrapPeers.includes(peerAddr);
-
-    if (!isBootstrap && (current.score <= 0 || current.failures >= 10)) {
+    if (!isBootstrap && (current.score <= 0 || current.failures >= 10 || (current.fromGossip && current.failures >= 1))) {
       this.peers.delete(peerAddr);
       log.debug(I18n.t('PEER_EVICTED', { peer: peerAddr }));
     } else {
@@ -157,7 +221,9 @@ export class PeerManager {
   }
 
   getRandomSample(k = 3) {
-    const list = Array.from(this.peers.keys());
+    const list = Array.from(this.peers.entries())
+      .filter(([, meta]) => !meta || (meta.failures === 0 && meta.score >= 80))
+      .map(([addr]) => addr);
     if (list.length === 0) return [];
     
     for (let i = list.length - 1; i > 0; i--) {
