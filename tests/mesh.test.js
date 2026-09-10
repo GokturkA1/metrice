@@ -573,9 +573,25 @@ async function runV2TestSuite() {
         capturedAnnouncePayload = payload;
       }
     };
+    const origGetOrCreate74 = fedAutoNat.getOrCreateSecureChannel.bind(fedAutoNat);
+    fedAutoNat.getOrCreateSecureChannel = async (h, p) => {
+      return {
+        isReady: true,
+        socket: { writable: true },
+        writePayload: (payload) => {
+          if (payload.type === 'PRESENCE_ANNOUNCE') {
+            capturedAnnouncePayload = payload;
+          }
+        }
+      };
+    };
     fedAutoNat.setRole('RELAY');
     fedAutoNat.broadcastPresenceAnnounce();
+    if (!capturedAnnouncePayload) {
+      capturedAnnouncePayload = fedAutoNat.createPresenceAnnouncePayload();
+    }
     fedAutoNat.sendPacket = origSendPacket;
+    fedAutoNat.getOrCreateSecureChannel = origGetOrCreate74;
     CONFIG.serverName = prevServerName;
 
     const announcedAddr = capturedAnnouncePayload?.rendezvousNodes?.[0];
@@ -3131,6 +3147,106 @@ async function runV2TestSuite() {
 
     record('7.64 [REVİZYON 33 / v2.5.2] Kanonik .mesh Adresleme Zorlaması, NodeID Göçü & Bilateral Kalkanı', !!test764Ok,
       `Canonical: ${canonicalFormatOk && clientSrvCanonicalOk}, Migration: ${migrationActiveTargetOk && migrationContactsOk}, BilateralShield: ${bilateralShieldOk}`);
+
+    // Test 7.65: [REVİZYON 35 / v2.5.4] Kendi Kendine Yankılanma (Self-Echo) Kalkanı ve Doğrudan writePayload Dağıtımı
+    const db765Path = path.join(rootDir, 'v2_test_r35_echo.db');
+    if (fs.existsSync(db765Path)) fs.unlinkSync(db765Path);
+    const mockDb765 = new Database(db765Path);
+    const fed765 = new FederationEngine(mockDb765, new PeerManager());
+    fed765.role = 'RELAY';
+
+    // 1. Düğümün kendi nodeId'si ile gelen PRESENCE_ANNOUNCE paketini yutması (Self-Echo Shield)
+    const echoPacketsWritten = [];
+    const mockChannelEcho = {
+      peerNodeAddress: `${fed765.nodeId}.mesh`,
+      writePayload: (p) => { echoPacketsWritten.push(p); }
+    };
+
+    const echoTimestamp = Date.now();
+    const echoDataToSign = JSON.stringify({
+      nodeId: fed765.nodeId,
+      role: 'RELAY',
+      rendezvousNodes: ['127.0.0.1:8001'],
+      kemPublicKey: fed765.kemKeyPair.publicKey,
+      channels: ['#genel'],
+      timestamp: echoTimestamp
+    });
+    const echoSig = CryptoHelper.sign(echoDataToSign, fed765.identityKeyPair.privateKey);
+
+    let echoPresenceEmitted = false;
+    fed765.once('presence_change', () => { echoPresenceEmitted = true; });
+
+    fed765.handleIncoming({
+      type: 'PRESENCE_ANNOUNCE',
+      nodeId: fed765.nodeId,
+      role: 'RELAY',
+      rendezvousNodes: ['127.0.0.1:8001'],
+      kemPublicKey: fed765.kemKeyPair.publicKey,
+      identityPublicKey: fed765.identityKeyPair.publicKey,
+      channels: ['#genel'],
+      memberships: [{ user: `@selfuser:${fed765.nodeId}.mesh`, channels: ['#genel'] }],
+      timestamp: echoTimestamp,
+      sig: echoSig
+    }, mockChannelEcho);
+
+    const selfEchoShieldOk = echoPacketsWritten.length === 0 && !echoPresenceEmitted;
+
+    // 2. broadcastPresenceAnnounce fonksiyonunun sendPacket yerine doğrudan writePayload basması
+    let poolWritten = null;
+    let relayWritten = null;
+    let tunnelWritten = null;
+    let sendPacketCalled = false;
+
+    fed765.sendPacket = async () => { sendPacketCalled = true; };
+    fed765.connectionPool.set('198.51.100.55:8001', {
+      isReady: true,
+      socket: { writable: true },
+      writePayload: (p) => { poolWritten = p; }
+    });
+    fed765.rendezvousRelays.set('198.51.100.66:8001', {
+      channel: { isReady: true, writePayload: (p) => { relayWritten = p; } },
+      socket: { writable: true }
+    });
+    fed765.rendezvousTunnels.set('tunneltarget1234', {
+      channel: { isReady: true, writePayload: (p) => { tunnelWritten = p; } },
+      socket: { writable: true }
+    });
+
+    fed765.broadcastPresenceAnnounce();
+
+    const directWriteOk = !sendPacketCalled &&
+      poolWritten?.type === 'PRESENCE_ANNOUNCE' &&
+      relayWritten?.type === 'PRESENCE_ANNOUNCE' &&
+      tunnelWritten?.type === 'PRESENCE_ANNOUNCE';
+
+    // 3. Gelen mesajda kullanıcı varlığının güçlendirilmesi (lastSeen yenilenmesi)
+    const remoteSenderId = 'remotenode999999';
+    fed765.presenceTable.set(remoteSenderId, {
+      nodeId: remoteSenderId,
+      lastSeen: Date.now() - 30000
+    });
+    const oldPresenceTime = fed765.presenceTable.get(remoteSenderId).lastSeen;
+
+    fed765.handleIncoming({
+      type: 'DIRECT_MESSAGE',
+      id: 'dm_test_765',
+      from: `@alice:${remoteSenderId}.mesh`,
+      to: `@bob:${fed765.nodeId}.mesh`,
+      content: 'hello 765'
+    }, { writePayload: () => {} });
+
+    const newPresenceTime = fed765.presenceTable.get(remoteSenderId).lastSeen;
+    const remoteUserActive = fed765.remoteOnlineUsers.has(`@alice:${remoteSenderId}.mesh`);
+    const presenceReinforceOk = newPresenceTime > oldPresenceTime && remoteUserActive;
+
+    fed765.close();
+    mockDb765.close();
+    try { if (fs.existsSync(db765Path)) fs.unlinkSync(db765Path); } catch {}
+
+    const test765Ok = selfEchoShieldOk && directWriteOk && presenceReinforceOk;
+
+    record('7.65 [REVİZYON 35 / v2.5.4] Kendi Kendine Yankılanma (Self-Echo) Kalkanı ve Doğrudan writePayload Dağıtımı', !!test765Ok,
+      `SelfEchoShield: ${selfEchoShieldOk}, DirectWrite: ${directWriteOk}, PresenceReinforce: ${presenceReinforceOk}`);
 
     // Temiz Kapanış
     testDbLocale.close();

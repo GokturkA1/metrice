@@ -925,6 +925,11 @@ export class FederationEngine extends EventEmitter {
       const { nodeId, role, rendezvousNodes, kemPublicKey, identityPublicKey, channels, timestamp, sig } = payload;
       if (!nodeId || !kemPublicKey || !identityPublicKey || !sig) return;
 
+      // Kendi anonsumuz bize geri yankılandıysa yut ve çık (Self-Echo Shield)
+      if (nodeId === this.nodeId) {
+        return;
+      }
+
       const derivedId = CryptoHelper.deriveNodeId(identityPublicKey);
       if (derivedId !== nodeId) return;
 
@@ -1256,9 +1261,20 @@ export class FederationEngine extends EventEmitter {
       if (payload.from && payload.from.startsWith('@')) {
         const parsedSender = AddressHelper.parse(payload.from);
         if (parsedSender && !parsedSender.isLocal) {
-          const existing = this.remoteOnlineUsers.get(payload.from) || { channels: [] };
-          existing.lastSeen = Date.now();
-          this.remoteOnlineUsers.set(payload.from, existing);
+          const now = Date.now();
+          const canonicalUser = parsedSender.nodeId ? `@${parsedSender.name}:${parsedSender.nodeId}.mesh` : payload.from;
+          const existing = this.remoteOnlineUsers.get(canonicalUser) || this.remoteOnlineUsers.get(payload.from) || { channels: [] };
+          existing.lastSeen = now;
+          this.remoteOnlineUsers.set(canonicalUser, existing);
+          if (canonicalUser !== payload.from) {
+            this.remoteOnlineUsers.set(payload.from, existing);
+          }
+
+          if (parsedSender.nodeId && this.presenceTable.has(parsedSender.nodeId)) {
+            const pRec = this.presenceTable.get(parsedSender.nodeId);
+            pRec.lastSeen = now;
+          }
+
           this.emit('presence_change');
 
           if (parsedSender.host && parsedSender.port) {
@@ -2195,26 +2211,43 @@ export class FederationEngine extends EventEmitter {
       lastSeen: timestamp
     });
 
+    // 1. Eş havuzundaki eşlere güvenli kanal üzerinden doğrudan yaz
     const peers = this.peerManager ? this.peerManager.getAllPeers() : [];
     for (const peer of peers) {
       if (!peer || !peer.includes(':')) continue;
       const [host, portStr] = peer.split(':');
       const port = parseInt(portStr, 10);
       if (!host || isNaN(port)) continue;
-      this.sendPacket(host, port, payload).catch(() => {});
+
+      this.getOrCreateSecureChannel(host, port)
+        .then((channel) => {
+          if (channel && channel.isReady && channel.socket && channel.socket.writable) {
+            channel.writePayload(payload);
+          }
+        })
+        .catch(() => {});
     }
 
-    if (this.rendezvousRelays) {
-      for (const [, relay] of this.rendezvousRelays.entries()) {
-        if (relay && relay.channel && relay.channel.isReady !== false && relay.channel.socket && relay.channel.socket.writable) {
-          relay.channel.writePayload(payload);
+    // 2. Halihazırda connectionPool'da açık olan tüm hazır kanallara doğrudan yaz
+    if (this.connectionPool) {
+      for (const [, channel] of this.connectionPool.entries()) {
+        if (channel && channel.isReady && channel.socket && channel.socket.writable) {
+          channel.writePayload(payload);
         }
       }
     }
 
+    // 3. Tünellere yaz
+    if (this.rendezvousRelays) {
+      for (const [, relay] of this.rendezvousRelays.entries()) {
+        if (relay?.channel?.isReady && (relay?.channel?.socket?.writable || relay?.socket?.writable)) {
+          relay.channel.writePayload(payload);
+        }
+      }
+    }
     if (this.rendezvousTunnels) {
       for (const [, tunnel] of this.rendezvousTunnels.entries()) {
-        if (tunnel && tunnel.channel && tunnel.channel.socket && tunnel.channel.socket.writable) {
+        if (tunnel?.channel?.isReady && (tunnel?.channel?.socket?.writable || tunnel?.socket?.writable)) {
           tunnel.channel.writePayload(payload);
         }
       }
