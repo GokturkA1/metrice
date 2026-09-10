@@ -299,6 +299,7 @@ export default {
   FED_TARGET_NO_RDV_ERR: 'Hedef {node} için aktif buluşma noktası bulunamadı',
   FED_INVALID_TARGET_ERR: 'Geçersiz hedef: {target}',
   FED_USER_OFFLINE_BROADCAST: 'Kullanıcı çevrimdışı anonsu dağıtıldı: {user}',
+  FED_STALE_OFFLINE_DROPPED: 'Eski kullanıcı çevrimdışı paketi yok sayıldı (taze oturum korunuyor): {user}',
   FED_BILATERAL_SYNC: 'Bilateral varlık senkronizasyonu yapıldı: {node}',
 
   E2EE_ENCRYPTED_PLACEHOLDER: '🔒 [ŞİFRELİ METİN]'

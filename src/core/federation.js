@@ -587,6 +587,8 @@ export class FederationEngine extends EventEmitter {
         const newIsMesh = u.endsWith('.mesh');
         if (!existingIsMesh && newIsMesh) {
           userByNick.set(nick, u);
+        } else if (existingIsMesh && newIsMesh) {
+          userByNick.set(nick, u);
         }
       }
     }
@@ -721,6 +723,7 @@ export class FederationEngine extends EventEmitter {
 
   handleIncoming(payload, channel, remotePeer) {
     if (!payload || !payload.type) return;
+    if (payload.status === 'ack') return;
 
     // 0. AutoNAT Inbound Reachability Dialback (Section 2.2)
     if (payload.type === 'DIALBACK_REQUEST') {
@@ -1057,9 +1060,8 @@ export class FederationEngine extends EventEmitter {
 
         // Bilateral Senkronizasyon: Karşı düğüm röle ise kendi güncel varlığımızı da kanala yaz
         if (!payload.isBilateralReply && (role === 'RELAY' || role === 'CAP_RELAY')) {
-          const myState = this.getLocalStateFn ? this.getLocalStateFn() : { memberships: [] };
-          if (myState.memberships && myState.memberships.length > 0) {
-            const myPresence = this.createPresenceAnnouncePayload();
+          const myPresence = this.createPresenceAnnouncePayload();
+          if (myPresence.memberships && myPresence.memberships.length > 0) {
             myPresence.isBilateralReply = true;
             channel.writePayload(myPresence);
             log.debug(I18n.t('FED_BILATERAL_SYNC', { node: nodeId }));
@@ -1343,7 +1345,19 @@ export class FederationEngine extends EventEmitter {
       this.emit('typing', payload);
     } else if (payload.type === 'USER_OFFLINE') {
       if (payload.user) {
+        const offlineTs = payload.timestamp || 0;
         let deleted = false;
+
+        // Stale Offline Drop: Mevcut kullanıcının lastSeen zamanı bu paketten daha yeniyse eski oturumdur, yut!
+        const existingData = this.remoteOnlineUsers.get(payload.user);
+        if (existingData && offlineTs > 0 && existingData.lastSeen > offlineTs) {
+          log.debug(I18n.t('FED_STALE_OFFLINE_DROPPED', { user: payload.user }));
+          if (channel && typeof channel.writePayload === 'function') {
+            channel.writePayload({ status: 'ack', type: 'USER_OFFLINE', user: payload.user });
+          }
+          return;
+        }
+
         if (this.remoteOnlineUsers.has(payload.user)) {
           this.remoteOnlineUsers.delete(payload.user);
           deleted = true;
@@ -1352,10 +1366,13 @@ export class FederationEngine extends EventEmitter {
         const nick = parsed?.name || payload.user.split(':')[0].replace(/^@/, '');
         if (nick) {
           const nickLower = nick.toLowerCase();
-          for (const k of Array.from(this.remoteOnlineUsers.keys())) {
+          for (const [k, kData] of Array.from(this.remoteOnlineUsers.entries())) {
             const kParsed = AddressHelper.parse(k);
             const kNick = kParsed?.name || k.split(':')[0].replace(/^@/, '');
             if (kNick.toLowerCase() === nickLower) {
+              if (offlineTs > 0 && kData.lastSeen > offlineTs) {
+                continue;
+              }
               this.remoteOnlineUsers.delete(k);
               deleted = true;
             }
@@ -1364,8 +1381,56 @@ export class FederationEngine extends EventEmitter {
         if (deleted) {
           this.emit('presence_change');
         }
+
+        // Dedikodu (Gossip) Yayılımı: Röle düğümleri geçerli USER_OFFLINE paketlerini ağdaki diğer eşlere ve tünellere iletir
+        const offlineKey = `${payload.user}:${offlineTs}`;
+        if (!this.seenOfflineAnnounces) this.seenOfflineAnnounces = new Set();
+        if (!this.seenOfflineAnnounces.has(offlineKey)) {
+          this.seenOfflineAnnounces.add(offlineKey);
+          if (this.seenOfflineAnnounces.size > 2000) {
+            const first = this.seenOfflineAnnounces.values().next().value;
+            this.seenOfflineAnnounces.delete(first);
+          }
+
+          if (this.isRelay()) {
+            const peers = this.peerManager ? this.peerManager.getAllPeers() : [];
+            for (const peer of peers) {
+              if (!peer || !peer.includes(':')) continue;
+              if (remotePeer && peer === remotePeer) continue;
+              const [host, portStr] = peer.split(':');
+              const port = parseInt(portStr, 10);
+              if (!host || isNaN(port)) continue;
+
+              this.getOrCreateSecureChannel(host, port)
+                .then((ch) => {
+                  if (ch && ch.isReady && ch.socket && ch.socket.writable) {
+                    ch.writePayload(payload);
+                  }
+                })
+                .catch(() => {});
+            }
+
+            if (this.connectionPool) {
+              for (const [, ch] of this.connectionPool.entries()) {
+                if (ch && ch !== channel && ch.isReady && ch.socket && ch.socket.writable) {
+                  ch.writePayload(payload);
+                }
+              }
+            }
+
+            if (this.rendezvousTunnels) {
+              for (const [, tunnel] of this.rendezvousTunnels.entries()) {
+                if (tunnel?.channel && tunnel.channel !== channel && tunnel.channel.socket?.writable) {
+                  tunnel.channel.writePayload(payload);
+                }
+              }
+            }
+          }
+        }
       }
-      channel.writePayload({ status: 'ack', type: 'USER_OFFLINE', user: payload.user });
+      if (channel && typeof channel.writePayload === 'function') {
+        channel.writePayload({ status: 'ack', type: 'USER_OFFLINE', user: payload.user });
+      }
     } else if (payload.type === 'GOSSIP_DISCOVERY') {
       if (payload.selfNode && payload.selfNode.includes(':')) this.peerManager.addOrUpdate(payload.selfNode, true);
       if (Array.isArray(payload.peers)) {
@@ -1655,7 +1720,8 @@ export class FederationEngine extends EventEmitter {
     const payload = {
       type: 'USER_OFFLINE',
       user: userAddress,
-      nodeAddress: this.nodeAddress
+      nodeAddress: this.nodeAddress,
+      timestamp: Date.now()
     };
 
     const peers = this.peerManager ? this.peerManager.getAllPeers() : [];
@@ -1665,7 +1731,21 @@ export class FederationEngine extends EventEmitter {
       const port = parseInt(portStr, 10);
       if (!host || isNaN(port)) continue;
 
-      this.sendPacket(host, port, payload).catch(() => {});
+      this.getOrCreateSecureChannel(host, port)
+        .then((channel) => {
+          if (channel && channel.isReady && channel.socket && channel.socket.writable) {
+            channel.writePayload(payload);
+          }
+        })
+        .catch(() => {});
+    }
+
+    if (this.connectionPool) {
+      for (const [, channel] of this.connectionPool.entries()) {
+        if (channel && channel.isReady && channel.socket && channel.socket.writable) {
+          channel.writePayload(payload);
+        }
+      }
     }
 
     if (this.rendezvousTunnels) {
@@ -2191,6 +2271,7 @@ export class FederationEngine extends EventEmitter {
       for (const [tNodeId] of this.rendezvousTunnels.entries()) {
         for (const [userAddr, uData] of this.remoteOnlineUsers.entries()) {
           if (userAddr.includes(`:${tNodeId}.mesh`)) {
+            uData.lastSeen = Date.now();
             // Mükerrer eklemeyi önle
             if (!allMemberships.some((m) => m.user === userAddr)) {
               allMemberships.push({
@@ -2314,6 +2395,21 @@ export class FederationEngine extends EventEmitter {
 
     let removedUsers = false;
     for (const [userAddr, data] of this.remoteOnlineUsers.entries()) {
+      let isTunneledLive = false;
+      if (this.isRelay() && this.rendezvousTunnels) {
+        for (const [tNodeId] of this.rendezvousTunnels.entries()) {
+          if (userAddr.includes(`:${tNodeId}.mesh`)) {
+            isTunneledLive = true;
+            break;
+          }
+        }
+      }
+
+      if (isTunneledLive) {
+        data.lastSeen = now;
+        continue;
+      }
+
       const diff = now - data.lastSeen;
       if (diff < 0) {
         data.lastSeen = now;

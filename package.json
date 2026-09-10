@@ -1,14 +1,15 @@
 {
   "name": "metrice",
-  "version": "2.5.5",
+  "version": "2.5.6",
   "license": "GPL-3.0-only",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node tests/mesh.test.js && node tests/protocol.test.js && node tests/security.test.js",
+    "test": "node tests/mesh.test.js && node tests/protocol.test.js && node tests/security.test.js && node tests/presence.test.js",
     "test:mesh": "node tests/mesh.test.js",
     "test:protocol": "node tests/protocol.test.js",
-    "test:security": "node tests/security.test.js"
+    "test:security": "node tests/security.test.js",
+    "test:presence": "node tests/presence.test.js"
   }
 }
