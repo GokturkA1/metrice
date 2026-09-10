@@ -52,34 +52,50 @@ Document to translate:
 ${trContent}`;
 
 try {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{
-        parts: [{ text: prompt }]
-      }],
-      generationConfig: {
-        temperature: 0.2,
-        maxOutputTokens: 8192
-      }
-    })
-  });
+  const candidateModels = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+let translated = null;
+let lastError = null;
 
-  if (!response.ok) {
-    const errText = await response.text();
-    console.error(`Gemini API error (${response.status}): ${errText}`);
-    process.exit(1);
+for (const model of candidateModels) {
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{ text: prompt }]
+        }],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 8192
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      lastError = `Model ${model} returned (${response.status}): ${errText}`;
+      console.warn(lastError);
+      continue;
+    }
+
+    const data = await response.json();
+    translated = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (translated && translated.trim().length >= 500) {
+      console.log(`Successfully generated translation using ${model}`);
+      break;
+    }
+  } catch (err) {
+    lastError = err.message;
+    console.warn(`Model ${model} failed: ${err.message}`);
   }
+}
 
-  const data = await response.json();
-  let translated = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-  if (!translated || translated.trim().length < 500) {
-    console.error('Error: Translated output was empty or unexpectedly truncated.');
-    process.exit(1);
-  }
+if (!translated || translated.trim().length < 500) {
+  console.error(`Translation failed across candidate models. Last error: ${lastError}`);
+  process.exit(1);
+}
 
   // Remove potential triple backtick wrapper if model wrapped response
   if (translated.startsWith('```markdown\n')) {
