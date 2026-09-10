@@ -3322,6 +3322,82 @@ async function runV2TestSuite() {
     record('7.66 [REVİZYON 36 / v2.5.5] Ters Tünel Varlık Temsili (Proxy Presence), Dedikodu Tekilleştirme & Ghost Session Kalkanı', !!test766Ok,
       `ProxyPresence: ${proxyPresenceIncluded}, Deduplication: ${deduplicationDistinguishesOk}, GhostSessionGuard: ${ghostSessionGuardOk}`);
 
+    // Test 7.67: [REVİZYON 37 / v2.5.9] AutoNAT Edge Zehirlenme Kalkanı, Reflected IP İzolasyonu ve Tekilleştirilmiş Varlık Dağıtımı
+    const db767Path = path.join(rootDir, 'v2_test_fed767.db');
+    const pm767Path = path.join(rootDir, 'v2_test_pm767.json');
+    if (fs.existsSync(db767Path)) fs.unlinkSync(db767Path);
+    if (fs.existsSync(pm767Path)) fs.unlinkSync(pm767Path);
+
+    const origServerName767 = CONFIG.serverName;
+    const origRole767 = CONFIG.meshRole;
+    const origFedPort767 = CONFIG.federationPort;
+    const origPubPort767 = CONFIG.publicFederationPort;
+    CONFIG.serverName = 'localhost';
+    CONFIG.meshRole = 'EDGE';
+    CONFIG.federationPort = 9001;
+    CONFIG.publicFederationPort = null;
+
+    const pm767 = new PeerManager(pm767Path);
+    const mockDb767 = new Database(db767Path);
+    const fed767 = new FederationEngine(mockDb767, pm767);
+    fed767.role = 'EDGE';
+
+    // 1. PeerManager'a dış IP ekleme denemesi
+    pm767.addOrUpdate('78.174.205.111:9001', true);
+    const addedBeforeAutoNat = pm767.getAllPeers().includes('78.174.205.111:9001');
+
+    // 2. AutoNAT Reflected IP Konsensüsü (EDGE rolündeyken)
+    fed767.handleObservedAddress('78.174.205.111:54321', 'relay1:8001');
+    fed767.handleObservedAddress('78.174.205.111:54322', 'relay2:8001');
+
+    // EDGE düğümünün nodeAddress'i 78.174.205.111:9001 ile ezilmemeli, localhost korunmalı
+    const edgeNodeAddrProtected = fed767.nodeAddress === 'localhost:9001' && fed767.myIdentity.nodeAddress === 'localhost:9001';
+
+    // PeerManager reflected IP'yi tanımalı ve mevcut kaydı havuzdan silmeli
+    const selfPublicRecognized = pm767.isSelfAddress('78.174.205.111', 9001);
+    const evictedFromPeers = !pm767.getAllPeers().includes('78.174.205.111:9001');
+
+    // Yeniden eklemeye çalıştığında reddetmeli
+    pm767.addOrUpdate('78.174.205.111:9001', true);
+    const reAddBlocked = !pm767.getAllPeers().includes('78.174.205.111:9001');
+
+    // 3. maintainRendezvousTunnels kendi adresini tünel hedefi seçmemeli
+    let boundToSelf = false;
+    fed767.bindToRendezvousRelay = async (addr) => {
+      if (addr === fed767.nodeAddress || addr === '78.174.205.111:9001') {
+        boundToSelf = true;
+      }
+      return false;
+    };
+    await fed767.maintainRendezvousTunnels();
+    const rendezvousSelfAvoided = !boundToSelf;
+
+    // 4. broadcastPresenceAnnounce tekilleştirme doğrulaması
+    let mockWritesCount = 0;
+    const testChannel767 = {
+      isReady: true,
+      socket: { writable: true },
+      writePayload: () => { mockWritesCount++; }
+    };
+    fed767.connectionPool.set('10.0.0.1:8001', testChannel767);
+    fed767.rendezvousRelays.set('10.0.0.1:8001', { channel: testChannel767, socket: testChannel767.socket });
+    fed767.broadcastPresenceAnnounce();
+    const broadcastDeduplicated = mockWritesCount === 1;
+
+    fed767.close();
+    mockDb767.close();
+    pm767.close();
+    try { if (fs.existsSync(db767Path)) fs.unlinkSync(db767Path); } catch {}
+    try { if (fs.existsSync(pm767Path)) fs.unlinkSync(pm767Path); } catch {}
+    CONFIG.serverName = origServerName767;
+    CONFIG.meshRole = origRole767;
+    CONFIG.federationPort = origFedPort767;
+    CONFIG.publicFederationPort = origPubPort767;
+
+    const test767Ok = edgeNodeAddrProtected && selfPublicRecognized && evictedFromPeers && reAddBlocked && rendezvousSelfAvoided && broadcastDeduplicated;
+    record('7.67 [REVİZYON 37 / v2.5.9] AutoNAT Edge Zehirlenme Kalkanı, Reflected IP İzolasyonu ve Tekilleştirilmiş Varlık Dağıtımı', !!test767Ok,
+      `AddrProtected: ${edgeNodeAddrProtected}, PublicRecognized: ${selfPublicRecognized}, Evicted: ${evictedFromPeers}, ReAddBlocked: ${reAddBlocked}, RendezvousSafe: ${rendezvousSelfAvoided}, BroadcastDedup: ${broadcastDeduplicated}`);
+
     // Temiz Kapanış
     testDbLocale.close();
     try { if (fs.existsSync(testDbLocalePath)) fs.unlinkSync(testDbLocalePath); } catch {}

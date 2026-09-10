@@ -13,6 +13,7 @@ export class PeerManager {
     this.peers = new Map();
     this.udpSocket = null;
     this.broadcastPort = 41234;
+    this.publicIp = null;
     const publicPort = CONFIG.publicFederationPort || CONFIG.federationPort;
     this.selfNodeAddress = `${CONFIG.serverName}:${publicPort}`;
     this.loadPeers();
@@ -28,12 +29,18 @@ export class PeerManager {
       host === 'localhost' ||
       host === '127.0.0.1' ||
       host === '::1' ||
-      host === '::ffff:127.0.0.1'
+      host === '::ffff:127.0.0.1' ||
+      host === '0.0.0.0'
     ) {
       return true;
     }
 
-    // 2. Makinenin tüm ağ kartlarındaki IP adresleri
+    // 2. AutoNAT ile tespit edilen yansıyan dış IP (Reflected Public IP)
+    if (this.publicIp && (host === this.publicIp || host === `::ffff:${this.publicIp}`)) {
+      return true;
+    }
+
+    // 3. Makinenin tüm ağ kartlarındaki IP adresleri
     try {
       const interfaces = os.networkInterfaces();
       for (const name of Object.keys(interfaces)) {
@@ -47,6 +54,27 @@ export class PeerManager {
     } catch {}
 
     return false;
+  }
+
+  setPublicIp(ip) {
+    if (!ip) return;
+    this.publicIp = ip;
+    const pubPort = CONFIG.publicFederationPort || CONFIG.federationPort;
+    this.selfNodeAddress = `${ip}:${pubPort}`;
+
+    // Havuzda kalan kendi IP ve döngüsel adresleri temizle (Gossip Poisoning koruması)
+    for (const addr of this.peers.keys()) {
+      if (!addr || !addr.includes(':')) {
+        this.peers.delete(addr);
+        continue;
+      }
+      const [host, portStr] = addr.split(':');
+      const port = parseInt(portStr, 10);
+      if (this.isSelfAddress(host, port)) {
+        this.peers.delete(addr);
+      }
+    }
+    this.savePeers();
   }
 
   loadPeers() {

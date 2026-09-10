@@ -240,9 +240,18 @@ export class SecureChannel extends EventEmitter {
       const remotePort = this.socket.realRemotePort || this.socket.remotePort;
       const observedAddress = `${cleanRemote}:${remotePort}`;
 
+      const isRelay = (typeof this.myIdentity?.role === 'function' ? this.myIdentity.role() : this.myIdentity?.role) === 'RELAY' ||
+                      (typeof this.myIdentity?.role === 'function' ? this.myIdentity.role() : this.myIdentity?.role) === 'CAP_RELAY';
+      let canonicalReplyAddress;
+      if (isRelay && typeof this.myIdentity?.getRelayAnnounceAddress === 'function') {
+        canonicalReplyAddress = this.myIdentity.getRelayAnnounceAddress();
+      } else {
+        canonicalReplyAddress = this.myIdentity?.nodeAddress || null;
+      }
+
       const replyDataToSign = JSON.stringify({
         type: 'HANDSHAKE_REPLY',
-        nodeAddress: this.myIdentity.nodeAddress,
+        nodeAddress: canonicalReplyAddress,
         identityPublicKey: this.myIdentity.identityKeyPair.publicKey,
         kemPublicKey: this.myIdentity.kemKeyPair.publicKey,
         encapsulatedKey,
@@ -254,7 +263,7 @@ export class SecureChannel extends EventEmitter {
 
       const replyPayload = {
         type: 'HANDSHAKE_REPLY',
-        nodeAddress: this.myIdentity.nodeAddress,
+        nodeAddress: canonicalReplyAddress,
         identityPublicKey: this.myIdentity.identityKeyPair.publicKey,
         kemPublicKey: this.myIdentity.kemKeyPair.publicKey,
         encapsulatedKey,
@@ -522,6 +531,14 @@ export class FederationEngine extends EventEmitter {
   setRole(newRole) {
     if (this.role !== newRole) {
       this.role = newRole;
+      if (this.isRelay() && this.publicIp) {
+        const isLoopbackOrLocal = !CONFIG.serverName || CONFIG.serverName === 'localhost' || CONFIG.serverName.startsWith('127.') || CONFIG.serverName === '0.0.0.0';
+        if (isLoopbackOrLocal) {
+          const publicPort = CONFIG.publicFederationPort || CONFIG.federationPort;
+          this.nodeAddress = `${this.publicIp}:${publicPort}`;
+          this.myIdentity.nodeAddress = this.nodeAddress;
+        }
+      }
       const roleLabel = this.role.startsWith('CAP_') ? this.role : `CAP_${this.role}`;
       log.info(I18n.t('FED_ROLE_UPDATED', { role: roleLabel }));
       this.emit('role_change', this.role);
@@ -535,6 +552,28 @@ export class FederationEngine extends EventEmitter {
 
   isRelay() {
     return this.role === 'RELAY' || this.role === 'CAP_RELAY';
+  }
+
+  isSelfPeerAddress(host, port) {
+    if (this.peerManager && typeof this.peerManager.isSelfAddress === 'function') {
+      return this.peerManager.isSelfAddress(host, port);
+    }
+    const pubPort = CONFIG.publicFederationPort || CONFIG.federationPort;
+    if (port !== null && port !== undefined && port !== CONFIG.federationPort && port !== pubPort) return false;
+    if (
+      host === CONFIG.serverName ||
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '::1' ||
+      host === '::ffff:127.0.0.1' ||
+      host === '0.0.0.0'
+    ) {
+      return true;
+    }
+    if (this.publicIp && (host === this.publicIp || host === `::ffff:${this.publicIp}`)) {
+      return true;
+    }
+    return false;
   }
 
   isTransitEdge() {
@@ -977,19 +1016,21 @@ export class FederationEngine extends EventEmitter {
       };
       this.presenceTable.set(nodeId, record);
 
-      // Dinamik port koruması: Karşı tarafın beyan ettiği orijinal host:port çiftini sakla
-      if (Array.isArray(safeRendezvous) && safeRendezvous.length > 0) {
-        for (const rn of safeRendezvous) {
-          const parsedTarget = AddressHelper.parseTarget(rn);
-          if (parsedTarget && parsedTarget.host && parsedTarget.port) {
-            this.nodePhysicalAddresses.set(nodeId, `${parsedTarget.host}:${parsedTarget.port}`);
-            break;
+      // Dinamik port koruması: Yalnızca RELAY ve Transit düğümlerin fiziksel host:port çiftini sakla (EDGE arkası CGNAT portları saklanmaz)
+      if (role === 'RELAY' || role === 'CAP_RELAY' || role === 'CAP_EDGE_TRANSIT') {
+        if (Array.isArray(safeRendezvous) && safeRendezvous.length > 0) {
+          for (const rn of safeRendezvous) {
+            const parsedTarget = AddressHelper.parseTarget(rn);
+            if (parsedTarget && parsedTarget.host && parsedTarget.port && !this.isSelfPeerAddress(parsedTarget.host, parsedTarget.port)) {
+              this.nodePhysicalAddresses.set(nodeId, `${parsedTarget.host}:${parsedTarget.port}`);
+              break;
+            }
           }
-        }
-      } else if (channel?.peerNodeAddress) {
-        const parsedTarget = AddressHelper.parseTarget(channel.peerNodeAddress);
-        if (parsedTarget && parsedTarget.host && parsedTarget.port) {
-          this.nodePhysicalAddresses.set(nodeId, `${parsedTarget.host}:${parsedTarget.port}`);
+        } else if (channel?.peerNodeAddress && !channel.peerNodeAddress.endsWith('.mesh')) {
+          const parsedTarget = AddressHelper.parseTarget(channel.peerNodeAddress);
+          if (parsedTarget && parsedTarget.host && parsedTarget.port && !this.isSelfPeerAddress(parsedTarget.host, parsedTarget.port)) {
+            this.nodePhysicalAddresses.set(nodeId, `${parsedTarget.host}:${parsedTarget.port}`);
+          }
         }
       }
 
@@ -997,7 +1038,11 @@ export class FederationEngine extends EventEmitter {
       if (this.peerManager && Array.isArray(safeRendezvous) && (role === 'RELAY' || role === 'CAP_RELAY')) {
         for (const rdvAddr of safeRendezvous) {
           if (rdvAddr && rdvAddr.includes(':') && !rdvAddr.endsWith('.mesh')) {
-            this.peerManager.addOrUpdate(rdvAddr, true);
+            const [h, p] = rdvAddr.split(':');
+            const pNum = parseInt(p, 10);
+            if (h && !isNaN(pNum) && !this.isSelfPeerAddress(h, pNum)) {
+              this.peerManager.addOrUpdate(rdvAddr, true);
+            }
           }
         }
       }
@@ -1054,12 +1099,30 @@ export class FederationEngine extends EventEmitter {
         this.db.resetOutboxForTarget(nodeId);
       }
 
+      // Dedikodu (Gossip) Yayılımı: Röle düğümleri geçerli PRESENCE_ANNOUNCE paketlerini ağdaki diğer eşlere iletir
+      const membershipSummary = Array.isArray(payload.memberships)
+        ? payload.memberships.map((m) => m?.user || '').sort().join(',')
+        : '';
+      const announceKey = `${nodeId}:${timestamp}:${membershipSummary}`;
+      if (!this.seenPresenceAnnounces) this.seenPresenceAnnounces = new Set();
+      const isNewAnnounce = !this.seenPresenceAnnounces.has(announceKey);
+      if (isNewAnnounce) {
+        this.seenPresenceAnnounces.add(announceKey);
+        if (this.seenPresenceAnnounces.size > 2000) {
+          const first = this.seenPresenceAnnounces.values().next().value;
+          this.seenPresenceAnnounces.delete(first);
+        }
+      }
+
       this.emit('presence_change');
       if (channel && typeof channel.writePayload === 'function') {
         channel.writePayload({ status: 'ack', type: 'PRESENCE_ANNOUNCE', nodeId: this.nodeId });
 
-        // Bilateral Senkronizasyon: Karşı düğüm röle ise kendi güncel varlığımızı da kanala yaz
-        if (!payload.isBilateralReply && (role === 'RELAY' || role === 'CAP_RELAY')) {
+        // Bilateral Senkronizasyon: Yalnızca yeni (görülmemiş) duyuruda, karşı düğüm röle ise ve 10 saniyede en fazla bir kez
+        const now = Date.now();
+        const lastBilateral = channel._lastBilateralSync || 0;
+        if (isNewAnnounce && !payload.isBilateralReply && (role === 'RELAY' || role === 'CAP_RELAY') && (now - lastBilateral >= 10000)) {
+          channel._lastBilateralSync = now;
           const myPresence = this.createPresenceAnnouncePayload();
           if (myPresence.memberships && myPresence.memberships.length > 0) {
             myPresence.isBilateralReply = true;
@@ -1069,31 +1132,28 @@ export class FederationEngine extends EventEmitter {
         }
       }
 
-      // Dedikodu (Gossip) Yayılımı: Röle düğümleri geçerli PRESENCE_ANNOUNCE paketlerini ağdaki diğer eşlere iletir
-      const membershipSummary = Array.isArray(payload.memberships)
-        ? payload.memberships.map((m) => m?.user || '').sort().join(',')
-        : '';
-      const announceKey = `${nodeId}:${timestamp}:${membershipSummary}`;
-      if (!this.seenPresenceAnnounces) this.seenPresenceAnnounces = new Set();
-      if (!this.seenPresenceAnnounces.has(announceKey)) {
-        this.seenPresenceAnnounces.add(announceKey);
-        if (this.seenPresenceAnnounces.size > 2000) {
-          const first = this.seenPresenceAnnounces.values().next().value;
-          this.seenPresenceAnnounces.delete(first);
-        }
-
+      if (isNewAnnounce) {
         if (this.isRelay()) {
-          const peers = this.peerManager.getAllPeers();
+          const peers = this.peerManager ? this.peerManager.getAllPeers() : [];
           for (const peer of peers) {
             if (!peer || !peer.includes(':')) continue;
-            if (remotePeer && peer === remotePeer) continue;
             const [host, portStr] = peer.split(':');
             const port = parseInt(portStr, 10);
             if (!host || isNaN(port)) continue;
-            
+            if (this.isSelfPeerAddress(host, port)) continue;
+
+            // Paketi getiren kanala veya aynı IP/porta geri yansıtmayı önle
+            if (channel?.peerNodeAddress && peer === channel.peerNodeAddress) continue;
+            if (remotePeer) {
+              if (peer === remotePeer) continue;
+              const [rHost] = remotePeer.split(':');
+              if (host === rHost) continue;
+            }
+            if (this.nodePhysicalAddresses.get(nodeId) === peer) continue;
+
             this.getOrCreateSecureChannel(host, port)
               .then((ch) => {
-                if (ch && ch.isReady && ch.socket && ch.socket.writable) {
+                if (ch && ch !== channel && ch.isReady && ch.socket && ch.socket.writable) {
                   ch.writePayload(payload);
                 }
               })
@@ -1218,18 +1278,24 @@ export class FederationEngine extends EventEmitter {
       if (this.peerManager && Array.isArray(safeRdv) && (role === 'RELAY' || role === 'CAP_RELAY')) {
         for (const rdvAddr of safeRdv) {
           if (rdvAddr && rdvAddr.includes(':') && !rdvAddr.endsWith('.mesh')) {
-            this.peerManager.addOrUpdate(rdvAddr, true);
+            const [h, p] = rdvAddr.split(':');
+            const pNum = parseInt(p, 10);
+            if (h && !isNaN(pNum) && !this.isSelfPeerAddress(h, pNum)) {
+              this.peerManager.addOrUpdate(rdvAddr, true);
+            }
           }
         }
       }
 
-      // Dinamik port koruması: Karşı tarafın beyan ettiği orijinal host:port çiftini sakla
-      if (Array.isArray(safeRdv) && safeRdv.length > 0) {
-        for (const rn of safeRdv) {
-          const parsedTarget = AddressHelper.parseTarget(rn);
-          if (parsedTarget && parsedTarget.host && parsedTarget.port) {
-            this.nodePhysicalAddresses.set(nodeId, `${parsedTarget.host}:${parsedTarget.port}`);
-            break;
+      // Dinamik port koruması: Yalnızca RELAY ve Transit düğümlerin fiziksel host:port çiftini sakla (EDGE arkası CGNAT portları saklanmaz)
+      if (role === 'RELAY' || role === 'CAP_RELAY' || role === 'CAP_EDGE_TRANSIT') {
+        if (Array.isArray(safeRdv) && safeRdv.length > 0) {
+          for (const rn of safeRdv) {
+            const parsedTarget = AddressHelper.parseTarget(rn);
+            if (parsedTarget && parsedTarget.host && parsedTarget.port && !this.isSelfPeerAddress(parsedTarget.host, parsedTarget.port)) {
+              this.nodePhysicalAddresses.set(nodeId, `${parsedTarget.host}:${parsedTarget.port}`);
+              break;
+            }
           }
         }
       }
@@ -1242,13 +1308,20 @@ export class FederationEngine extends EventEmitter {
 
       // Röle ise diğer eşlere dedikodu olarak ilet
       if (this.isRelay()) {
-        const peers = this.peerManager.getAllPeers();
+        const peers = this.peerManager ? this.peerManager.getAllPeers() : [];
         for (const peer of peers) {
           if (!peer || !peer.includes(':')) continue;
-          if (remotePeer && peer === remotePeer) continue;
           const [host, portStr] = peer.split(':');
           const port = parseInt(portStr, 10);
           if (!host || isNaN(port)) continue;
+          if (this.isSelfPeerAddress(host, port)) continue;
+          if (channel?.peerNodeAddress && peer === channel.peerNodeAddress) continue;
+          if (remotePeer) {
+            if (peer === remotePeer) continue;
+            const [rHost] = remotePeer.split(':');
+            if (host === rHost) continue;
+          }
+          if (this.nodePhysicalAddresses.get(nodeId) === peer) continue;
           this.sendPacket(host, port, payload).catch(() => {});
         }
       }
@@ -1396,14 +1469,22 @@ export class FederationEngine extends EventEmitter {
             const peers = this.peerManager ? this.peerManager.getAllPeers() : [];
             for (const peer of peers) {
               if (!peer || !peer.includes(':')) continue;
-              if (remotePeer && peer === remotePeer) continue;
               const [host, portStr] = peer.split(':');
               const port = parseInt(portStr, 10);
               if (!host || isNaN(port)) continue;
+              if (this.isSelfPeerAddress(host, port)) continue;
+              if (channel?.peerNodeAddress && peer === channel.peerNodeAddress) continue;
+              if (remotePeer) {
+                if (peer === remotePeer) continue;
+                const [rHost] = remotePeer.split(':');
+                if (host === rHost) continue;
+              }
+              const poolKey = `${host}:${port}`;
+              if (this.connectionPool && this.connectionPool.has(poolKey)) continue;
 
               this.getOrCreateSecureChannel(host, port)
                 .then((ch) => {
-                  if (ch && ch.isReady && ch.socket && ch.socket.writable) {
+                  if (ch && ch !== channel && ch.isReady && ch.socket && ch.socket.writable) {
                     ch.writePayload(payload);
                   }
                 })
@@ -1432,17 +1513,31 @@ export class FederationEngine extends EventEmitter {
         channel.writePayload({ status: 'ack', type: 'USER_OFFLINE', user: payload.user });
       }
     } else if (payload.type === 'GOSSIP_DISCOVERY') {
-      if (payload.selfNode && payload.selfNode.includes(':')) this.peerManager.addOrUpdate(payload.selfNode, true);
-      if (Array.isArray(payload.peers)) {
-        payload.peers.forEach((p) => {
-          if (p && p.includes(':')) this.peerManager.addOrUpdate(p, true);
-        });
+      if (this.peerManager) {
+        if (payload.selfNode && payload.selfNode.includes(':') && !payload.selfNode.endsWith('.mesh')) {
+          const [h, p] = payload.selfNode.split(':');
+          const pNum = parseInt(p, 10);
+          if (h && !isNaN(pNum) && !this.isSelfPeerAddress(h, pNum)) {
+            this.peerManager.addOrUpdate(payload.selfNode, true);
+          }
+        }
+        if (Array.isArray(payload.peers)) {
+          payload.peers.forEach((p) => {
+            if (p && p.includes(':') && !p.endsWith('.mesh')) {
+              const [h, port] = p.split(':');
+              const pNum = parseInt(port, 10);
+              if (h && !isNaN(pNum) && !this.isSelfPeerAddress(h, pNum)) {
+                this.peerManager.addOrUpdate(p, true);
+              }
+            }
+          });
+        }
       }
 
       channel.writePayload({
         type: 'GOSSIP_RESPONSE',
-        selfNode: this.nodeAddress,
-        peers: this.peerManager.getRandomSample(5)
+        selfNode: this.isRelay() ? (this.getRelayAnnounceAddress() || this.nodeAddress) : null,
+        peers: this.peerManager ? this.peerManager.getRandomSample(5) : []
       });
     }
   }
@@ -1836,19 +1931,33 @@ export class FederationEngine extends EventEmitter {
       const [host, portStr] = peer.split(':');
       const port = parseInt(portStr, 10);
       if (!host || isNaN(port)) continue;
+      if (this.isSelfPeerAddress(host, port)) continue;
 
       try {
         const res = await this.sendPacket(host, port, {
           type: 'GOSSIP_DISCOVERY',
-          selfNode: this.nodeAddress,
+          selfNode: this.isRelay() ? (this.getRelayAnnounceAddress() || this.nodeAddress) : null,
           peers: this.peerManager.getRandomSample(5)
         });
 
         if (res && res.type === 'GOSSIP_RESPONSE') {
           this.peerManager.addOrUpdate(peer, true);
+          if (res.selfNode && res.selfNode.includes(':') && !res.selfNode.endsWith('.mesh')) {
+            const [h, p] = res.selfNode.split(':');
+            const pNum = parseInt(p, 10);
+            if (h && !isNaN(pNum) && !this.isSelfPeerAddress(h, pNum)) {
+              this.peerManager.addOrUpdate(res.selfNode, true);
+            }
+          }
           if (Array.isArray(res.peers)) {
             res.peers.forEach((p) => {
-              if (p && p.includes(':')) this.peerManager.addOrUpdate(p, true);
+              if (p && p.includes(':') && !p.endsWith('.mesh')) {
+                const [h, pPort] = p.split(':');
+                const pNum = parseInt(pPort, 10);
+                if (h && !isNaN(pNum) && !this.isSelfPeerAddress(h, pNum)) {
+                  this.peerManager.addOrUpdate(p, true);
+                }
+              }
             });
           }
         }
@@ -1874,8 +1983,11 @@ export class FederationEngine extends EventEmitter {
     const votes = this.observedAddressVotes.get(ip).size;
     if (votes >= 2 && this.publicIp !== ip) {
       this.publicIp = ip;
+      if (this.peerManager && typeof this.peerManager.setPublicIp === 'function') {
+        this.peerManager.setPublicIp(ip);
+      }
       const isLoopbackOrLocal = !CONFIG.serverName || CONFIG.serverName === 'localhost' || CONFIG.serverName.startsWith('127.') || CONFIG.serverName === '0.0.0.0';
-      if (isLoopbackOrLocal) {
+      if (this.isRelay() && isLoopbackOrLocal) {
         const publicPort = CONFIG.publicFederationPort || CONFIG.federationPort;
         this.nodeAddress = `${ip}:${publicPort}`;
         this.myIdentity.nodeAddress = this.nodeAddress;
@@ -1981,10 +2093,21 @@ export class FederationEngine extends EventEmitter {
     try {
       const targets = [];
 
+      const isCandidateValid = (addr) => {
+        if (!addr || typeof addr !== 'string' || !addr.includes(':')) return false;
+        if (addr.endsWith('.mesh')) return false;
+        const [host, portStr] = addr.split(':');
+        const port = parseInt(portStr, 10);
+        if (!host || isNaN(port) || port <= 0 || port > 65535) return false;
+        if (this.isSelfPeerAddress(host, port)) return false;
+        if (addr === this.nodeAddress) return false;
+        return true;
+      };
+
       // 1. Yapılandırılmış bootstrap eşleri (TR, DE vb.)
       if (Array.isArray(CONFIG && CONFIG.bootstrapPeers)) {
         for (const bp of CONFIG.bootstrapPeers) {
-          if (bp && !targets.includes(bp)) targets.push(bp);
+          if (isCandidateValid(bp) && !targets.includes(bp)) targets.push(bp);
         }
       }
 
@@ -1994,12 +2117,12 @@ export class FederationEngine extends EventEmitter {
       for (const r of candidateRelays) {
         if (Array.isArray(r.rendezvousNodes)) {
           for (const rn of r.rendezvousNodes) {
-            if (rn && !targets.includes(rn)) targets.push(rn);
+            if (isCandidateValid(rn) && !targets.includes(rn)) targets.push(rn);
           }
         }
         if (this.nodePhysicalAddresses.has(r.nodeId)) {
           const pAddr = this.nodePhysicalAddresses.get(r.nodeId);
-          if (pAddr && !targets.includes(pAddr)) targets.push(pAddr);
+          if (isCandidateValid(pAddr) && !targets.includes(pAddr)) targets.push(pAddr);
         }
       }
 
@@ -2008,24 +2131,25 @@ export class FederationEngine extends EventEmitter {
         if ((p.role === 'RELAY' || p.role === 'CAP_RELAY') && nid !== this.nodeId) {
           if (Array.isArray(p.rendezvousNodes)) {
             for (const rn of p.rendezvousNodes) {
-              if (rn && !targets.includes(rn)) targets.push(rn);
+              if (isCandidateValid(rn) && !targets.includes(rn)) targets.push(rn);
             }
           }
           if (this.nodePhysicalAddresses.has(nid)) {
             const pAddr = this.nodePhysicalAddresses.get(nid);
-            if (pAddr && !targets.includes(pAddr)) targets.push(pAddr);
+            if (isCandidateValid(pAddr) && !targets.includes(pAddr)) targets.push(pAddr);
           }
         }
       }
 
       // 4. Bilinen tüm eşler
-      const knownPeers = this.peerManager.getAllPeers();
+      const knownPeers = this.peerManager ? this.peerManager.getAllPeers() : [];
       for (const p of knownPeers) {
-        if (p && !targets.includes(p)) targets.push(p);
+        if (isCandidateValid(p) && !targets.includes(p)) targets.push(p);
       }
 
       const maxRelays = (CONFIG && CONFIG.maxEdgeRendezvousRelays) ? CONFIG.maxEdgeRendezvousRelays : 4;
       for (const relayAddr of targets) {
+        if (!isCandidateValid(relayAddr)) continue;
         if (this.boundRendezvousRelays.size >= maxRelays) break;
         if (this.boundRendezvousRelays.has(relayAddr)) continue;
         await this.bindToRendezvousRelay(relayAddr);
@@ -2039,7 +2163,9 @@ export class FederationEngine extends EventEmitter {
     if (!relayAddr || !relayAddr.includes(':')) return false;
     const [host, portStr] = relayAddr.split(':');
     const port = parseInt(portStr, 10);
-    if (!host || isNaN(port)) return false;
+    if (!host || isNaN(port) || port <= 0 || port > 65535) return false;
+    if (this.isSelfPeerAddress(host, port)) return false;
+    if (relayAddr === this.nodeAddress) return false;
 
     try {
       const channel = await this.getOrCreateSecureChannel(host, port);
@@ -2328,45 +2454,61 @@ export class FederationEngine extends EventEmitter {
       lastSeen: timestamp
     });
 
-    // 1. Eş havuzundaki eşlere güvenli kanal üzerinden doğrudan yaz
-    const peers = this.peerManager ? this.peerManager.getAllPeers() : [];
-    for (const peer of peers) {
-      if (!peer || !peer.includes(':')) continue;
-      const [host, portStr] = peer.split(':');
-      const port = parseInt(portStr, 10);
-      if (!host || isNaN(port)) continue;
+    const writtenChannels = new Set();
 
-      this.getOrCreateSecureChannel(host, port)
-        .then((channel) => {
-          if (channel && channel.isReady && channel.socket && channel.socket.writable) {
-            channel.writePayload(payload);
-          }
-        })
-        .catch(() => {});
-    }
-
-    // 2. Halihazırda connectionPool'da açık olan tüm hazır kanallara doğrudan yaz
+    // 1. connectionPool'daki tüm hazır kanallara tekil olarak yaz
     if (this.connectionPool) {
       for (const [, channel] of this.connectionPool.entries()) {
-        if (channel && channel.isReady && channel.socket && channel.socket.writable) {
+        if (channel && !writtenChannels.has(channel) && channel.isReady && channel.socket && channel.socket.writable) {
+          writtenChannels.add(channel);
           channel.writePayload(payload);
         }
       }
     }
 
-    // 3. Tünellere yaz
+    // 2. Rendezvous rölelerine yaz (tekilleştirilmiş)
     if (this.rendezvousRelays) {
       for (const [, relay] of this.rendezvousRelays.entries()) {
-        if (relay?.channel?.isReady && (relay?.channel?.socket?.writable || relay?.socket?.writable)) {
-          relay.channel.writePayload(payload);
+        const ch = relay?.channel;
+        if (ch && !writtenChannels.has(ch) && ch.isReady && (ch.socket?.writable || relay?.socket?.writable)) {
+          writtenChannels.add(ch);
+          ch.writePayload(payload);
         }
       }
     }
+
+    // 3. Rendezvous tünellerine yaz (tekilleştirilmiş)
     if (this.rendezvousTunnels) {
       for (const [, tunnel] of this.rendezvousTunnels.entries()) {
-        if (tunnel?.channel?.isReady && (tunnel?.channel?.socket?.writable || tunnel?.socket?.writable)) {
-          tunnel.channel.writePayload(payload);
+        const ch = tunnel?.channel;
+        if (ch && !writtenChannels.has(ch) && ch.isReady && (ch.socket?.writable || tunnel?.socket?.writable)) {
+          writtenChannels.add(ch);
+          ch.writePayload(payload);
         }
+      }
+    }
+
+    // 4. Henüz açık kanalı olmayan eşler için kanal aç ve ilet (Yalnızca Röleler)
+    if (this.isRelay()) {
+      const peers = this.peerManager ? this.peerManager.getAllPeers() : [];
+      for (const peer of peers) {
+        if (!peer || !peer.includes(':')) continue;
+        const [host, portStr] = peer.split(':');
+        const port = parseInt(portStr, 10);
+        if (!host || isNaN(port)) continue;
+        if (this.isSelfPeerAddress(host, port)) continue;
+
+        const poolKey = `${host}:${port}`;
+        if (this.connectionPool && this.connectionPool.has(poolKey)) continue;
+
+        this.getOrCreateSecureChannel(host, port)
+          .then((channel) => {
+            if (channel && !writtenChannels.has(channel) && channel.isReady && channel.socket && channel.socket.writable) {
+              writtenChannels.add(channel);
+              channel.writePayload(payload);
+            }
+          })
+          .catch(() => {});
       }
     }
   }

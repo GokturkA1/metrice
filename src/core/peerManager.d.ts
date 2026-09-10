@@ -13,10 +13,12 @@ export class PeerManager {
   udpSocket: DgramSocket | null;
   broadcastPort: number;
   selfNodeAddress: string;
+  publicIp: string | null;
 
-  constructor(storagePath: string | null);
+  constructor(storagePath?: string | null);
 
-  isSelfAddress(host: string, port: number): boolean;
+  isSelfAddress(host: string, port?: number | null): boolean;
+  setPublicIp(ip: string): void;
   loadPeers(): void;
   savePeers(): void;
   addOrUpdate(peerAddr: string, success?: boolean): void;
