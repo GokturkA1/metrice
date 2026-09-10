@@ -113,10 +113,10 @@ mkdir -p data
 chown -R 1000:1000 data 2>/dev/null || true
 
 # 3. Kalıcı hacim ve ortam değişkenleriyle çalıştırın:
+# (Not: SERVER_NAME zorunlu değildir; AutoNAT genel IP'yi otomatik belirler)
 docker run -d \
   --name metrice-node \
   --restart always \
-  -e SERVER_NAME="node.example.com" \
   -e TRUST_PROXY=true \
   -e MESH_ROLE=RELAY \
   -e FED_PORT=8001 \
@@ -141,7 +141,6 @@ docker pull ghcr.io/gokturka1/metrice:latest
 docker run -d \
   --name metrice-node \
   --restart always \
-  -e SERVER_NAME="node.example.com" \
   -e TRUST_PROXY=true \
   -e MESH_ROLE=RELAY \
   -e FED_PORT=8001 \
