@@ -10,9 +10,9 @@ export const CONFIG = {
   clientPort: parseInt(process.env.CLIENT_PORT || '2222', 10),
   sshPort: parseInt(process.env.SSH_PORT || '2224', 10),
   federationPort: parseInt(process.env.FED_PORT || '8001', 10),
-  publicFederationPort: parseInt(process.env.PUBLIC_FED_PORT || process.env.FED_PORT || '8001', 10),
-  publicSshPort: parseInt(process.env.PUBLIC_SSH_PORT || process.env.SSH_PORT || '2224', 10),
-  publicClientPort: parseInt(process.env.PUBLIC_CLIENT_PORT || process.env.CLIENT_PORT || '2222', 10),
+  publicFederationPort: parseInt(process.env.PUBLIC_FED_PORT || process.env.FED_PUBLIC_PORT || process.env.FED_PORT || '8001', 10),
+  publicSshPort: parseInt(process.env.PUBLIC_SSH_PORT || process.env.SSH_PUBLIC_PORT || process.env.SSH_PORT || '2224', 10),
+  publicClientPort: parseInt(process.env.PUBLIC_CLIENT_PORT || process.env.CLIENT_PUBLIC_PORT || process.env.CLIENT_PORT || '2222', 10),
   defaultFedPort: 8001,
 
   // SSH-2 Sunucu Ayarları

@@ -1874,6 +1874,12 @@ export class FederationEngine extends EventEmitter {
     const votes = this.observedAddressVotes.get(ip).size;
     if (votes >= 2 && this.publicIp !== ip) {
       this.publicIp = ip;
+      const isLoopbackOrLocal = !CONFIG.serverName || CONFIG.serverName === 'localhost' || CONFIG.serverName.startsWith('127.') || CONFIG.serverName === '0.0.0.0';
+      if (isLoopbackOrLocal) {
+        const publicPort = CONFIG.publicFederationPort || CONFIG.federationPort;
+        this.nodeAddress = `${ip}:${publicPort}`;
+        this.myIdentity.nodeAddress = this.nodeAddress;
+      }
       log.info(I18n.t('FED_AUTONAT_CONSENSUS', { ip, votes }));
       this.emit('nat_consensus', ip);
 

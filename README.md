@@ -113,10 +113,10 @@ mkdir -p data
 chown -R 1000:1000 data 2>/dev/null || true
 
 # 3. Kalıcı hacim ve ortam değişkenleriyle çalıştırın:
+# (Not: SERVER_NAME zorunlu değildir; AutoNAT genel IP'yi otomatik belirler)
 docker run -d \
   --name metrice-node \
   --restart always \
-  -e SERVER_NAME="node.example.com" \
   -e TRUST_PROXY=true \
   -e MESH_ROLE=RELAY \
   -e FED_PORT=8001 \
@@ -129,6 +129,30 @@ docker run -d \
   -p 2222:2222 \
   -v $(pwd)/data:/app/data \
   metrice
+```
+
+#### Yöntem C: Hazır İmajı Çekerek Çalıştırma (GitHub Container Registry)
+Kaynak kodu derlemekle uğraşmadan doğrudan GitHub Container Registry (GHCR) üzerinden çoklu mimarili (`linux/amd64` ve `linux/arm64`) resmi imajı çekebilirsiniz:
+```bash
+# Resmi imajı çekin:
+docker pull ghcr.io/gokturka1/metrice:latest
+
+# Doğrudan GHCR imajı ile başlatın:
+docker run -d \
+  --name metrice-node \
+  --restart always \
+  -e TRUST_PROXY=true \
+  -e MESH_ROLE=RELAY \
+  -e FED_PORT=8001 \
+  -e SSH_PORT=2224 \
+  -e CLIENT_PORT=2222 \
+  -e DB_FILE=/app/data/data_8001.db \
+  -e PEER_FILE=/app/data/peers_8001.json \
+  -p 8001:8001 \
+  -p 2224:2224 \
+  -p 2222:2222 \
+  -v $(pwd)/data:/app/data \
+  ghcr.io/gokturka1/metrice:latest
 ```
 
 ### 3. Ters Vekil ve Tünelleme Arkasında Dağıtım (Cloudflared / Ngrok)
@@ -174,9 +198,9 @@ Tüm parametreler ortam değişkenleri (`process.env`) veya `src/config/index.js
 | `clientPort` | `CLIENT_PORT` | `2222` | Telnet TUI dinleme TCP portu |
 | `sshPort` | `SSH_PORT` | `2224` | Post-Quantum SSH-2 sunucusu dinleme TCP portu |
 | `federationPort` | `FED_PORT` | `8001` | P2P Federasyon ve Onion dinleme TCP portu |
-| `publicFederationPort` | `PUBLIC_FED_PORT` | `FED_PORT` (8001) | Dış ağa anons edilen ve dialback yapılan genel federasyon portu |
-| `publicSshPort` | `PUBLIC_SSH_PORT` | `SSH_PORT` (2224) | Dış ağa duyurulan genel SSH portu |
-| `publicClientPort` | `PUBLIC_CLIENT_PORT` | `CLIENT_PORT` (2222) | Dış ağa duyurulan genel Telnet TUI portu |
+| `publicFederationPort` | `PUBLIC_FED_PORT` / `FED_PUBLIC_PORT` | `FED_PORT` (8001) | Dış ağa anons edilen ve dialback yapılan genel federasyon portu |
+| `publicSshPort` | `PUBLIC_SSH_PORT` / `SSH_PUBLIC_PORT` | `SSH_PORT` (2224) | Dış ağa duyurulan genel SSH portu |
+| `publicClientPort` | `PUBLIC_CLIENT_PORT` / `CLIENT_PUBLIC_PORT` | `CLIENT_PORT` (2222) | Dış ağa duyurulan genel Telnet TUI portu |
 | `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.5.8'` | SSH sunucusu protokol kimlik dizgesi (Sürüm sistemi ile dinamik) |
 | `meshRole` | `MESH_ROLE` | `'EDGE'` | Düğüm rolü (`'RELAY'` veya `'EDGE'`) |
 | `bootstrapPeers` | `BOOTSTRAP_PEERS` | `''` | Kalıcı başlangıç ve korumalı röle eş listesi (virgülle ayrılmış) |

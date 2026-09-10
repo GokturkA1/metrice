@@ -1,5 +1,6 @@
 services:
   metrice:
+    image: ghcr.io/gokturka1/metrice:latest
     build: .
     container_name: metrice-node
     restart: always
@@ -8,7 +9,9 @@ services:
       - "2223:2223"
       - "2222:2222"
     environment:
-      - SERVER_NAME=metrice-de.gokturka.net
+      # AutoNAT konsensüsü genel IP adresini otomatik olarak tespit eder.
+      # Yalnizca ozel bir FQDN/domain kullanmak isterseniz aciniz:
+      # - SERVER_NAME=node.example.com
       - TRUST_PROXY=true
       - MESH_ROLE=RELAY
       - FED_PORT=8001
