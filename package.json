@@ -12,5 +12,8 @@
     "test:security": "node tests/security.test.js",
     "test:presence": "node tests/presence.test.js",
     "test:crypto": "node tests/crypto-kat.test.js"
+  },
+  "engines": {
+    "node": ">=24.7.0"
   }
 }

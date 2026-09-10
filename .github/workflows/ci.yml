@@ -39,6 +39,28 @@ jobs:
             console.log('Zero-dependency verified: 0 external dependencies found.');
           "
 
+      - name: Verify README Parity & Translations
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            if (!fs.existsSync('README.md') || !fs.existsSync('README.tr.md')) {
+              console.error('Missing README files: both README.md and README.tr.md must exist.');
+              process.exit(1);
+            }
+            const en = fs.readFileSync('README.md', 'utf8');
+            const tr = fs.readFileSync('README.tr.md', 'utf8');
+            if (!en.includes(pkg.version) || !tr.includes(pkg.version)) {
+              console.error('README version mismatch: both files must reference v' + pkg.version);
+              process.exit(1);
+            }
+            if (!en.includes('README.tr.md') || !tr.includes('README.md')) {
+              console.error('README language links missing.');
+              process.exit(1);
+            }
+            console.log('README parity and bilingual navigation verified.');
+          "
+
       - name: Static Analysis & Lint (Oxlint)
         run: npx --yes oxlint@latest src/ --deny-warnings
 
