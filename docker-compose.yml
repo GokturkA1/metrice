@@ -1,5 +1,6 @@
 services:
   metrice:
+    image: ghcr.io/gokturka1/metrice:latest
     build: .
     container_name: metrice-node
     restart: always

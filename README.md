@@ -131,6 +131,31 @@ docker run -d \
   metrice
 ```
 
+#### Yöntem C: Hazır İmajı Çekerek Çalıştırma (GitHub Container Registry)
+Kaynak kodu derlemekle uğraşmadan doğrudan GitHub Container Registry (GHCR) üzerinden çoklu mimarili (`linux/amd64` ve `linux/arm64`) resmi imajı çekebilirsiniz:
+```bash
+# Resmi imajı çekin:
+docker pull ghcr.io/gokturka1/metrice:latest
+
+# Doğrudan GHCR imajı ile başlatın:
+docker run -d \
+  --name metrice-node \
+  --restart always \
+  -e SERVER_NAME="node.example.com" \
+  -e TRUST_PROXY=true \
+  -e MESH_ROLE=RELAY \
+  -e FED_PORT=8001 \
+  -e SSH_PORT=2224 \
+  -e CLIENT_PORT=2222 \
+  -e DB_FILE=/app/data/data_8001.db \
+  -e PEER_FILE=/app/data/peers_8001.json \
+  -p 8001:8001 \
+  -p 2224:2224 \
+  -p 2222:2222 \
+  -v $(pwd)/data:/app/data \
+  ghcr.io/gokturka1/metrice:latest
+```
+
 ### 3. Ters Vekil ve Tünelleme Arkasında Dağıtım (Cloudflared / Ngrok)
 ```bash
 TRUST_PROXY=true \
