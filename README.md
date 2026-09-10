@@ -199,9 +199,9 @@ Tüm parametreler ortam değişkenleri (`process.env`) veya `src/config/index.js
 | `clientPort` | `CLIENT_PORT` | `2222` | Telnet TUI dinleme TCP portu |
 | `sshPort` | `SSH_PORT` | `2224` | Post-Quantum SSH-2 sunucusu dinleme TCP portu |
 | `federationPort` | `FED_PORT` | `8001` | P2P Federasyon ve Onion dinleme TCP portu |
-| `publicFederationPort` | `PUBLIC_FED_PORT` | `FED_PORT` (8001) | Dış ağa anons edilen ve dialback yapılan genel federasyon portu |
-| `publicSshPort` | `PUBLIC_SSH_PORT` | `SSH_PORT` (2224) | Dış ağa duyurulan genel SSH portu |
-| `publicClientPort` | `PUBLIC_CLIENT_PORT` | `CLIENT_PORT` (2222) | Dış ağa duyurulan genel Telnet TUI portu |
+| `publicFederationPort` | `PUBLIC_FED_PORT` / `FED_PUBLIC_PORT` | `FED_PORT` (8001) | Dış ağa anons edilen ve dialback yapılan genel federasyon portu |
+| `publicSshPort` | `PUBLIC_SSH_PORT` / `SSH_PUBLIC_PORT` | `SSH_PORT` (2224) | Dış ağa duyurulan genel SSH portu |
+| `publicClientPort` | `PUBLIC_CLIENT_PORT` / `CLIENT_PUBLIC_PORT` | `CLIENT_PORT` (2222) | Dış ağa duyurulan genel Telnet TUI portu |
 | `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.5.8'` | SSH sunucusu protokol kimlik dizgesi (Sürüm sistemi ile dinamik) |
 | `meshRole` | `MESH_ROLE` | `'EDGE'` | Düğüm rolü (`'RELAY'` veya `'EDGE'`) |
 | `bootstrapPeers` | `BOOTSTRAP_PEERS` | `''` | Kalıcı başlangıç ve korumalı röle eş listesi (virgülle ayrılmış) |
