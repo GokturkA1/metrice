@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
  * kod tabanında veya testlerde elle versiyon dizgesi güncelleme ihtiyacını ortadan kaldırır.
  */
 
-let packageVersion = '2.5.8';
+let packageVersion = '2.5.9';
 try {
   const packageJsonUrl = new URL('../package.json', import.meta.url);
   const pkg = JSON.parse(readFileSync(packageJsonUrl, 'utf-8'));
