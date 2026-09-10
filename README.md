@@ -1,4 +1,4 @@
-# Metrice v2.5.5
+# Metrice v2.5.8
 
 Metrice, harici bağımlılık içermeyen (Zero External Dependencies), doğrudan Node.js çekirdek kütüphaneleri (`node:crypto`, `node:net`, `node:dgram`, `node:sqlite`, `node:dns`) üzerinde çalışan, kuantum sonrası kriptografi (Post-Quantum Cryptography) ve Tor benzeri çok katmanlı yönlendirme (Onion Routing) mimarisine sahip dağıtık eşler arası (P2P) ağ protokolüdür.
 
@@ -45,7 +45,7 @@ Sistem; NIST FIPS 203 ML-KEM-768 anahtar kapsülleme, Ed25519 tabanlı RFC 4648 
 
 ### 6. Bellek İçi SSH-2 Sunucusu ve İki Faktörlü Kasa Doğrulaması (2FA Vault)
 - Harici SSH arka plan süreci (daemon) gerekmeksizin saf JavaScript ile yazılmış SSH-2 sunucusu barındırır.
-- Dinamik Sürüm Sistemi & Yapılandırılabilir Kimlik: Sunucu kimlik dizgesi (`sshServerVersion`) ve sistem sürümü merkezi sürüm sistemi (`src/version.js`) üzerinden `package.json` ile dinamik olarak senkronize edilir (varsayılan: `SSH-2.0-Metrice_2.5.5`), ortam değişkeni veya konfigürasyon üzerinden özelleştirilebilir.
+- Dinamik Sürüm Sistemi & Yapılandırılabilir Kimlik: Sunucu kimlik dizgesi (`sshServerVersion`) ve sistem sürümü merkezi sürüm sistemi (`src/version.js`) üzerinden `package.json` ile dinamik olarak senkronize edilir (varsayılan: `SSH-2.0-Metrice_2.5.8`), ortam değişkeni veya konfigürasyon üzerinden özelleştirilebilir.
 - Donanım Anahtarı Bağlama: Kullanıcı parolası, istemcinin Ed25519 açık anahtarı ile tuzlanarak Scrypt (N=16384, r=8, p=1) ve HKDF-SHA256 algoritmalarından geçirilir. Kayıtlı Ed25519 anahtarı olmaksızın doğru parola girilse dahi kimlik doğrulanamaz.
 
 ### 7. HAProxy PROXY Protocol v1 & v2 Desteği ve L4 Güvenliği
@@ -85,19 +85,50 @@ MESH_ROLE=RELAY \
 node src/index.js
 ```
 
-### 2. Docker / Podman Konteyner Dağıtımı
-Konteyner içi ağ köprülerinde IP doğrulama toleransı sağlamak için `TRUST_PROXY=true` kullanılır:
+### 2. Docker ve Docker Compose ile Dağıtım (Kalıcı Veri Garantili)
+
+Metrice, en iyi güvenlik pratiklerine (Rootless `node` kullanıcısı, TCP sağlık denetimi, otomatik `VOLUME ["/app/data"]` kalıcılığı) göre hazırlanmış [Dockerfile](Dockerfile) ve [docker-compose.yml](docker-compose.yml) içerir.
+
+> **Önemli (Veri Kalıcılığı):** SQLite veritabanı (`data_8001.db`) ve eş önbelleği (`peers_8001.json`) konteyner içindeki `/app/data/` dizinine yönlendirilmiştir. Ana makinenin `./data` dizini bu konuma bağlandığı için imaj her yeniden derlendiğinde (`docker build`) veya güncellendiğinde kullanıcı profilleri, açık anahtarlar ve mesaj geçmişi kesinlikle silinmez, korunur.
+
+#### Yöntem A: Docker Compose ile Başlatma (Önerilen)
 ```bash
+# 1. Düğümü arka planda derleyip başlatın:
+docker compose up -d --build
+
+# 2. Canlı logları izleyin:
+docker compose logs -f
+
+# 3. Durdurmak için:
+docker compose down
+```
+
+#### Yöntem B: Bağımsız Docker CLI ile Başlatma
+```bash
+# 1. Güvenli imajı derleyin:
+docker build -t metrice .
+
+# 2. Kalıcı veri dizinini oluşturun ve izinleri ayarlayın (UID 1000 node kullanıcısı):
+mkdir -p data
+chown -R 1000:1000 data 2>/dev/null || true
+
+# 3. Kalıcı hacim ve ortam değişkenleriyle çalıştırın:
 docker run -d \
   --name metrice-node \
+  --restart always \
   -e SERVER_NAME="node.example.com" \
   -e TRUST_PROXY=true \
+  -e MESH_ROLE=RELAY \
   -e FED_PORT=8001 \
   -e SSH_PORT=2224 \
+  -e CLIENT_PORT=2222 \
+  -e DB_FILE=/app/data/data_8001.db \
+  -e PEER_FILE=/app/data/peers_8001.json \
   -p 8001:8001 \
   -p 2224:2224 \
+  -p 2222:2222 \
   -v $(pwd)/data:/app/data \
-  node:24-alpine node src/index.js
+  metrice
 ```
 
 ### 3. Ters Vekil ve Tünelleme Arkasında Dağıtım (Cloudflared / Ngrok)
@@ -146,7 +177,7 @@ Tüm parametreler ortam değişkenleri (`process.env`) veya `src/config/index.js
 | `publicFederationPort` | `PUBLIC_FED_PORT` | `FED_PORT` (8001) | Dış ağa anons edilen ve dialback yapılan genel federasyon portu |
 | `publicSshPort` | `PUBLIC_SSH_PORT` | `SSH_PORT` (2224) | Dış ağa duyurulan genel SSH portu |
 | `publicClientPort` | `PUBLIC_CLIENT_PORT` | `CLIENT_PORT` (2222) | Dış ağa duyurulan genel Telnet TUI portu |
-| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.5.5'` | SSH sunucusu protokol kimlik dizgesi (Sürüm sistemi ile dinamik) |
+| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.5.8'` | SSH sunucusu protokol kimlik dizgesi (Sürüm sistemi ile dinamik) |
 | `meshRole` | `MESH_ROLE` | `'EDGE'` | Düğüm rolü (`'RELAY'` veya `'EDGE'`) |
 | `bootstrapPeers` | `BOOTSTRAP_PEERS` | `''` | Kalıcı başlangıç ve korumalı röle eş listesi (virgülle ayrılmış) |
 | `maxRendezvousTunnels`| `MAX_RENDEZVOUS_TUNNELS` | `64` | Bir RELAY düğümünün kabul edeceği azami ters tünel sayısı |
@@ -256,7 +287,7 @@ PROXY TCP4 203.0.113.195 198.51.100.1 56324 8001\r\n<payload>
 
 ## Doğrulama ve Testler
 
-Sistem bütünlüğü `tests/` klasöründeki üç kapsamlı test süiti (toplam 115 test) ile doğrulanır:
+Sistem bütünlüğü `tests/` klasöründeki dört kapsamlı test süiti (toplam 123 test) ve GitHub Actions CI/CD boru hattı ile doğrulanır:
 
 ```bash
 # Tüm test süitlerini sırayla çalıştırmak için:
@@ -266,9 +297,18 @@ npm test
 node tests/mesh.test.js      # 1. P2P-Mesh, AutoNAT, Rendezvous, PROXY ve Transit Spesifikasyon Süiti (83 Test)
 node tests/protocol.test.js  # 2. Protokol, Ağ Keşfi, Post-Quantum SSH-2 ve Veritabanı Süiti (24 Test)
 node tests/security.test.js  # 3. Protokol Güvenliği, Nonce Replay, DoS ve Enjeksiyon Denetim Süiti (8 Test)
+node tests/presence.test.js  # 4. Presence Senkronizasyonu, Dedikodu, Yarış Koruması & Proxy Keepalive (8 Test)
 ```
 
-Testler; Base32 türetimi, AutoNAT konsensüsü, PROXY Protocol v1/v2 ayrıştırma ve IP spoofing koruması, `CAP_EDGE_TRANSIT` dinamik rol yönetimi ve ters tünel kross-köprüleme, DoS tampon limitleri, ML-KEM-768 soğan yönlendirmesi, SSRF önlemleri ve Two-Factor SSH kimlik doğrulamasını uçtan uca kapsar.
+Testler; Base32 türetimi, AutoNAT konsensüsü, PROXY Protocol v1/v2 ayrıştırma ve IP spoofing koruması, `CAP_EDGE_TRANSIT` dinamik rol yönetimi ve ters tünel kross-köprüleme, DoS tampon limitleri, ML-KEM-768 soğan yönlendirmesi, SSRF önlemleri, Two-Factor SSH kimlik doğrulaması ve ağ genelinde anlık varlık senkronizasyonunu uçtan uca kapsar.
+
+Ayrıca projeye entegre edilen GitHub Actions boru hattı ile her push ve PR anında:
+- `Node.js 24.x` ve `Node.js 26.x` sürümlerinde test matrisi,
+- `Oxlint` bağımsız statik kod analizi (`--deny-warnings`),
+- Sıfır harici npm bağımlılığı (Zero-Dependency) denetimi,
+- `Docker` imaj derleme ve konteyner ayağa kalkma doğrulaması,
+- `CodeQL` statik uygulama güvenlik testi (SAST)
+otomatik olarak yürütülür.
 
 ---
 
