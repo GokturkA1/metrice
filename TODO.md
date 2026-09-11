@@ -150,8 +150,9 @@ Tüm paket ve görevlerin tek bir serbest döngüde yarışını engelleyen 4 ka
 
 ### 4. Mesajlaşma Kısıtı: Yalnızca Diğer Adminlerle İletişim (Admin-To-Admin Only)
 - Kök admin hesabı genel kullanıcı sohbetlerine katılamaz; küresel veya federe kanallara (`#genel`, `#general` vb.) mesaj gönderemez.
-- Standart son kullanıcılara mesaj atamaz; yetki suistimali ve kimlik taklidi önlenir.
+- Standart son kullanıcılara doğrudan bireysel mesaj atamaz; yetki suistimali ve kimlik taklidi önlenir.
 - **Yalnızca** diğer düğümlerin doğrulanmış admin hesaplarına (`@admin:<PeerNodeID>.mesh`) uçtan uca şifreli doğrudan mesaj (E2EE) iletebilir veya alabilir.
+- **Düğüm İçi İstisna (Yerel Duyuru):** Kök admin, yalnızca kendi yerel düğümünün `#duyuru` kanalına sistem/bakım duyurusu gönderme yetkisine sahiptir; bu duyurular yalnızca o düğümün yerel kullanıcılarına iletilir.
 - Böylece düğüm yöneticileri güvenlik uyarıları, eş bakım bildirimleri ve operasyonel koordinasyon için düğümler arası özel bir yönetim hattı (Operational Backchannel) kurar.
 
 ### 5. Özel Düğüm Admin, Moderasyon ve Sistem Komut Seti
@@ -223,7 +224,7 @@ client.on('message', (msg) => console.log('Gelen:', msg));
 
 ---
 
-## Faz 6 (Ekstrem Vizyon Fazı): Özel Mesh IMS / VoWiFi Şebekesi, P2P Dosya Transferi, E2EE Sesli Görüşme ve İmzalı Duyuru Kanalları
+## Faz 6 (Ekstrem Vizyon Fazı): Özel Mesh IMS / VoWiFi Şebekesi, P2P Dosya Transferi, E2EE Sesli Görüşme, Yerel Duyuru ve Sohbet Kanalları
 
 ### 1. Özel SIM / eSIM ve Yerel VoWiFi IMS Çekirdeği (Custom Mesh IMS & Native VoWiFi Dialer Integration)
 Telekom operatörlerinden ve merkezi baz istasyonlarından tamamen bağımsız, akıllı telefonların yerleşik arama ekranını (native phone dialer) Metrice ağına bağlayan uçtan uca telekomünikasyon köprüsü:
@@ -264,17 +265,16 @@ Büyük dosyaların (belge, arşiv, ses kaydı, medya vb.) doğrudan eşler aras
   - Ağ kopması, tünel değişimi veya istemcinin kapanıp açılması durumunda son doğrulanmış bloktan itibaren transferin otomatik devam etmesi.
   - Node.js akış (Streams) altyapısı ve Backpressure mekanizmasıyla alıcının disk yazma hızına göre veri hızının dinamik dengelenmesi; bellek taşmalarının (OOM) tamamen önlenmesi.
 
-### 4. Kriptografik İmzalı Doğrulanmış Duyuru Kanalları (Signed Announcement & Broadcast Channels)
-Ağ genelinde resmi bildirimler, sistem bültenleri ve topluluk anonsları için tek yönlü, tahrif edilemez yayın katmanı:
-- **Yalnızca Yayıncı Yazabilir Kısıtı (Owner-Signed Only):**
-  - Duyuru kanalları (örn. `#duyuru:nodeid.mesh` veya `@haberler:nodeid.mesh`) standart grup sohbetlerinden farklı olarak yazma yetkisine kapalıdır.
-  - Kanala yalnızca kanal sahibi düğümün Ed25519 özel anahtarıyla imzalanmış paketler enjekte edilebilir.
-- **Ağ Boyu Doğrulama ve Tahrifat Engeli:**
-  - P2P ağındaki tüm röle ve uç düğümler gelen duyuru paketlerinin imzasını anında doğrular; geçersiz imzalı veya yetkisiz mesajlar anında imha edilir (Dropping forged announcements).
-  - Ara düğümlerin içeriği değiştirmesi veya tahrif etmesi kriptografik olarak imkansızdır.
-- **Hafif Dedikodu Yayılımı (Gossip Broadcast) ve Arşiv Senkronizasyonu:**
-  - Duyurular dedikodu protokolü ile tüm ağa asgari bant genişliğiyle anons edilir.
-  - Çevrimdışı olan istemciler ağa yeniden bağlandıklarında yerel veritabanındaki son duyuru ID'sinden sonrasını rölelerden tek bir özet paketiyle senkronize eder.
+### 4. Düğüme Özel Salt-Okunur Duyuru Kanalı ve Yerel Topluluk Sohbeti (Node-Local Announce & Local Chat)
+Düğüm içi iletişim, yönetim duyuruları ve yerel kullanıcı topluluğu için dış ağa ve federasyona tamamen kapalı, yerel düzeyde izole kanal katmanı:
+- **Düğüme Özel Salt-Okunur Duyuru Kanalı (`#duyuru`):**
+  - **Sıkı Yerel İzolasyon (Strict Node-Local Scope):** Duyurular asla küresel federasyon ağına, dedikodu (gossip) protokolüne veya diğer düğümlere sızdırılmaz; yalnızca bu düğüme bağlı ve kayıtlı yerel kullanıcılar görebilir.
+  - **Yalnızca Kök Admin Mesaj Atabilir:** Kanala yalnızca bu düğümün yerel kök admini (`@admin:<NodeID>.mesh`) mesaj yazabilir. Standart kullanıcılar için kanal tamamen salt-okunurdur (read-only); yetkisiz mesaj denemeleri soket düzeyinde reddedilir.
+  - Sistem bakım takvimleri, kural güncellemeleri, acil durum uyarıları ve yerel sunucu durum raporları için tek yönlü resmi bilgilendirme akışıdır.
+- **Düğüm İçi Yerel Sohbet Kanalı (`#yerel` / `#local`):**
+  - **Sadece Yerel Kullanıcılar Arasında:** Yalnızca o düğümde hesabı veya aktif oturumu bulunan kullanıcıların kendi aralarında mesajlaşabileceği hafif yerel topluluk sohbeti.
+  - **Dış Federasyon İzolasyonu:** Bu kanaldaki mesajlar P2P ağına veya uzak rölelere federate edilmez; tüm trafik sunucunun yerel sınırları içinde kalır (zero federation overhead).
+  - Kullanıcıların genel ağ trafiği yaratmadan, gecikmesiz ve güvenli bir şekilde doğrudan sunucu arkadaşlarıyla sohbet edebilmesini sağlar.
 
 ---
 
