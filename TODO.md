@@ -25,11 +25,18 @@ Sıfır dış bağımlılık (Zero-Dependency) ve kuantum sonrası kriptografi (
   - Seviye 2: Geçici karantina (Temporary IP/Peer Jail).
   - Seviye 3: `PeerManager` güven puanının (`score`) düşürülmesi ve havuzdan tahliye (`Eviction`).
 
-### 3. Akıllı Tünel Yönlendirmesi ve Tahliyesi (REDIRECT Eviction & Self-Balancing)
-- Bir `RELAY` düğümünün tünel kapasitesi dolduğunda (`rendezvousTunnels.size >= maxTunnels`), gelen bağlantı talebini basitçe reddedip istemciyi kapıda bırakmak yerine:
-  - Yönlendirme tablosundan kapasitesi müsait ve gecikmesi düşük 2-3 alternatif sağlıklı Relay düğümünü seçme.
-  - İstemciye bu adresleri içeren bir `RENDEZVOUS_REDIRECT` paketi iletme.
-  - `EDGE` istemcisinin körlemesine denemek yerine anında bu önerilen röleye bağlanarak ağ yükünü otonom şekilde dengelemesi (Self-Balancing Mesh).
+### 3. Üçlü Katılım Denetimi ve Otonom Tahliye (Ternary Admission & REDIRECT Self-Balancing)
+Bir `RELAY` düğümüne gelen tünel (`RENDEZVOUS_BIND`) veya bağlantı talepleri için 3 kademeli otonom karar mekanizması:
+- **1. AFFIRM (Kabul):** Düğümün tünel kapasitesi müsaitse (`rendezvousTunnels.size < maxTunnels`) ve kural ihlali yoksa tünel kabul edilir, `RENDEZVOUS_ACK` döndürülür ve oturum başlatılır.
+- **2. ABSTAIN / REDIRECT (Yönlendirme):** Röle kapasitesi doluysa (`rendezvousTunnels.size >= maxTunnels`), istemci basitçe kapıda bırakılmaz. Röle kendi SQLite `routing_table` tablosundaki en düşük gecikmeli, doğrulanmış ve müsait 2-3 alternatif RELAY düğümünün imzalı adresini içeren bir `RENDEZVOUS_REDIRECT` paketi döner:
+  ```json
+  {
+    "status": "redirect",
+    "relays": ["relay2.metrice.network:8001", "relay3.metrice.network:8001"]
+  }
+  ```
+  `EDGE` istemcisi körlemesine rastgele denemek yerine anında bu önerilen röleye bağlanarak ağ yükünü otonom ve homojen şekilde dengeler (Self-Balancing Mesh).
+- **3. DENY (İmha ve Karantina):** Geçersiz Ed25519 imza, bozuk ikili çerçeve, sahte NodeID veya nonce replay saldırısı tespit edilirse soket TCP düzeyinde derhal imha edilir (`socket.destroy()`); eşin güven puanı sıfırlanarak IP ve NodeID geçici tecrit havuzuna (Jail) alınır.
 
 ### 4. Periyodik Öz-Onarım ve Durum Değişmezleri Denetleyicisi (Self-Healing Watchdog)
 - Her 60 saniyede bir sessizce çalışan hafif iç durum sağlık kontrolü:
@@ -40,7 +47,7 @@ Sıfır dış bağımlılık (Zero-Dependency) ve kuantum sonrası kriptografi (
 
 ---
 
-## Faz 2: Öncelik Tabanlı Görev ve Paket Çizelgeleyici (Priority Packet Scheduler)
+## Faz 2: Saf İkili Çerçeveleme, Öncelik Kuyruğu ve Kuantum Sonrası Mandallama (Wire Protocol & PQC Ratchet)
 
 ### 1. Çok Kademeli Öncelik Kuyruğu (PriorityQueue)
 Tüm paket ve görevlerin tek bir serbest döngüde yarışını engelleyen 4 katmanlı öncelik modeli:
@@ -59,21 +66,51 @@ Tüm paket ve görevlerin tek bir serbest döngüde yarışını engelleyen 4 ka
   - Outbox yeniden deneme döngüleri.
   - SQLite WAL temizliği, indeksleme ve süresi dolmuş devre tasfiyesi.
 
-### 2. Event Loop Nefes Alma Koruması
-- Yüksek hacimli varlık anonsları veya veritabanı yazımları altında bile ana Event Loop'un bloke olması önlenir; SSH ve Onion akışlarının gecikmesi (jitter) sıfıra yakın tutulur.
+### 2. Tel Protokolünün İkilileştirilmesi: JSON ve Base64'ün Tasfiyesi (Binary Framing)
+- `SecureChannel` ve `OnionRouter` üzerinde metinsel `JSON.stringify` / `JSON.parse` ve Base64 dolgusunun (`pad: '000...'`) tasfiyesi:
+  - Base64 kodlamasının getirdiği %33 bant genişliği ve bellek ek yükünün tamamen sıfırlanması.
+  - V8 motorundaki string tahsisatı (allocation) ve çöp toplayıcı (GC) baskısının engellenmesi.
+- **Sabit 2048 Baytlık Saf İkili Soğan Hücresi (Binary Onion Cell):**
+  - Doğrudan `Uint8Array` / `Buffer.allocUnsafe(2048)` üzerinde çalışan ikili çerçeve:
+    ```text
+    +--------------+---------------+-------------------+------------------+
+    | Magic (1B)   | Type (1B)     | Payload Len (2B)  | Nonce / CID (16B)|
+    | 0x4D ('M')   | 0x10          | Big-Endian uint16 | 16 Bayt Devre ID |
+    +--------------+---------------+-------------------+------------------+
+    | IV (12B)     | Auth Tag (16B)| Ciphertext (Var)  | Random Pad (Var) |
+    | GCM IV       | GCM Tag       | Şifreli Gövde     | Toplam: 2048 B   |
+    +--------------+---------------+-------------------+------------------+
+    ```
+  - Kalan dolgu baytlarının deterministik olmayan kriptografik rastgele verilerle (`crypto.randomFillSync`) doldurularak derin paket analizine (DPI) ve yan kanal analizlerine karşı tam koruma sağlanması.
+- `src/core/federation.js` içindeki `buffer += chunk.toString()` metin yığma döngüsü yerine doğrudan ikili akış (`socket.read(2048)`) mantığına geçilmesi.
 
-### 3. Kuantum Sonrası Taşıma Mandallaması (Post-Quantum Ratchet & Forward Secrecy)
-- Ağ üzerinden iletilen her E2EE doğrudan mesaj için HKDF tabanlı oturum anahtarı mandallama (KDF-chain key ratcheting).
+### 3. Kuantum Sonrası Mandallama: İleriye Dönük Mutlak Gizlilik (PQC Key Ratchet)
+- Doğrudan mesajlaşmada her mesaj için yalnızca tekil anahtar üretmek yerine çift kademeli kuantum sonrası anahtar mandallaması (Double Ratchet / PQC Ratchet):
+  - **Simetrik KDF-Chain Mandallama:** Her mesaj iletiminde simetrik oturum anahtarı bir HKDF zincirinde ilerletilir ($K_{i+1} = \text{HKDF}(K_i)$) ve eski taşıma anahtarı bellekten derhal silinir (Symmetric-key ratchet).
+  - **Asimetrik KEM Mandallaması (PQC DH/KEM Ratchet):** Her $N$ mesajda bir veya oturum yeniden kurulduğunda taraflar taze tek kullanımlık ML-KEM-768 açık anahtarları takas ederek asimetrik mandalı döndürür.
 - **Kullanıcı Mesaj Geçmişi Güvenliği:**
   - Alınan ve çözülen mesajlar kullanıcının yerel şifreli SQLite veritabanında kendi profil kasa anahtarıyla kalıcı saklanmaya devam eder; kullanıcılar geçmiş mesajlarını her an eksiksiz okuyabilir.
-  - Ağ taşıma katmanında ise her mesajdan sonra eski oturum anahtarı bellekten tamamen silinir; gelecekte bir anahtar ele geçirilse dahi geçmişte ağdan kaydedilmiş şifreli paketler asla deşifre edilemez (Perfect Forward Secrecy).
+  - Ağ taşıma katmanında eski anahtarlar imha edildiği için, gelecekte bir anahtar ele geçirilse dahi geçmişte ağdan kaydedilmiş şifreli paketler asla deşifre edilemez (Perfect Forward Secrecy).
 
-### 4. DNS ve NTP Bağımsız Çok Katmanlı Otonom Keşif (Autonomous Discovery)
-- DNS ve NTP sunucularının merkezi veya sansürlenebilir doğasını zorunlu bağımlılık olmaktan çıkaran çok katmanlı otonom keşif:
+### 4. Dış Bağımsızlıktan Ödün Vermeyen Zaman Konsensüsü ve Otonom Keşif (Median-Time-Past & Discovery)
+- NTP sunucularına bağlanma bağımlılığını ve donanımsal GPS/atomik saat zorunluluğunu reddeden otonom zaman konsensüsü:
+  - P2P el sıkışmalarında (`HANDSHAKE_INIT` / `REPLY`) ve keepalive sinyallerinde eşler yerel zaman damgalarını bildirir.
+  - Düğüm, bağlı olduğu doğrulanmış eşlerin bildirdiği zaman farklarını bir kayan pencerede toplayarak medyan kaymayı hesaplar:
+    $$\Delta_{\text{offset}} = \text{median}(\{T_{\text{peer}_i} - T_{\text{local}}\})$$
+  - İşletim sistemi saatine dokunulmaz; protokol içi paket doğrulama, devre TTL ve nonce kontrolleri sanal `MeshTime` (`now() = BigInt(Date.now()) + offset`) ve `process.hrtime.bigint()` (monotonik süre) üzerinden yürütülür.
+  - Replay attack zaman kayması (skew) toleransı 24 saatlik gevşek değerden `MeshTime` sayesinde birkaç dakikalık sıkı bir güvenlik aralığına çekilir.
+- **Çok Katmanlı Otonom Keşif (Autonomous Multi-Tier Discovery):**
   - **1. Katman (Disksel Hafıza):** Yerel Eş Önbelleği (`peers_<PORT>.json`) ile hiçbir dış istek yapmadan son bilinen doğrulanmış eşlerle anında başlama.
   - **2. Katman (Yerel Ağ):** UDP Broadcast / Multicast LAN keşfi (İnternet kesintisinde dahi yerel düğümleri anında bulma).
   - **3. Katman (Ağ İçi Dedikodu):** Bağlı eşlerden mantıksal saat (Lamport Time) ve `PEER_EXCHANGE` protokolü ile dinamik eş listesi edinme.
   - **4. Katman (Opsiyonel / Geri Çekilme):** DNS TXT kaydı sorgulama (Yalnızca diğer katmanlar sonuç vermezse ve `ALLOW_DNS_BOOTSTRAP=true` ise ikincil yedek olarak kullanılır; asla birincil zorunluluk değildir).
+
+### 5. NIST FIPS 204 ML-DSA-65 Hibrit Kuantum Sonrası Kimlik Modeli (FIPS 203 + FIPS 204)
+- Shor algoritması karşısında klasik Ed25519 eliptik eğri imzalarının kırılma riskine karşı Node.js v24+/v26+ yerel NIST FIPS 204 ML-DSA-65 desteği:
+- Düğüm açılışında hem Ed25519 hem de **ML-DSA-65** kimlik anahtar çifti üretimi.
+- Hibrit NodeID türetim formülü:
+  $$\text{NodeID} = \text{Base32}(\text{SHA256}(\text{Ed25519\_Pub} \parallel \text{ML-DSA-65\_Pub}))[0..16]$$
+- El sıkışma (`HANDSHAKE_INIT`) ve `RENDEZVOUS_BIND` paketlerinde hibrit çift imza (Dual Signature) doğrulaması. Klasik kripto zayıflasa dahi kuantum sonrası kimlik taklit edilemezliği garanti edilir.
 
 ---
 
@@ -93,12 +130,22 @@ Tüm paket ve görevlerin tek bir serbest döngüde yarışını engelleyen 4 ka
   - SSH-2FA Kasası Scrypt (N=16384, r=8, p=1) ağır anahtar türetimi.
 - **Veri Dönüşümü ve Güvenlik Doğrulamaları:**
   - Büyük boyutlu ikili çerçevelerin doğrulanması ve parsing işlemleri.
-  - Toplu Ed25519 imza kontrolleri.
+  - Toplu Ed25519 / ML-DSA-65 imza kontrolleri.
 - **Arka Plan Analitik ve Rota Hesaplamaları:**
   - Ağ topolojisi, en kısa rota ve devre seçim metriklerinin arka planda hesaplanması.
 
-### 3. Sıfır-Kopya (Zero-Copy) Veri Paylaşımı
-- İşçiler ile ana thread arasında devasa Buffer nesnelerini JSON/String serialize etmek yerine `ArrayBuffer` transferi (ownership transfer) veya `SharedArrayBuffer` kullanılarak kopyalama ve bellek tahsis (allocation) maliyetinin sıfıra indirilmesi.
+### 3. Paylaşımlı Bellek Eş Durum Havuzu: `PeerPhaseBuffer` (`SharedArrayBuffer` + `Atomics`) ve Sıfır-Kopya Transfer
+- **Paylaşımlı Bellek Eş Havuzu (`PeerPhaseBuffer`):**
+  - Ana Event Loop ile işçi thread'ler arasında her metrik güncellemesinde `postMessage` ile veri kopyalamak ve serileştirmek yerine, tek bir `SharedArrayBuffer` üzerinden kilitlenmesiz (lock-free) doğrudan bellek paylaşımı.
+  - Eş başına 32 baytlık sabit bellek yuvası (Slot):
+    - `[0..3]`: Eş İtibar Puanı (Int32, `Atomics.add` ile doğrudan güncelleme)
+    - `[4..7]`: Token Bucket Hız Sınırı Jetonları (Int32, `Atomics.compareExchange` ile atomik tüketim)
+    - `[8..15]`: Son Görülme Zamanı (BigInt64, `Atomics.store` ile epoch ms kaydı)
+    - `[16..19]`: Hata Sayacı (Int32, `Atomics.add`)
+    - `[20..31]`: Replay Önleme Nonce Tuzu (12 Bayt)
+  - İşçi thread'ler ana döngüyü bloke etmeden veya uyandırmadan mikrosaniyeler içinde eş puanlarını ve hız sınırlarını denetler.
+- **Sıfır-Kopya (Zero-Copy) Veri Aktarımı:**
+  - Kriptografik hesaplamalar ve büyük paketler için devasa Buffer nesnelerini kopyalamak yerine `ArrayBuffer` transferi (ownership transfer) kullanılarak bellek tahsis (allocation) maliyetinin sıfıra indirilmesi.
 
 ### 4. Healthcheck & Heartbeat Telemetri Entegrasyonu (Worker Pool Observability)
 - Port 8050 TCP Healthcheck protokolüne (`STATUS` / `INFO` komutları) elastik işçi havuzunun anlık metriklerinin dahil edilmesi:
