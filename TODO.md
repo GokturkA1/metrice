@@ -16,18 +16,22 @@ Sıfır dış bağımlılık (Zero-Dependency) ve kuantum sonrası kriptografi (
 
 ### 2. Davranışsal İtibar ve Jeton Kovası Hız Sınırlayıcı (Token-Bucket Rate Limiter)
 - IP ve NodeID başına hafif, bellek içi jeton kovası (Token Bucket / Leaky Bucket) motoru.
+- **Node 26 `crypto.hash` ile Akışsız Hızlı Özetleme:** `crypto.createHash('sha256')` stream nesnesi ve GC baskısı yaratmadan, doğrudan C++ katmanında çalışan tek seferlik `crypto.hash('sha256', ipOrNodeId)` fonksiyonu ile mikrosaniyeler altında hız sınırı anahtarı çıkarma.
+- **`node:net` Yerel `BlockList` ve `SocketAddress` ile C++ Hızında Tecrit:** Harici kütüphane veya yavaş RegExp sorgulamaları yerine, Node.js yerleşik `net.BlockList` yapısı ile $O(1)$ karmaşıklığında IP ve CIDR alt ağ (`addSubnet`) karantinası.
 - Anormal trafik profillerinin tespiti:
   - Aşırı hızlı diyal-geri (`DIALBACK_REQUEST`) talepleri,
   - Hatalı (malformed) veya geçersiz ikili çerçeve tekrarları,
   - Hızlı soket açma-kapama (`reconnect spam`) döngüleri.
 - Kademeli Yaptırım Mekanizması:
   - Seviye 1: Soket düzeyinde yapay gecikme (Throttling).
-  - Seviye 2: Geçici karantina (Temporary IP/Peer Jail).
+  - Seviye 2: `net.BlockList` üzerinden geçici IP/Peer karantinası (Jail).
   - Seviye 3: `PeerManager` güven puanının (`score`) düşürülmesi ve havuzdan tahliye (`Eviction`).
 
 ### 3. Üçlü Katılım Denetimi ve Otonom Tahliye (Ternary Admission & REDIRECT Self-Balancing)
 Bir `RELAY` düğümüne gelen tünel (`RENDEZVOUS_BIND`) veya bağlantı talepleri için 3 kademeli otonom karar mekanizması:
 - **1. AFFIRM (Kabul):** Düğümün tünel kapasitesi müsaitse (`rendezvousTunnels.size < maxTunnels`) ve kural ihlali yoksa tünel kabul edilir, `RENDEZVOUS_ACK` döndürülür ve oturum başlatılır.
+  - **Ayrıntılı Çekirdek TCP Keep-Alive Denetimi:** Standart `setKeepAlive` yerine modern `net.connect` / `net.createServer` parametreleri (`keepAlive: true`, `keepAliveInitialDelay: 10000`, `keepAliveInterval`, `keepAliveProbes`) ile CGNAT tablolarının sessizce düştüğü mobil/ev ağlarında zombi tünellerin 1-baytlık ping trafiğine gerek kalmadan işletim sistemi çekirdeği düzeyinde anında tespiti.
+  - **Dual-Stack Happy Eyeballs (`autoSelectFamily: true`, `autoSelectFamilyAttemptTimeout: 150`):** RFC 8305 algoritmasıyla IPv6/IPv4 çift yığınlı eş bağlantılarında gecikmesiz en hızlı soketi otonom seçme.
 - **2. ABSTAIN / REDIRECT (Yönlendirme):** Röle kapasitesi doluysa (`rendezvousTunnels.size >= maxTunnels`), istemci basitçe kapıda bırakılmaz. Röle kendi SQLite `routing_table` tablosundaki en düşük gecikmeli, doğrulanmış ve müsait 2-3 alternatif RELAY düğümünün imzalı adresini içeren bir `RENDEZVOUS_REDIRECT` paketi döner:
   ```json
   {
@@ -36,12 +40,18 @@ Bir `RELAY` düğümüne gelen tünel (`RENDEZVOUS_BIND`) veya bağlantı talepl
   }
   ```
   `EDGE` istemcisi körlemesine rastgele denemek yerine anında bu önerilen röleye bağlanarak ağ yükünü otonom ve homojen şekilde dengeler (Self-Balancing Mesh).
-- **3. DENY (İmha ve Karantina):** Geçersiz Ed25519 imza, bozuk ikili çerçeve, sahte NodeID veya nonce replay saldırısı tespit edilirse soket TCP düzeyinde derhal imha edilir (`socket.destroy()`); eşin güven puanı sıfırlanarak IP ve NodeID geçici tecrit havuzuna (Jail) alınır.
+  - **Node 26 SQLite Changeset Replikasyonu:** Röleler arası yönlendirme tablosu delta takasında `node:sqlite` Session Extension (`createSession()` / `applyChangeset()`) kullanılarak SQL sorgusu üretmeden 36-baytlık ikili changeset formatında verimli senkronizasyon.
+- **3. DENY (Anında TCP RST ile İmha ve Karantina):** Geçersiz Ed25519/ML-DSA imza, bozuk ikili çerçeve, sahte NodeID veya nonce replay saldırısı tespit edilirse soket klasik `socket.destroy()` yerine doğrudan `socket.resetAndDestroy()` ile imha edilir:
+  - İşletim sistemi çekirdeğine doğrudan ham bir **TCP RST (Reset)** paketi bastırılır.
+  - Standart FIN-ACK el sıkışması ve soketin `TIME_WAIT` durumunda çekirdekte asılı kalması engellenir; soket tablosu ve dosya tanıtıcıları (file descriptors) anında serbest bırakılır.
+  - Saldırgan eşin güven puanı sıfırlanır, IP adresi `net.BlockList` karantinasına eklenir.
 
 ### 4. Periyodik Öz-Onarım ve Durum Değişmezleri Denetleyicisi (Self-Healing Watchdog)
 - Her 60 saniyede bir sessizce çalışan hafif iç durum sağlık kontrolü:
   - Karşı tarafı kopmuş ancak soket düzeyinde asılı kalmış yetim tünellerin tasfiyesi.
   - Süresi dolmuş geçici Onion devre anahtarlarının ve nonce havuzunun temizliği.
+  - **Node 26 `node:sqlite` Kullanıcı Tanımlı Fonksiyonları (`db.function()`):** V8 motoruna tüm satırları çekip döngüde kontrol etmek yerine, SQLite motoruna doğrudan C++ hızında çalışan `db.function('is_peer_expired', ...)` fonksiyonu eklenerek süresi dolmuş kayıtların tek sorguda (`DELETE FROM routing_table WHERE is_peer_expired(last_seen, ?) = 1`) sıfır bellek yüküyle tasfiyesi.
+  - **`db.setAuthorizer()` ile Motor Düzeyinde Güvenlik:** Yetkisiz veya beklenmeyen SQL sorgularının ve tablo manipülasyonlarının doğrudan SQLite motoru seviyesinde engellenmesi.
   - SQLite WAL dosya boyutunun izlenip gerektiğinde pasif `wal_checkpoint` çekilmesi.
   - Düğümün bellek ve kaynak sızıntılarına karşı sıfır kesintiyle (zero-downtime) aylarca kararlı çalışmasının garanti edilmesi.
 
@@ -70,6 +80,7 @@ Tüm paket ve görevlerin tek bir serbest döngüde yarışını engelleyen 4 ka
 - `SecureChannel` ve `OnionRouter` üzerinde metinsel `JSON.stringify` / `JSON.parse` ve Base64 dolgusunun (`pad: '000...'`) tasfiyesi:
   - Base64 kodlamasının getirdiği %33 bant genişliği ve bellek ek yükünün tamamen sıfırlanması.
   - V8 motorundaki string tahsisatı (allocation) ve çöp toplayıcı (GC) baskısının engellenmesi.
+  - **Node 26 TC39 Standart İkili Metotları:** `Uint8Array.prototype.toBase64()`, `Uint8Array.fromBase64()`, `Uint8Array.prototype.toHex()` ve `Uint8Array.fromHex()` metotlarının benimsenmesi; string veya harici tampon tahsisatı olmaksızın doğrudan V8 C++ hızında sıfır-kopya (zero-allocation) ikili/hex dönüşümleri.
 - **Sabit 2048 Baytlık Saf İkili Soğan Hücresi (Binary Onion Cell):**
   - Doğrudan `Uint8Array` / `Buffer.allocUnsafe(2048)` üzerinde çalışan ikili çerçeve:
     ```text
@@ -83,6 +94,8 @@ Tüm paket ve görevlerin tek bir serbest döngüde yarışını engelleyen 4 ka
     ```
   - Kalan dolgu baytlarının deterministik olmayan kriptografik rastgele verilerle (`crypto.randomFillSync`) doldurularak derin paket analizine (DPI) ve yan kanal analizlerine karşı tam koruma sağlanması.
 - `src/core/federation.js` içindeki `buffer += chunk.toString()` metin yığma döngüsü yerine doğrudan ikili akış (`socket.read(2048)`) mantığına geçilmesi.
+- **Çekirdek TCP Tampon Denetimleri (`setRecvBufferSize` / `setSendBufferSize`):** Sabit 2048 baytlık hücrelerin aktarımında işletim sisteminin devasa TCP soket tamponları tahsis etmesini önlemek amacıyla `socket.setRecvBufferSize(65536)` ve `socket.setSendBufferSize(65536)` (64 KB) sınırlarının getirilmesi; bellek şişmesinin (buffer bloat) engellenmesi.
+- **`AbortSignal` ile Bağlantı ve Devre İptali:** 3 atlamalı soğan devresi kurarken veya rendezvous tüneli açarken `net.connect({ ..., signal: abortController.signal })` ile zaman aşımına uğrayan soket denemelerinin işletim sistemi çekirdek kuyruğundan anında tasfiye edilmesi.
 
 ### 3. Kuantum Sonrası Mandallama: İleriye Dönük Mutlak Gizlilik (PQC Key Ratchet)
 - Doğrudan mesajlaşmada her mesaj için yalnızca tekil anahtar üretmek yerine çift kademeli kuantum sonrası anahtar mandallaması (Double Ratchet / PQC Ratchet):
@@ -105,11 +118,14 @@ Tüm paket ve görevlerin tek bir serbest döngüde yarışını engelleyen 4 ka
   - **3. Katman (Ağ İçi Dedikodu):** Bağlı eşlerden mantıksal saat (Lamport Time) ve `PEER_EXCHANGE` protokolü ile dinamik eş listesi edinme.
   - **4. Katman (Opsiyonel / Geri Çekilme):** DNS TXT kaydı sorgulama (Yalnızca diğer katmanlar sonuç vermezse ve `ALLOW_DNS_BOOTSTRAP=true` ise ikincil yedek olarak kullanılır; asla birincil zorunluluk değildir).
 
-### 5. NIST FIPS 204 ML-DSA-65 Hibrit Kuantum Sonrası Kimlik Modeli (FIPS 203 + FIPS 204)
-- Shor algoritması karşısında klasik Ed25519 eliptik eğri imzalarının kırılma riskine karşı Node.js v24+/v26+ yerel NIST FIPS 204 ML-DSA-65 desteği:
-- Düğüm açılışında hem Ed25519 hem de **ML-DSA-65** kimlik anahtar çifti üretimi.
-- Hibrit NodeID türetim formülü:
-  $$\text{NodeID} = \text{Base32}(\text{SHA256}(\text{Ed25519\_Pub} \parallel \text{ML-DSA-65\_Pub}))[0..16]$$
+### 5. NIST FIPS 204 ML-DSA ve NIST FIPS 205 SLH-DSA Hibrit Kuantum Sonrası Kimlik Modeli
+- Shor algoritması karşısında klasik Ed25519 eliptik eğri imzalarının kırılma riskine karşı Node 26 `node:crypto` yerel NIST FIPS 204 ve FIPS 205 tam kuantum sonrası imza desteği:
+  - **FIPS 204 (ML-DSA-65 / Dilithium):** `crypto.generateKeyPairSync('ml-dsa-65')`, `crypto.sign()` ve `crypto.verify()` ile P2P oturumlarında tam kafes tabanlı (lattice-based) kuantum dirençli dijital imza.
+  - **FIPS 205 (SLH-DSA-SHA2-128s / SPHINCS+):** Durumsuz (stateless) hash tabanlı imzalama ile kök admin yetkilendirmesi ve kritik düğüm kimlik mühürlerinde alternatif PQC imza seçeneği.
+- **Hibrit NodeID Türetimi ve SHA-256 Görev Ayrımı:**
+  - 1.952 baytlık ML-DSA açık anahtarını URL ve adres olarak doğrudan kullanmak yerine, Node 26 `crypto.hash` ile özetlenerek Base32 ile 16 karaktere sıkıştırılması:
+    $$\text{NodeID} = \text{Base32}(\text{crypto.hash}('sha256', \text{Ed25519\_Pub} \parallel \text{ML-DSA-65\_Pub}))[0..16]$$
+  - SHA-256; adres sıkıştırma, Merkle Tree blok doğrulaması (Faz 6) ve HKDF anahtar türetiminde kullanılırken, ML-DSA kimlik doğrulaması ve imza sahteciliği korumasını üstlenir.
 - El sıkışma (`HANDSHAKE_INIT`) ve `RENDEZVOUS_BIND` paketlerinde hibrit çift imza (Dual Signature) doğrulaması. Klasik kripto zayıflasa dahi kuantum sonrası kimlik taklit edilemezliği garanti edilir.
 
 ---
@@ -122,6 +138,7 @@ Tüm paket ve görevlerin tek bir serbest döngüde yarışını engelleyen 4 ka
   - **Taban Kapasite (Min Workers):** Sistem boştayken kaynak tüketmemek adına asgari sayıda (örneğin 1 veya 2) işçi çalışır.
   - **Tepe Kapasite (Max Workers):** İş kuyruğu eşik değerleri aştığında CPU çekirdek sayısına kadar dinamik yeni işçi thread üretilir.
   - **Otomatik Daralma (Auto-Shrink / Idle Eviction):** Belirlenen süre (`idleTimeout`) boyunca iş almayan fazla işçiler bellek tasarrufu için temiz bir şekilde sonlandırılır.
+- **`reusePort: true` (`SO_REUSEPORT`) ile Çekirdek Düzeyinde Yük Dağıtımı:** Desteklenen Linux ortamlarında `net.createServer({ reusePort: true })` etkinleştirilerek aynı portu birden fazla bağımsız işçi thread'in doğrudan dinlemesi; gelen TCP bağlantılarının işletim sistemi çekirdeği tarafından doğrudan işçiler arasında paylaştırılması (ana Event Loop üzerinde sıfır proxy yükü).
 
 ### 2. İşçi Havuzuna Devredilecek Görev Türleri (Task Types)
 - **Kriptografik Hesaplamalar:**
@@ -144,6 +161,9 @@ Tüm paket ve görevlerin tek bir serbest döngüde yarışını engelleyen 4 ka
     - `[16..19]`: Hata Sayacı (Int32, `Atomics.add`)
     - `[20..31]`: Replay Önleme Nonce Tuzu (12 Bayt)
   - İşçi thread'ler ana döngüyü bloke etmeden veya uyandırmadan mikrosaniyeler içinde eş puanlarını ve hız sınırlarını denetler.
+- **Node 26 `Atomics.pause()` ve `Atomics.waitAsync()` ile Kilitlenmesiz Koordinasyon:**
+  - **`Atomics.pause()` ile CPU Rahatlatma:** İşçi thread'lerdeki meşgul bekleme (busy-wait) veya halka tampon (ring buffer) çekişme döngülerinde `Atomics.pause()` yürütülerek donanımsal x86 PAUSE / ARM YIELD CPU komutu verilir; meşgul beklemede işlemci hattı (pipeline) çekişmesi ve aşırı enerji tüketimi engellenir.
+  - **`Atomics.waitAsync()` ile Bloklamasız Asenkron Uyandırma:** Node.js ana Event Loop'unda bloklayıcı `Atomics.wait()` çağrılamaz. Node 26 `Atomics.waitAsync()` ile ana thread, `SharedArrayBuffer` üzerindeki durum ve kilit değişimlerini bloklamadan asenkron bir `Promise` üzerinden bekler. İşçi thread `Atomics.notify()` tetiklediğinde ana thread sıfır gecikmeyle mikro-görev kuyruğunda uyanır.
 - **Sıfır-Kopya (Zero-Copy) Veri Aktarımı:**
   - Kriptografik hesaplamalar ve büyük paketler için devasa Buffer nesnelerini kopyalamak yerine `ArrayBuffer` transferi (ownership transfer) kullanılarak bellek tahsis (allocation) maliyetinin sıfıra indirilmesi.
 
@@ -240,6 +260,9 @@ ANSI ve VT100 ekran çizim kodları yerine; Masaüstü (Tauri, Electron, Qt) vey
   - `join_channel` / `leave_channel`: Kanal abonelik yönetimi.
   - `get_history`: Yerel SQLite veritabanından filtrelenmiş mesaj geçmişi sorgulama.
   - `get_identity`: Düğümün `.mesh` kimlik kartını ve açık anahtarlarını alma.
+- **`node:stream` ile Birleştirilebilir Akış Boru Hattı (`stream.compose` / `Duplex.from`):**
+  - Yerel IPC soketinden gelen ikili veya metin akışının `stream.compose(socket, framingTransform, ndjsonParser)` yapısıyla modüler bir boru hattında birleştirilmesi.
+  - Dahili akış kontrolü (backpressure) ve asenkron yineleme (`for await (const event of stream)`) ile sıfır bellek sızıntılı olay işleme.
 
 ### 3. Sanal İntranet (`.mesh`) Veri Akışı ve Güvenlik İzolasyonu
 - Mobil veya Masaüstü GUI uygulaması, ağdaki karmaşık P2P topolojisi, kuantum sonrası el sıkışmalar veya CGNAT tünellemesi ile uğraşmaz; yerel soketten arka planda çalışan Metrice Core daemon'a bağlanır.
@@ -267,6 +290,7 @@ const client = new MetriceClient({ socketPath: '/tmp/metrice.sock' });
 await client.connect();
 client.on('message', (msg) => console.log('Gelen:', msg));
 ```
+- **`node:sqlite` In-Memory Anlık Görüntü (`db.serialize()` / `db.deserialize()`):** Gömülü istemci modunda disk I/O yükünü sıfırlamak için `:memory:` veritabanı kullanımı; oturum sonlanırken veya arka plana geçerken `db.serialize()` ile bellek görüntüsünün tek bir Buffer olarak anında kalıcılaştırılması ve `db.deserialize()` ile sıfır kilitlenmeyle geri yüklenmesi.
 - Sıfır dış bağımlılıkla geliştiricilerin kendi özel masaüstü, mobil veya CLI uygulamalarını tek satır kodla P2P-Mesh ve kuantum sonrası ağımıza bağlayabilmesi.
 
 ---
@@ -310,7 +334,8 @@ Büyük dosyaların (belge, arşiv, ses kaydı, medya vb.) doğrudan eşler aras
   - Dosya üstverisinin (isim, boyut, MIME türü) yalnızca hedef alıcı tarafından deşifre edilebilmesi; ara rölelerin taşınan içeriği kesinlikle görememesi.
 - **Kaldığı Yerden Devam Etme (Resumable Transfer) ve Akış Kontrolü:**
   - Ağ kopması, tünel değişimi veya istemcinin kapanıp açılması durumunda son doğrulanmış bloktan itibaren transferin otomatik devam etmesi.
-  - Node.js akış (Streams) altyapısı ve Backpressure mekanizmasıyla alıcının disk yazma hızına göre veri hızının dinamik dengelenmesi; bellek taşmalarının (OOM) tamamen önlenmesi.
+  - Node.js akış (`node:stream`) altyapısı ve Backpressure mekanizmasıyla alıcının disk yazma hızına göre veri hızının dinamik dengelenmesi; bellek taşmalarının (OOM) tamamen önlenmesi.
+  - **Soket Tampon Optimizasyonu (`setSendBufferSize` / `setRecvBufferSize`):** Büyük blok aktarımında soket tamponlarının 256 KB olarak ayarlanması ile çekirdek düzeyinde yüksek verimli G/Ç aktarımı.
 
 ### 4. Düğüme Özel Salt-Okunur Duyuru Kanalı ve Yerel Topluluk Sohbeti (Node-Local Announce & Local Chat)
 Düğüm içi iletişim, yönetim duyuruları ve yerel kullanıcı topluluğu için dış ağa ve federasyona tamamen kapalı, yerel düzeyde izole kanal katmanı:
@@ -326,6 +351,6 @@ Düğüm içi iletişim, yönetim duyuruları ve yerel kullanıcı topluluğu i�
 ---
 
 ## Kabul ve Uyumluluk Kriterleri
-- Sıfır dış npm bağımlılığı kuralı ihlal edilemez (Yalnızca `node:worker_threads`, `node:crypto`, `node:net`, `node:sqlite`, `node:os`).
+- Sıfır dış npm bağımlılığı kuralı ihlal edilemez (Yalnızca yerleşik çekirdek kütüphaneler: `node:worker_threads`, `node:crypto`, `node:net`, `node:sqlite`, `node:os`, `node:stream`, `node:buffer`).
 - Geriye dönük protokol uyumluluğu korunmalıdır (Mevcut v2.6.0 ağı ile kesintisiz çalışma).
 - Tüm fazlar kapsamlı birim ve entegrasyon testleri ile doğrulanmalıdır.
