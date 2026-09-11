@@ -223,6 +223,61 @@ client.on('message', (msg) => console.log('Gelen:', msg));
 
 ---
 
+## Faz 6 (Ekstrem Vizyon Fazı): Özel Mesh IMS / VoWiFi Şebekesi, P2P Dosya Transferi, E2EE Sesli Görüşme ve İmzalı Duyuru Kanalları
+
+### 1. Özel SIM / eSIM ve Yerel VoWiFi IMS Çekirdeği (Custom Mesh IMS & Native VoWiFi Dialer Integration)
+Telekom operatörlerinden ve merkezi baz istasyonlarından tamamen bağımsız, akıllı telefonların yerleşik arama ekranını (native phone dialer) Metrice ağına bağlayan uçtan uca telekomünikasyon köprüsü:
+- **Özel SIM / eSIM Profili Desteği:**
+  - GSMA standartlarına uyumlu özel eSIM LPA profili veya programlanabilir fiziksel USIM/ISIM kartları (ör. Sysmocom / Osmocom standartları).
+  - SIM kartında saklanan kriptografik kimlik, abonenin Metrice `.mesh` adresine (`@kullanıcı:NodeID.mesh`) ve Ed25519 donanım kimliğine mühürlenir.
+- **Hafif P2P IMS / VoWiFi Ağ Geçidi (P-CSCF & I-CSCF over Mesh):**
+  - Telefon Wi-Fi ağına bağlandığında (veya yerel SDR baz istasyonu üzerinden), işletim sisteminin yerleşik VoWiFi (Voice over Wi-Fi) / ePDG yığınını tetiklemesi.
+  - Metrice düğümünün yerel ağda bir SIP/IMS kayıtçısı (Registrar & Call Session Control Function) olarak hizmet vermesi.
+  - USIM AKA / Milenage kimlik doğrulamasının yerel SQLite ve P2P ağ anahtarları üzerinden gerçekleştirilmesi.
+- **Dinamik Numara Tercüme Motoru (ENUM / Number-to-Mesh Translation):**
+  - Kullanıcının telefon rehberinden veya tuş takımından çevirdiği standart bir telefon numarasını (örn. `+90 555...` veya özel dahili `7001`) Metrice dizininde anında hedef `.mesh` adresine (`@hedef:RemoteNodeID.mesh`) çözümleme.
+  - Ters yönde, dış dünyadan veya diğer ağ üyelerinden gelen `.mesh` çağrılarının kullanıcının cebindeki telefonun yerleşik zilini çaldırması (Native Inbound Call).
+  - Kullanıcı arayüzünde ek bir mesajlaşma uygulamasına ihtiyaç kalmadan, doğrudan telefonun ahizesinden konuşarak kuantum sonrası şifreli P2P mesh ses tüneline dahil olma deneyimi.
+
+### 2. Uçtan Uca Şifreli Gerçek Zamanlı Sesli İletişim (E2EE Voice Chat & Low-Latency Audio Streaming)
+İster IMS/VoWiFi ister masaüstü/mobil IPC istemcisi üzerinden çalışan yüksek verimli P2P ses mimarisi:
+- **Düşük Gecikmeli İkili Çerçeveleme (VOICE_FRAME):**
+  - Ses paketlerinin (Opus / ham PCM ses çerçeveleri) Faz 2'deki Öncelik Kuyruğunda Kademe 1 (CRITICAL - Sıfır Gecikme) ile işlenmesi.
+  - Ağ titreşimlerini (jitter) yok etmek ve paket kaybında sesin kesilmesini önlemek için sıfır bağımlılıklı hafif bir Jitter Buffer ve Paket Kaybı Gizleme (Packet Loss Concealment - PLC) mantığı.
+- **Bire Bir Doğrudan Aramalar ve Çoklu Ses Odaları (1-to-1 Calls & Multipoint Mesh Conference):**
+  - Bire bir aramalarda iki düğüm arasında doğrudan UDP/TCP veya Rendezvous ters tünelleri üzerinden noktadan noktaya (P2P) düşük gecikmeli ses iletimi.
+  - Grup ses kanallarında (Multipoint Mesh Rooms) her katılımcının sesinin röleler üzerinden diğer dinleyicilere dağıtıldığı, sunucusuz miksajsız (Mix-minus routing / Selective Forwarding) dağıtık ses ağı.
+- **Kuantum Sonrası Taze Oturum Anahtarları (PQC Voice Ratchet):**
+  - Her sesli çağrı başlangıcında ML-KEM-768 ile yeni ve bağımsız bir simetrik oturum anahtarı türetilmesi.
+  - Konuşma esnasında periyodik anahtar yenileme (Rekeying) ile geriye dönük mutlak gizlilik (PFS).
+
+### 3. Kesintisiz ve Parçalı P2P Dosya Gönderimi (Chunked Resumable File Transfer)
+Büyük dosyaların (belge, arşiv, ses kaydı, medya vb.) doğrudan eşler arasında güvenle taşınması:
+- **Akışkan Parçalama ve Merkle Tree Doğrulaması:**
+  - Dosyaların sabit boyutlu bloklara (64 KB - 512 KB) bölünerek işlenmesi.
+  - Tüm blokların SHA-256 / BLAKE özetlerinden oluşan bir Merkle Tree kök hash'i (Root Hash) ile dosya bütünlüğünün garanti altına alınması.
+  - Alıcının bozuk veya eksik gelen tek bir bloğu tespit edip yalnızca o bloğu yeniden talep edebilmesi.
+- **Uçtan Uca Şifreli Blok Aktarımı (E2EE File Chunks):**
+  - Her dosya parçasının alıcının kuantum sonrası oturum anahtarıyla şifrelenmesi.
+  - Dosya üstverisinin (isim, boyut, MIME türü) yalnızca hedef alıcı tarafından deşifre edilebilmesi; ara rölelerin taşınan içeriği kesinlikle görememesi.
+- **Kaldığı Yerden Devam Etme (Resumable Transfer) ve Akış Kontrolü:**
+  - Ağ kopması, tünel değişimi veya istemcinin kapanıp açılması durumunda son doğrulanmış bloktan itibaren transferin otomatik devam etmesi.
+  - Node.js akış (Streams) altyapısı ve Backpressure mekanizmasıyla alıcının disk yazma hızına göre veri hızının dinamik dengelenmesi; bellek taşmalarının (OOM) tamamen önlenmesi.
+
+### 4. Kriptografik İmzalı Doğrulanmış Duyuru Kanalları (Signed Announcement & Broadcast Channels)
+Ağ genelinde resmi bildirimler, sistem bültenleri ve topluluk anonsları için tek yönlü, tahrif edilemez yayın katmanı:
+- **Yalnızca Yayıncı Yazabilir Kısıtı (Owner-Signed Only):**
+  - Duyuru kanalları (örn. `#duyuru:nodeid.mesh` veya `@haberler:nodeid.mesh`) standart grup sohbetlerinden farklı olarak yazma yetkisine kapalıdır.
+  - Kanala yalnızca kanal sahibi düğümün Ed25519 özel anahtarıyla imzalanmış paketler enjekte edilebilir.
+- **Ağ Boyu Doğrulama ve Tahrifat Engeli:**
+  - P2P ağındaki tüm röle ve uç düğümler gelen duyuru paketlerinin imzasını anında doğrular; geçersiz imzalı veya yetkisiz mesajlar anında imha edilir (Dropping forged announcements).
+  - Ara düğümlerin içeriği değiştirmesi veya tahrif etmesi kriptografik olarak imkansızdır.
+- **Hafif Dedikodu Yayılımı (Gossip Broadcast) ve Arşiv Senkronizasyonu:**
+  - Duyurular dedikodu protokolü ile tüm ağa asgari bant genişliğiyle anons edilir.
+  - Çevrimdışı olan istemciler ağa yeniden bağlandıklarında yerel veritabanındaki son duyuru ID'sinden sonrasını rölelerden tek bir özet paketiyle senkronize eder.
+
+---
+
 ## Kabul ve Uyumluluk Kriterleri
 - Sıfır dış npm bağımlılığı kuralı ihlal edilemez (Yalnızca `node:worker_threads`, `node:crypto`, `node:net`, `node:sqlite`, `node:os`).
 - Geriye dönük protokol uyumluluğu korunmalıdır (Mevcut v2.6.0 ağı ile kesintisiz çalışma).
