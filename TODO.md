@@ -17,7 +17,7 @@ Sıfır dış bağımlılık (Zero-Dependency) ve kuantum sonrası kriptografi (
 ### 2. Davranışsal İtibar ve Jeton Kovası Hız Sınırlayıcı (Token-Bucket Rate Limiter)
 - IP ve NodeID başına hafif, bellek içi jeton kovası (Token Bucket / Leaky Bucket) motoru.
 - **Node 26 `crypto.hash` ile Akışsız Hızlı Özetleme:** `crypto.createHash('sha256')` stream nesnesi ve GC baskısı yaratmadan, doğrudan C++ katmanında çalışan tek seferlik `crypto.hash('sha256', ipOrNodeId)` fonksiyonu ile mikrosaniyeler altında hız sınırı anahtarı çıkarma.
-- **`node:net` Yerel `BlockList` ve `SocketAddress` ile C++ Hızında Tecrit:** Harici kütüphane veya yavaş RegExp sorgulamaları yerine, Node.js yerleşik `net.BlockList` yapısı ile $O(1)$ karmaşıklığında IP ve CIDR alt ağ (`addSubnet`) karantinası.
+- **`node:net` Yerel `BlockList` ve `SocketAddress` ile C++ Hızında Tecrit:** Harici kütüphane veya yavaş RegExp sorgulamaları yerine, Node.js yerleşik `net.BlockList` yapısı ile `O(1)` karmaşıklığında IP ve CIDR alt ağ (`addSubnet`) karantinası.
 - Anormal trafik profillerinin tespiti:
   - Aşırı hızlı diyal-geri (`DIALBACK_REQUEST`) talepleri,
   - Hatalı (malformed) veya geçersiz ikili çerçeve tekrarları,
@@ -99,8 +99,8 @@ Tüm paket ve görevlerin tek bir serbest döngüde yarışını engelleyen 4 ka
 
 ### 3. Kuantum Sonrası Mandallama: İleriye Dönük Mutlak Gizlilik (PQC Key Ratchet)
 - Doğrudan mesajlaşmada her mesaj için yalnızca tekil anahtar üretmek yerine çift kademeli kuantum sonrası anahtar mandallaması (Double Ratchet / PQC Ratchet):
-  - **Simetrik KDF-Chain Mandallama:** Her mesaj iletiminde simetrik oturum anahtarı bir HKDF zincirinde ilerletilir ($K_{i+1} = \text{HKDF}(K_i)$) ve eski taşıma anahtarı bellekten derhal silinir (Symmetric-key ratchet).
-  - **Asimetrik KEM Mandallaması (PQC DH/KEM Ratchet):** Her $N$ mesajda bir veya oturum yeniden kurulduğunda taraflar taze tek kullanımlık ML-KEM-768 açık anahtarları takas ederek asimetrik mandalı döndürür.
+  - **Simetrik KDF-Chain Mandallama:** Her mesaj iletiminde simetrik oturum anahtarı bir HKDF zincirinde ilerletilir (`K_(i+1) = HKDF(K_i)`) ve eski taşıma anahtarı bellekten derhal silinir (Symmetric-key ratchet).
+  - **Asimetrik KEM Mandallaması (PQC DH/KEM Ratchet):** Her N mesajda bir veya oturum yeniden kurulduğunda taraflar taze tek kullanımlık ML-KEM-768 açık anahtarları takas ederek asimetrik mandalı döndürür.
 - **Kullanıcı Mesaj Geçmişi Güvenliği:**
   - Alınan ve çözülen mesajlar kullanıcının yerel şifreli SQLite veritabanında kendi profil kasa anahtarıyla kalıcı saklanmaya devam eder; kullanıcılar geçmiş mesajlarını her an eksiksiz okuyabilir.
   - Ağ taşıma katmanında eski anahtarlar imha edildiği için, gelecekte bir anahtar ele geçirilse dahi geçmişte ağdan kaydedilmiş şifreli paketler asla deşifre edilemez (Perfect Forward Secrecy).
@@ -109,7 +109,7 @@ Tüm paket ve görevlerin tek bir serbest döngüde yarışını engelleyen 4 ka
 - NTP sunucularına bağlanma bağımlılığını ve donanımsal GPS/atomik saat zorunluluğunu reddeden otonom zaman konsensüsü:
   - P2P el sıkışmalarında (`HANDSHAKE_INIT` / `REPLY`) ve keepalive sinyallerinde eşler yerel zaman damgalarını bildirir.
   - Düğüm, bağlı olduğu doğrulanmış eşlerin bildirdiği zaman farklarını bir kayan pencerede toplayarak medyan kaymayı hesaplar:
-    $$\Delta_{\text{offset}} = \text{median}(\{T_{\text{peer}_i} - T_{\text{local}}\})$$
+    `Delta_offset = median({T_peer_i - T_local})`
   - İşletim sistemi saatine dokunulmaz; protokol içi paket doğrulama, devre TTL ve nonce kontrolleri sanal `MeshTime` (`now() = BigInt(Date.now()) + offset`) ve `process.hrtime.bigint()` (monotonik süre) üzerinden yürütülür.
   - Replay attack zaman kayması (skew) toleransı 24 saatlik gevşek değerden `MeshTime` sayesinde birkaç dakikalık sıkı bir güvenlik aralığına çekilir.
 - **Çok Katmanlı Otonom Keşif (Autonomous Multi-Tier Discovery):**
@@ -124,7 +124,7 @@ Tüm paket ve görevlerin tek bir serbest döngüde yarışını engelleyen 4 ka
   - **FIPS 205 (SLH-DSA-SHA2-128s / SPHINCS+):** Durumsuz (stateless) hash tabanlı imzalama ile kök admin yetkilendirmesi ve kritik düğüm kimlik mühürlerinde alternatif PQC imza seçeneği.
 - **Hibrit NodeID Türetimi ve SHA-256 Görev Ayrımı:**
   - 1.952 baytlık ML-DSA açık anahtarını URL ve adres olarak doğrudan kullanmak yerine, Node 26 `crypto.hash` ile özetlenerek Base32 ile 16 karaktere sıkıştırılması:
-    $$\text{NodeID} = \text{Base32}(\text{crypto.hash}('sha256', \text{Ed25519\_Pub} \parallel \text{ML-DSA-65\_Pub}))[0..16]$$
+    `NodeID = Base32(crypto.hash('sha256', Ed25519_Pub || ML-DSA-65_Pub))[0..16]`
   - SHA-256; adres sıkıştırma, Merkle Tree blok doğrulaması (Faz 6) ve HKDF anahtar türetiminde kullanılırken, ML-DSA kimlik doğrulaması ve imza sahteciliği korumasını üstlenir.
 - El sıkışma (`HANDSHAKE_INIT`) ve `RENDEZVOUS_BIND` paketlerinde hibrit çift imza (Dual Signature) doğrulaması. Klasik kripto zayıflasa dahi kuantum sonrası kimlik taklit edilemezliği garanti edilir.
 
