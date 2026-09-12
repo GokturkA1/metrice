@@ -353,7 +353,7 @@ Düğüm içi iletişim, yönetim duyuruları ve yerel kullanıcı topluluğu i�
 
 ---
 
-## Faz 7 (Ekstrem Vizyon Fazı): Özel Mesh IMS / VoWiFi Telekomünikasyon Şebekesi
+## Faz 7 (Ekstrem Vizyon Fazı): Özel Mesh IMS / VoWiFi Telekomünikasyon Şebekesi ve XMR (Monero) Ağ Yönlendirmesi
 
 ### 1. Özel SIM / eSIM ve Yerel VoWiFi IMS Çekirdeği (Custom Mesh IMS & Native VoWiFi Dialer Integration)
 Telekom operatörlerinden ve merkezi baz istasyonlarından bağımsız, akıllı telefonların yerleşik arama ekranını (native phone dialer) Metrice ağına bağlayan uçtan uca telekomünikasyon köprüsü:
@@ -368,6 +368,18 @@ Telekom operatörlerinden ve merkezi baz istasyonlarından bağımsız, akıllı
   - Kullanıcının telefon rehberinden veya tuş takımından çevirdiği standart bir telefon numarasını (örn. `+90 555...` veya özel dahili `7001`) Metrice dizininde doğrudan hedef `.mesh` adresine (`@hedef:RemoteNodeID.mesh`) çözümleme.
   - Ters yönde, dış dünyadan veya diğer ağ üyelerinden gelen `.mesh` çağrılarının kullanıcının telefonunun yerleşik arama arayüzünü tetiklemesi (Native Inbound Call).
   - Kullanıcı arayüzünde ek bir mesajlaşma uygulamasına ihtiyaç kalmadan, doğrudan telefonun ahizesinden konuşarak kuantum sonrası şifreli P2P mesh ses tünelini kullanabilme imkanı.
+
+### 2. Kuantum Sonrası Soğan Ağında XMR (Monero) Ağ Yönlendirmesi ve İşlem Yayılımı (XMR over Mesh Routing)
+Monero ağının P2P işlem yayılımı ve cüzdan-düğüm RPC iletişiminin Metrice'in çok atlamalı kuantum sonrası soğan devreleri üzerinden taşınması:
+- **PQC Zırhlı Monero İşlem Yayılımı (PQC-Shielded Transaction Broadcast):**
+  - Monero blokzinciri zincir üstü (on-chain) gizliliği (gizli adresler, RingCT, Bulletproofs) sağlarken, ağ taşıma katmanında ilk işlem yayılımını yapan istemcinin fiziksel IP adresinin İSS veya ağ dinleyicileri tarafından korelasyonla tespit edilmesini önlemek amacıyla 3 atlamalı `ONION_CELL` devrelerinin kullanılması.
+  - Monero Dandelion++ kök (stem) aşamasındaki işlem anonslarının doğrudan Metrice ML-KEM-768 şifreli tünelleri üzerinden aktarılması; işlem kaynağının fiziksel IP adresinin ağ katmanında sızdırılmasının engellenmesi.
+- **Dahili XMR Cüzdan ve RPC Ağ Geçidi (Mesh-Native RPC Proxy):**
+  - Yerel arayüzde (`127.0.0.1:18081` veya yerel IPC soketi) çalışan hafif bir RPC/ZMQ proxy katmanı ile Monero cüzdanlarının (Feather Wallet, Monero GUI/CLI vb.) doğrudan Metrice ağına bağlanabilmesi.
+  - Cüzdan sorgularının ve işlem gönderimlerinin açık internete (clearnet) veya güvenilmez Tor çıkış düğümlerine (Tor Exit Nodes) düşmeden, doğrudan Metrice ağı içindeki uzak tam düğümlere (`monero-daemon.xmr.mesh` veya `@xmr-node:NodeID.mesh`) güvenli tünellerle ulaştırılması; çıkış düğümü dinleme ve sansür risklerinin bertaraf edilmesi.
+- **Sansüre Dayanıklı Çevrimdışı/Mesh Blok ve Mempool Senkronizasyonu (Resilient Mempool Forwarding):**
+  - Ağ kesintisi, bölgesel sansür veya internet kısıtlamaları durumunda; Monero mempool işlem paketlerinin ve yeni blok verilerinin Metrice'in yerel UDP broadcast LAN keşfi, ters tüneller ve `EDGE_TRANSIT` köprüleri üzerinden taşınması.
+  - Madenciler ve cüzdanlar arasında açık internet omurgasına ihtiyaç duymaksızın mesh üzerinden Monero işlem iletimi ve bakiye doğrulama imkanının sunulması.
 
 ---
 
