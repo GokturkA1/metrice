@@ -32,7 +32,7 @@ Bir `RELAY` düğümüne gelen tünel (`RENDEZVOUS_BIND`) veya bağlantı talepl
 - **1. ACCEPT (Kabul):** Düğümün tünel kapasitesi müsaitse (`rendezvousTunnels.size < maxTunnels`) ve kural ihlali yoksa tünel kabul edilir, `RENDEZVOUS_ACK` döndürülür ve oturum başlatılır.
   - **Ayrıntılı Çekirdek TCP Keep-Alive Denetimi:** Standart `setKeepAlive` yerine modern `net.connect` / `net.createServer` parametreleri (`keepAlive: true`, `keepAliveInitialDelay: 10000`, `keepAliveInterval`, `keepAliveProbes`) ile CGNAT tablolarının kapandığı mobil/ev ağlarında yanıtsız (zombie) tünellerin uygulama katmanı ping trafiğine gerek kalmadan işletim sistemi çekirdeği düzeyinde tespiti.
   - **Dual-Stack Happy Eyeballs (`autoSelectFamily: true`, `autoSelectFamilyAttemptTimeout: 150`):** RFC 8305 algoritmasıyla IPv6/IPv4 çift yığınlı eş bağlantılarında en düşük gecikmeli soketi otomatik seçme.
-- **2. REDIRECT (Yönlendirme):** Röle kapasitesi doluysa (`rendezvousTunnels.size >= maxTunnels`), istemci bağlantısı doğrudan kesilmez. Röle kendi SQLite `routing_table` tablosundaki en düşük gecikmeli, doğrulanmış ve müsait 2-3 alternatif RELAY veya EDGE_TRANSIT düğümünün imzalı adresini içeren bir `RENDEZVOUS_REDIRECT` paketi döner:
+- **2. REDIRECT (Yönlendirme):** Röle kapasitesi doluysa (`rendezvousTunnels.size >= maxTunnels`), istemci bağlantısı doğrudan kesilmez. Röle kendi SQLite `routing_table` tablosundaki en düşük gecikmeli, doğrulanmış ve müsait 2-3 alternatif RELAY veya CAP_EDGE_TRANSIT düğümünün imzalı adresini içeren bir `RENDEZVOUS_REDIRECT` paketi döner:
   ```json
   {
     "status": "redirect",
@@ -55,21 +55,23 @@ Bir `RELAY` düğümüne gelen tünel (`RENDEZVOUS_BIND`) veya bağlantı talepl
   - SQLite WAL dosya boyutunun izlenip gerektiğinde `wal_checkpoint` işletilmesi.
   - Düğümün bellek ve kaynak sızıntılarına karşı kesintisiz ve kararlı çalışmasının sağlanması.
 
-### 5. Ingress Tüneli Arkasındaki Uç Düğümler İçin Kısmi Röle Desteği: `EDGE_TRANSIT` Rolü ve `PUBLIC_SERVER_NAME`
-Doğrudan genel statik IP adresine veya port yönlendirmesine sahip olmayan ancak Cloudflare Tunnel (`cloudflared`), ngrok, bore vb. bir ters proxy/ingress aracılığıyla dışarıdan erişilebilen tüm `EDGE` düğümlerinin ağa transit kapasitesi sağlaması:
-- **Tüm EDGE Düğümleri İçin Genel Mimari:**
-  - Bu yetenek yalnızca belirli bir istemci moduyla sınırlı değildir; tünel/ingress arkasında çalışan ve `PUBLIC_SERVER_NAME` tanımlanmış tüm `EDGE` düğümleri için geçerlidir.
+### 5. Ingress Tüneli Arkasındaki Düğümler İçin Mevcut `CAP_EDGE_TRANSIT` Altyapısının Genişletilmesi (`PUBLIC_SERVER_NAME`)
+Metrice mimarisinde `CAP_EDGE_TRANSIT` rolü halihazırda mevcuttur; `ALLOW_EDGE_ROUTING=true` ve `ALLOW_EDGE_GOSSIP=true` yapılandırması açıkken en az 2 bağımsız röleye ters tünel kuran `EDGE` düğümleri dinamik olarak bu role yükselip Rendezvous tünelleri, Onion devreleri ve dedikodu (gossip) köprüsü olarak hizmet vermektedir.
+
+Bu maddenin amacı sıfırdan yeni bir rol tanımlamak değil; var olan `CAP_EDGE_TRANSIT` altyapısını, doğrudan genel IP'si veya port yönlendirmesi bulunmayan ancak Cloudflare Tunnel (`cloudflared`), ngrok, bore vb. bir ingress tüneli arkasından dışarıya erişilebilen tüm `EDGE` düğümlerini de kapsayacak şekilde asimetrik yönlendirme ve harici alan adı desteğiyle genişletmektir:
+- **Tüm Tünel Arkası EDGE Düğümleri İçin Genişletilmiş Mimari:**
+  - Bu yetenek yalnızca belirli bir istemci türüyle sınırlı değildir; ingress tüneli arkasında çalışan ve `PUBLIC_SERVER_NAME` tanımlanmış tüm `EDGE` düğümleri için geçerlidir.
 - **Asimetrik Çıkış ve Giriş Yönlendirmesi (Asymmetric Egress / Ingress Routing):**
   - **Dışarı Çıkış (Outbound / Egress):** Düğüm ağdaki diğer düğümlere veya birincil röleye bağlanırken paketleri doğrudan kendi fiziksel yerel ağı ve IP adresi üzerinden çıkarır; standart bir `EDGE` gibi ana `RELAY` düğümüne ters tünel (`RENDEZVOUS_BIND`) açık tutarak ağ federasyonuna bağlı kalır.
   - **İçeri Giriş (Inbound / Ingress):** Diğer eşlerden gelen doğrudan TCP bağlantılarını ise Cloudflare Tunnel veya harici ingress tünelinin yönlendirdiği yerel dinleyici portu (`MESH_PORT`) üzerinden kabul eder.
 - **Dış Erişim Alan Adı Tanımlaması (`PUBLIC_SERVER_NAME` / `SERVER_NAME_PUBLIC`):**
   - Ortam değişkeni üzerinden tünelin dışarıdan erişilebilen genel alan adı veya host:port bilgisi tanımlanır (Örn: `PUBLIC_SERVER_NAME='edge-ingress.domain.com:8001'`).
-  - Düğüm ayağa kalktığında bu değişkeni algılayarak kısmi röle modunu (`Partial Relay`) etkinleştirir.
+  - Düğüm ayağa kalktığında bu değişkeni algılayarak ingress üzerinden gelen bağlantıları kabul eder ve transit rotasyonuna dahil olur.
 - **Dedikodu (Gossip) Yayılımı ve Yetenek Anonsu (Capability Gossip):**
-  - Düğüm birincil röleye bağlandığında veya ağda dedikodu yayılımı (`PEER_ANNOUNCE` / `PEER_EXCHANGE`) yaptığında, kendisini `isTransit: true` bayrağı ve `publicServerName` tünel adresiyle tanıtır.
+  - Düğüm birincil röleye bağlandığında veya ağda dedikodu yayılımı (`PEER_ANNOUNCE` / `PEER_EXCHANGE`) yaptığında, kendisini `CAP_EDGE_TRANSIT` rolü, `isTransit: true` bayrağı ve `publicServerName` tünel adresiyle tanıtır.
   - Röleler ve komşu eşler kendi SQLite `routing_table` kayıtlarında bu düğümü "Erişilebilir Transit Uç Düğüm" olarak indeksler.
 - **EDGE Düğümler İçin Alternatif Röle ve Yük Dağıtımı:**
-  - Standart `EDGE` düğümleri, ana röleler dolu olduğunda (`RENDEZVOUS_REDIRECT` aldıklarında) ya da daha düşük gecikmeli bir alternatif gerektiğinde bu `EDGE_TRANSIT` düğümlerine bağlanarak ters tünel açabilir veya onları Onion devrelerinde ara transit atlama (intermediate hop) olarak kullanabilir.
+  - Standart `EDGE` düğümleri, ana röleler dolu olduğunda (`RENDEZVOUS_REDIRECT` aldıklarında) ya da daha düşük gecikmeli bir alternatif gerektiğinde bu ingress destekli `CAP_EDGE_TRANSIT` düğümlerine bağlanarak ters tünel açabilir veya onları Onion devrelerinde ara transit atlama (intermediate hop) olarak kullanabilir.
   - Böylece merkezi rölelerin üzerindeki bağlantı ve bant genişliği yükü, topluluğun ingress tünelleri arkasındaki sunucuları üzerinden dengeli biçimde dağıtılır.
 
 ---
@@ -378,7 +380,7 @@ Monero ağının P2P işlem yayılımı ve cüzdan-düğüm RPC iletişiminin Me
   - Yerel arayüzde (`127.0.0.1:18081` veya yerel IPC soketi) çalışan hafif bir RPC/ZMQ proxy katmanı ile Monero cüzdanlarının (Feather Wallet, Monero GUI/CLI vb.) doğrudan Metrice ağına bağlanabilmesi.
   - Cüzdan sorgularının ve işlem gönderimlerinin açık internete (clearnet) veya güvenilmez Tor çıkış düğümlerine (Tor Exit Nodes) düşmeden, doğrudan Metrice ağı içindeki uzak tam düğümlere (`monero-daemon.xmr.mesh` veya `@xmr-node:NodeID.mesh`) güvenli tünellerle ulaştırılması; çıkış düğümü dinleme ve sansür risklerinin bertaraf edilmesi.
 - **Sansüre Dayanıklı Çevrimdışı/Mesh Blok ve Mempool Senkronizasyonu (Resilient Mempool Forwarding):**
-  - Ağ kesintisi, bölgesel sansür veya internet kısıtlamaları durumunda; Monero mempool işlem paketlerinin ve yeni blok verilerinin Metrice'in yerel UDP broadcast LAN keşfi, ters tüneller ve `EDGE_TRANSIT` köprüleri üzerinden taşınması.
+  - Ağ kesintisi, bölgesel sansür veya internet kısıtlamaları durumunda; Monero mempool işlem paketlerinin ve yeni blok verilerinin Metrice'in yerel UDP broadcast LAN keşfi, ters tüneller ve `CAP_EDGE_TRANSIT` köprüleri üzerinden taşınması.
   - Madenciler ve cüzdanlar arasında açık internet omurgasına ihtiyaç duymaksızın mesh üzerinden Monero işlem iletimi ve bakiye doğrulama imkanının sunulması.
 
 ---
