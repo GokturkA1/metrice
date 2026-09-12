@@ -18,6 +18,9 @@ export default {
   // Health & Heartbeat Server Logs
   HEALTH_SRV_LISTENING: 'TCP Health & Heartbeat Server Ready -> {host}:{port}',
   HEALTH_SRV_CLOSED: 'TCP Health & Heartbeat Server closed.',
+  HEALTH_SRV_ERROR: 'Health server error: {error}',
+  HEALTH_SRV_CMD_RECEIVED: 'Received health command: {cmd} from {address}',
+  HEALTH_SRV_CONN_ERROR: 'Health socket connection error ({address}): {error}',
 
   // Database Logs
   DB_LOADED: 'Database loaded: {path}',

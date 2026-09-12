@@ -18,6 +18,9 @@ export default {
   // Health & Heartbeat Server Logs
   HEALTH_SRV_LISTENING: 'TCP Sağlık ve Kalp Atışı Sunucusu Hazır -> {host}:{port}',
   HEALTH_SRV_CLOSED: 'TCP Sağlık ve Kalp Atışı Sunucusu kapatıldı.',
+  HEALTH_SRV_ERROR: 'Sağlık sunucusu hatası: {error}',
+  HEALTH_SRV_CMD_RECEIVED: 'Sağlık komutu alındı: {cmd} ({address})',
+  HEALTH_SRV_CONN_ERROR: 'Sağlık soketi bağlantı hatası ({address}): {error}',
 
   // Database Logs
   DB_LOADED: 'Veritabanı yüklendi: {path}',

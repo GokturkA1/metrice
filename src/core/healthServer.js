@@ -39,7 +39,7 @@ export class HealthServer {
       this.server = net.createServer((socket) => this.handleConnection(socket));
 
       this.server.on('error', (err) => {
-        log.error(`Health server error: ${err.message}`);
+        log.error(I18n.t('HEALTH_SRV_ERROR', { error: err.message }));
         reject(err);
       });
 
@@ -76,7 +76,7 @@ export class HealthServer {
         if (!line) continue;
 
         const cmd = line.toUpperCase();
-        log.debug(`Received health command: ${cmd} from ${socket.remoteAddress}`);
+        log.debug(I18n.t('HEALTH_SRV_CMD_RECEIVED', { cmd, address: socket.remoteAddress }));
 
         if (cmd === 'PING') {
           socket.write('PONG\n');
@@ -97,7 +97,7 @@ export class HealthServer {
     });
 
     socket.on('error', (err) => {
-      log.debug(`Health socket connection error (${socket.remoteAddress}): ${err.message}`);
+      log.debug(I18n.t('HEALTH_SRV_CONN_ERROR', { address: socket.remoteAddress, error: err.message }));
       this.sockets.delete(socket);
     });
 
