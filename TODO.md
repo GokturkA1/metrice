@@ -32,11 +32,11 @@ Bir `RELAY` düğümüne gelen tünel (`RENDEZVOUS_BIND`) veya bağlantı talepl
 - **1. ACCEPT (Kabul):** Düğümün tünel kapasitesi müsaitse (`rendezvousTunnels.size < maxTunnels`) ve kural ihlali yoksa tünel kabul edilir, `RENDEZVOUS_ACK` döndürülür ve oturum başlatılır.
   - **Ayrıntılı Çekirdek TCP Keep-Alive Denetimi:** Standart `setKeepAlive` yerine modern `net.connect` / `net.createServer` parametreleri (`keepAlive: true`, `keepAliveInitialDelay: 10000`, `keepAliveInterval`, `keepAliveProbes`) ile CGNAT tablolarının kapandığı mobil/ev ağlarında yanıtsız (zombie) tünellerin uygulama katmanı ping trafiğine gerek kalmadan işletim sistemi çekirdeği düzeyinde tespiti.
   - **Dual-Stack Happy Eyeballs (`autoSelectFamily: true`, `autoSelectFamilyAttemptTimeout: 150`):** RFC 8305 algoritmasıyla IPv6/IPv4 çift yığınlı eş bağlantılarında en düşük gecikmeli soketi otomatik seçme.
-- **2. REDIRECT (Yönlendirme):** Röle kapasitesi doluysa (`rendezvousTunnels.size >= maxTunnels`), istemci bağlantısı doğrudan kesilmez. Röle kendi SQLite `routing_table` tablosundaki en düşük gecikmeli, doğrulanmış ve müsait 2-3 alternatif RELAY düğümünün imzalı adresini içeren bir `RENDEZVOUS_REDIRECT` paketi döner:
+- **2. REDIRECT (Yönlendirme):** Röle kapasitesi doluysa (`rendezvousTunnels.size >= maxTunnels`), istemci bağlantısı doğrudan kesilmez. Röle kendi SQLite `routing_table` tablosundaki en düşük gecikmeli, doğrulanmış ve müsait 2-3 alternatif RELAY veya EDGE_TRANSIT düğümünün imzalı adresini içeren bir `RENDEZVOUS_REDIRECT` paketi döner:
   ```json
   {
     "status": "redirect",
-    "relays": ["relay2.metrice.network:8001", "relay3.metrice.network:8001"]
+    "relays": ["relay2.metrice.network:8001", "edge-transit1.domain.com:8001"]
   }
   ```
   `EDGE` istemcisi rastgele arama yapmak yerine doğrudan önerilen bu röleye bağlanarak ağ yükünü dengeli biçimde dağıtır.
@@ -54,6 +54,23 @@ Bir `RELAY` düğümüne gelen tünel (`RENDEZVOUS_BIND`) veya bağlantı talepl
   - **`db.setAuthorizer()` ile Motor Düzeyinde Güvenlik:** Yetkisiz veya beklenmeyen SQL sorgularının ve tablo manipülasyonlarının doğrudan SQLite motoru seviyesinde engellenmesi.
   - SQLite WAL dosya boyutunun izlenip gerektiğinde `wal_checkpoint` işletilmesi.
   - Düğümün bellek ve kaynak sızıntılarına karşı kesintisiz ve kararlı çalışmasının sağlanması.
+
+### 5. Ingress Tüneli Arkasındaki Uç Düğümler İçin Kısmi Röle Desteği: `EDGE_TRANSIT` Rolü ve `PUBLIC_SERVER_NAME`
+Doğrudan genel statik IP adresine veya port yönlendirmesine sahip olmayan ancak Cloudflare Tunnel (`cloudflared`), ngrok, bore vb. bir ters proxy/ingress aracılığıyla dışarıdan erişilebilen tüm `EDGE` düğümlerinin ağa transit kapasitesi sağlaması:
+- **Tüm EDGE Düğümleri İçin Genel Mimari:**
+  - Bu yetenek yalnızca belirli bir istemci moduyla sınırlı değildir; tünel/ingress arkasında çalışan ve `PUBLIC_SERVER_NAME` tanımlanmış tüm `EDGE` düğümleri için geçerlidir.
+- **Asimetrik Çıkış ve Giriş Yönlendirmesi (Asymmetric Egress / Ingress Routing):**
+  - **Dışarı Çıkış (Outbound / Egress):** Düğüm ağdaki diğer düğümlere veya birincil röleye bağlanırken paketleri doğrudan kendi fiziksel yerel ağı ve IP adresi üzerinden çıkarır; standart bir `EDGE` gibi ana `RELAY` düğümüne ters tünel (`RENDEZVOUS_BIND`) açık tutarak ağ federasyonuna bağlı kalır.
+  - **İçeri Giriş (Inbound / Ingress):** Diğer eşlerden gelen doğrudan TCP bağlantılarını ise Cloudflare Tunnel veya harici ingress tünelinin yönlendirdiği yerel dinleyici portu (`MESH_PORT`) üzerinden kabul eder.
+- **Dış Erişim Alan Adı Tanımlaması (`PUBLIC_SERVER_NAME` / `SERVER_NAME_PUBLIC`):**
+  - Ortam değişkeni üzerinden tünelin dışarıdan erişilebilen genel alan adı veya host:port bilgisi tanımlanır (Örn: `PUBLIC_SERVER_NAME='edge-ingress.domain.com:8001'`).
+  - Düğüm ayağa kalktığında bu değişkeni algılayarak kısmi röle modunu (`Partial Relay`) etkinleştirir.
+- **Dedikodu (Gossip) Yayılımı ve Yetenek Anonsu (Capability Gossip):**
+  - Düğüm birincil röleye bağlandığında veya ağda dedikodu yayılımı (`PEER_ANNOUNCE` / `PEER_EXCHANGE`) yaptığında, kendisini `isTransit: true` bayrağı ve `publicServerName` tünel adresiyle tanıtır.
+  - Röleler ve komşu eşler kendi SQLite `routing_table` kayıtlarında bu düğümü "Erişilebilir Transit Uç Düğüm" olarak indeksler.
+- **EDGE Düğümler İçin Alternatif Röle ve Yük Dağıtımı:**
+  - Standart `EDGE` düğümleri, ana röleler dolu olduğunda (`RENDEZVOUS_REDIRECT` aldıklarında) ya da daha düşük gecikmeli bir alternatif gerektiğinde bu `EDGE_TRANSIT` düğümlerine bağlanarak ters tünel açabilir veya onları Onion devrelerinde ara transit atlama (intermediate hop) olarak kullanabilir.
+  - Böylece merkezi rölelerin üzerindeki bağlantı ve bant genişliği yükü, topluluğun ingress tünelleri arkasındaki sunucuları üzerinden dengeli biçimde dağıtılır.
 
 ---
 
@@ -295,7 +312,48 @@ client.on('message', (msg) => console.log('Gelen:', msg));
 
 ---
 
-## Faz 6 (İleri Düzey Genişleme Fazı): Özel Mesh IMS / VoWiFi Altyapısı, P2P Dosya Transferi, E2EE Sesli İletişim, Yerel Duyuru ve Sohbet Kanalları
+## Faz 6: P2P Dosya Transferi, Uçtan Uca Şifreli Sesli İletişim, Yerel Duyuru ve Sohbet Kanalları
+
+### 1. Uçtan Uca Şifreli Gerçek Zamanlı Sesli İletişim (E2EE Voice Chat & Low-Latency Audio Streaming)
+Masaüstü/mobil IPC istemcisi veya terminal üzerinden çalışan yüksek verimli P2P ses mimarisi:
+- **Düşük Gecikmeli İkili Çerçeveleme (VOICE_FRAME):**
+  - Ses paketlerinin (Opus / ham PCM ses çerçeveleri) Faz 2'deki Öncelik Kuyruğunda Kademe 1 (CRITICAL - Sıfır Gecikme) ile işlenmesi.
+  - Ağ gecikme dalgalanmalarını (jitter) telafi etmek ve paket kayıplarında ses kesintilerini önlemek için sıfır bağımlılıklı hafif bir Jitter Buffer ve Paket Kaybı Gizleme (Packet Loss Concealment - PLC) mantığı.
+- **Bire Bir Doğrudan Aramalar ve Çoklu Ses Odaları (1-to-1 Calls & Multipoint Mesh Conference):**
+  - Bire bir aramalarda iki düğüm arasında doğrudan UDP/TCP veya Rendezvous ters tünelleri üzerinden noktadan noktaya (P2P) düşük gecikmeli ses iletimi.
+  - Grup ses kanallarında (Multipoint Mesh Rooms) her katılımcının sesinin röleler üzerinden diğer dinleyicilere dağıtıldığı, dağıtık seçici iletim (Selective Forwarding) mimarisi.
+- **Kuantum Sonrası Oturum Anahtarı Yenileme (PQC Voice Ratchet):**
+  - Her sesli çağrı başlangıcında ML-KEM-768 ile yeni ve bağımsız bir simetrik oturum anahtarı türetilmesi.
+  - Konuşma esnasında periyodik anahtar yenileme (Rekeying) ile ileri ve geriye dönük gizlilik (Forward Secrecy).
+
+### 2. Kesintisiz ve Parçalı P2P Dosya Gönderimi (Chunked Resumable File Transfer)
+Büyük dosyaların (belge, arşiv, ses kaydı, medya vb.) eşler arasında güvenle iletilmesi:
+- **Parçalı Blok Ayrıştırma ve Merkle Ağacı Doğrulaması (Merkle Tree):**
+  - Dosyaların sabit boyutlu bloklara (64 KB - 512 KB) bölünerek işlenmesi.
+  - Tüm blokların SHA-256 / BLAKE özetlerinden oluşan bir Merkle Ağacı kök özeti (Root Hash) ile dosya bütünlüğünün doğrulanması.
+  - Alıcının bozuk veya eksik gelen tek bir bloğu tespit edip yalnızca o bloğu yeniden talep edebilmesi.
+- **Uçtan Uca Şifreli Blok Aktarımı (E2EE File Chunks):**
+  - Her dosya parçasının alıcının kuantum sonrası oturum anahtarıyla şifrelenmesi.
+  - Dosya üstverisinin (isim, boyut, MIME türü) yalnızca hedef alıcı tarafından deşifre edilebilmesi; ara rölelerin taşınan içeriği kesinlikle görememesi.
+- **Kaldığı Yerden Devam Etme (Resumable Transfer) ve Akış Kontrolü:**
+  - Ağ kopması, tünel değişimi veya istemcinin kapanıp açılması durumunda son doğrulanmış bloktan itibaren transferin otomatik devam etmesi.
+  - Node.js akış (`node:stream`) altyapısı ve Backpressure mekanizmasıyla alıcının disk yazma hızına göre veri hızının dinamik dengelenmesi; bellek taşmalarının (OOM) önlenmesi.
+  - **Soket Tampon Optimizasyonu (`setSendBufferSize` / `setRecvBufferSize`):** Büyük blok aktarımında soket tamponlarının 256 KB olarak ayarlanması ile çekirdek düzeyinde yüksek verimli G/Ç aktarımı.
+
+### 3. Düğüme Özel Salt-Okunur Duyuru Kanalı ve Yerel Topluluk Sohbeti (Node-Local Announce & Local Chat)
+Düğüm içi iletişim, yönetim duyuruları ve yerel kullanıcı topluluğu için dış ağa ve federasyona kapalı, yerel düzeyde izole kanal katmanı:
+- **Düğüme Özel Salt-Okunur Duyuru Kanalı (`#duyuru`):**
+  - **Sıkı Yerel İzolasyon (Strict Node-Local Scope):** Duyurular küresel federasyon ağına veya diğer düğümlere iletilmez; yalnızca bu düğüme bağlı ve kayıtlı yerel kullanıcılar görebilir.
+  - **Yalnızca Kök Admin Mesaj Atabilir:** Kanala yalnızca bu düğümün yerel kök admini (`@admin:<NodeID>.mesh`) mesaj yazabilir. Standart kullanıcılar için kanal tamamen salt-okunurdur (read-only); yetkisiz mesaj denemeleri soket düzeyinde reddedilir.
+  - Sistem bakım takvimleri, kural güncellemeleri, acil durum uyarıları ve yerel sunucu durum raporları için tek yönlü bilgilendirme akışıdır.
+- **Düğüm İçi Yerel Sohbet Kanalı (`#yerel` / `#local`):**
+  - **Sadece Yerel Kullanıcılar Arasında:** Yalnızca o düğümde hesabı veya aktif oturumu bulunan kullanıcıların kendi aralarında mesajlaşabileceği hafif yerel topluluk sohbeti.
+  - **Dış Federasyon İzolasyonu:** Bu kanaldaki mesajlar P2P ağına veya uzak rölelere iletilmez; tüm trafik sunucunun yerel sınırları içinde kalır (zero federation overhead).
+  - Kullanıcıların genel ağ trafiği yaratmadan, gecikmesiz ve güvenli bir şekilde doğrudan sunucu arkadaşlarıyla sohbet edebilmesini sağlar.
+
+---
+
+## Faz 7 (Ekstrem Vizyon Fazı): Özel Mesh IMS / VoWiFi Telekomünikasyon Şebekesi
 
 ### 1. Özel SIM / eSIM ve Yerel VoWiFi IMS Çekirdeği (Custom Mesh IMS & Native VoWiFi Dialer Integration)
 Telekom operatörlerinden ve merkezi baz istasyonlarından bağımsız, akıllı telefonların yerleşik arama ekranını (native phone dialer) Metrice ağına bağlayan uçtan uca telekomünikasyon köprüsü:
@@ -310,43 +368,6 @@ Telekom operatörlerinden ve merkezi baz istasyonlarından bağımsız, akıllı
   - Kullanıcının telefon rehberinden veya tuş takımından çevirdiği standart bir telefon numarasını (örn. `+90 555...` veya özel dahili `7001`) Metrice dizininde doğrudan hedef `.mesh` adresine (`@hedef:RemoteNodeID.mesh`) çözümleme.
   - Ters yönde, dış dünyadan veya diğer ağ üyelerinden gelen `.mesh` çağrılarının kullanıcının telefonunun yerleşik arama arayüzünü tetiklemesi (Native Inbound Call).
   - Kullanıcı arayüzünde ek bir mesajlaşma uygulamasına ihtiyaç kalmadan, doğrudan telefonun ahizesinden konuşarak kuantum sonrası şifreli P2P mesh ses tünelini kullanabilme imkanı.
-
-### 2. Uçtan Uca Şifreli Gerçek Zamanlı Sesli İletişim (E2EE Voice Chat & Low-Latency Audio Streaming)
-İster IMS/VoWiFi ister masaüstü/mobil IPC istemcisi üzerinden çalışan yüksek verimli P2P ses mimarisi:
-- **Düşük Gecikmeli İkili Çerçeveleme (VOICE_FRAME):**
-  - Ses paketlerinin (Opus / ham PCM ses çerçeveleri) Faz 2'deki Öncelik Kuyruğunda Kademe 1 (CRITICAL - Sıfır Gecikme) ile işlenmesi.
-  - Ağ gecikme dalgalanmalarını (jitter) telafi etmek ve paket kayıplarında ses kesintilerini önlemek için sıfır bağımlılıklı hafif bir Jitter Buffer ve Paket Kaybı Gizleme (Packet Loss Concealment - PLC) mantığı.
-- **Bire Bir Doğrudan Aramalar ve Çoklu Ses Odaları (1-to-1 Calls & Multipoint Mesh Conference):**
-  - Bire bir aramalarda iki düğüm arasında doğrudan UDP/TCP veya Rendezvous ters tünelleri üzerinden noktadan noktaya (P2P) düşük gecikmeli ses iletimi.
-  - Grup ses kanallarında (Multipoint Mesh Rooms) her katılımcının sesinin röleler üzerinden diğer dinleyicilere dağıtıldığı, dağıtık seçici iletim (Selective Forwarding) mimarisi.
-- **Kuantum Sonrası Oturum Anahtarı Yenileme (PQC Voice Ratchet):**
-  - Her sesli çağrı başlangıcında ML-KEM-768 ile yeni ve bağımsız bir simetrik oturum anahtarı türetilmesi.
-  - Konuşma esnasında periyodik anahtar yenileme (Rekeying) ile ileri ve geriye dönük gizlilik (Forward Secrecy).
-
-### 3. Kesintisiz ve Parçalı P2P Dosya Gönderimi (Chunked Resumable File Transfer)
-Büyük dosyaların (belge, arşiv, ses kaydı, medya vb.) eşler arasında güvenle iletilmesi:
-- **Parçalı Blok Ayrıştırma ve Merkle Ağacı Doğrulaması (Merkle Tree):**
-  - Dosyaların sabit boyutlu bloklara (64 KB - 512 KB) bölünerek işlenmesi.
-  - Tüm blokların SHA-256 / BLAKE özetlerinden oluşan bir Merkle Ağacı kök özeti (Root Hash) ile dosya bütünlüğünün doğrulanması.
-  - Alıcının bozuk veya eksik gelen tek bir bloğu tespit edip yalnızca o bloğu yeniden talep edebilmesi.
-- **Uçtan Uca Şifreli Blok Aktarımı (E2EE File Chunks):**
-  - Her dosya parçasının alıcının kuantum sonrası oturum anahtarıyla şifrelenmesi.
-  - Dosya üstverisinin (isim, boyut, MIME türü) yalnızca hedef alıcı tarafından deşifre edilebilmesi; ara rölelerin taşınan içeriği kesinlikle görememesi.
-- **Kaldığı Yerden Devam Etme (Resumable Transfer) ve Akış Kontrolü:**
-  - Ağ kopması, tünel değişimi veya istemcinin kapanıp açılması durumunda son doğrulanmış bloktan itibaren transferin otomatik devam etmesi.
-  - Node.js akış (`node:stream`) altyapısı ve Backpressure mekanizmasıyla alıcının disk yazma hızına göre veri hızının dinamik dengelenmesi; bellek taşmalarının (OOM) önlenmesi.
-  - **Soket Tampon Optimizasyonu (`setSendBufferSize` / `setRecvBufferSize`):** Büyük blok aktarımında soket tamponlarının 256 KB olarak ayarlanması ile çekirdek düzeyinde yüksek verimli G/Ç aktarımı.
-
-### 4. Düğüme Özel Salt-Okunur Duyuru Kanalı ve Yerel Topluluk Sohbeti (Node-Local Announce & Local Chat)
-Düğüm içi iletişim, yönetim duyuruları ve yerel kullanıcı topluluğu için dış ağa ve federasyona kapalı, yerel düzeyde izole kanal katmanı:
-- **Düğüme Özel Salt-Okunur Duyuru Kanalı (`#duyuru`):**
-  - **Sıkı Yerel İzolasyon (Strict Node-Local Scope):** Duyurular küresel federasyon ağına veya diğer düğümlere iletilmez; yalnızca bu düğüme bağlı ve kayıtlı yerel kullanıcılar görebilir.
-  - **Yalnızca Kök Admin Mesaj Atabilir:** Kanala yalnızca bu düğümün yerel kök admini (`@admin:<NodeID>.mesh`) mesaj yazabilir. Standart kullanıcılar için kanal tamamen salt-okunurdur (read-only); yetkisiz mesaj denemeleri soket düzeyinde reddedilir.
-  - Sistem bakım takvimleri, kural güncellemeleri, acil durum uyarıları ve yerel sunucu durum raporları için tek yönlü bilgilendirme akışıdır.
-- **Düğüm İçi Yerel Sohbet Kanalı (`#yerel` / `#local`):**
-  - **Sadece Yerel Kullanıcılar Arasında:** Yalnızca o düğümde hesabı veya aktif oturumu bulunan kullanıcıların kendi aralarında mesajlaşabileceği hafif yerel topluluk sohbeti.
-  - **Dış Federasyon İzolasyonu:** Bu kanaldaki mesajlar P2P ağına veya uzak rölelere iletilmez; tüm trafik sunucunun yerel sınırları içinde kalır (zero federation overhead).
-  - Kullanıcıların genel ağ trafiği yaratmadan, gecikmesiz ve güvenli bir şekilde doğrudan sunucu arkadaşlarıyla sohbet edebilmesini sağlar.
 
 ---
 
