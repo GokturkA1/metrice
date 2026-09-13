@@ -2,6 +2,8 @@
   <img src="metrice-banner-koyu.svg" alt="Metrice Dağıtık P2P Mesh Başlık" width="100%">
 </p>
 
+# Metrice v2.6.0
+
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/lisans-GPLv3-blue.svg" alt="Lisans: GPLv3"></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D24.7.0%20%7C%2026.x-339933.svg?logo=node.js&logoColor=white" alt="Node.js: >=24.7.0 | 26.x"></a>
