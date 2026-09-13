@@ -1,6 +1,20 @@
-# Metrice v2.6.0
+<p align="center">
+  <img src="metrice-banner-koyu.svg" alt="Metrice Decentralized P2P Mesh Banner" width="100%">
+</p>
 
-[English](README.md) | [Türkçe](README.tr.md)
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue.svg" alt="License: GPLv3"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D22.12%20%7C%2026.x-339933.svg?logo=node.js&logoColor=white" alt="Node.js: >=22.12 | 26.x"></a>
+  <img src="https://img.shields.io/badge/dependencies-0%20(zero%20npm)-brightgreen.svg" alt="Zero NPM Dependencies">
+  <img src="https://img.shields.io/badge/PQC-NIST%20FIPS%20203%20ML--KEM--768-blueviolet.svg" alt="NIST FIPS 203 ML-KEM-768">
+  <img src="https://img.shields.io/badge/identity-Ed25519%20%7C%20RFC%208032-purple.svg" alt="Ed25519 RFC 8032">
+  <img src="https://img.shields.io/badge/routing-3--Hop%20Onion%20%7C%20CGNAT%20Tunnels-00E5FF.svg" alt="3-Hop Onion Routing">
+  <img src="https://img.shields.io/badge/tests-100%25%20passing-success.svg" alt="Tests: 100% Passing">
+</p>
+
+<p align="center">
+  <b>English</b> | <a href="README.tr.md">Türkçe</a>
+</p>
 
 Metrice is a decentralized peer-to-peer (P2P) mesh networking protocol engineered with zero external npm dependencies (Zero-Dependency), running natively on Node.js core libraries (`node:crypto`, `node:net`, `node:dgram`, `node:sqlite`, `node:dns`). It features quantum-resistant cryptography (Post-Quantum Cryptography) and a Tor-like multi-hop onion routing architecture.
 

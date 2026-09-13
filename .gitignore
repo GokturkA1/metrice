@@ -11,6 +11,7 @@ project_dump.txt
 
 # OS & Environment
 .DS_Store
+.vscode/
 node_modules/
 
 ARCHITECT.md

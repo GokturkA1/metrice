@@ -1,6 +1,20 @@
-# Metrice v2.6.0
+<p align="center">
+  <img src="metrice-banner-koyu.svg" alt="Metrice Dağıtık P2P Mesh Başlık" width="100%">
+</p>
 
-[English](README.md) | [Türkçe](README.tr.md)
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/lisans-GPLv3-blue.svg" alt="Lisans: GPLv3"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D22.12%20%7C%2026.x-339933.svg?logo=node.js&logoColor=white" alt="Node.js: >=22.12 | 26.x"></a>
+  <img src="https://img.shields.io/badge/ba%C4%9F%C4%B1ml%C4%B1l%C4%B1k-0%20(s%C4%B1f%C4%B1r%20npm)-brightgreen.svg" alt="Sıfır Dış Bağımlılık">
+  <img src="https://img.shields.io/badge/PQC-NIST%20FIPS%20203%20ML--KEM--768-blueviolet.svg" alt="NIST FIPS 203 ML-KEM-768">
+  <img src="https://img.shields.io/badge/kimlik-Ed25519%20%7C%20RFC%208032-purple.svg" alt="Ed25519 RFC 8032">
+  <img src="https://img.shields.io/badge/y%C3%B6nlendirme-3--Atlamal%C4%B1%20Onion%20%7C%20CGNAT%20T%C3%BCnel-00E5FF.svg" alt="3-Atlamalı Onion Yönlendirme">
+  <img src="https://img.shields.io/badge/testler-100%25%20ba%C5%9Far%C4%B1l%C4%B1-success.svg" alt="Testler: 100% Başarılı">
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> | <b>Türkçe</b>
+</p>
 
 Metrice, harici bağımlılık içermeyen (Zero External Dependencies), doğrudan Node.js çekirdek kütüphaneleri (`node:crypto`, `node:net`, `node:dgram`, `node:sqlite`, `node:dns`) üzerinde çalışan, kuantum sonrası kriptografi (Post-Quantum Cryptography) ve Tor benzeri çok katmanlı yönlendirme (Onion Routing) mimarisine sahip dağıtık eşler arası (P2P) ağ protokolüdür.
 

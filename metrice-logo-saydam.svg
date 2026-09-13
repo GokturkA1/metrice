@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3840 3840" width="3840" height="3840">
+    <defs>
+        <filter id="mGlow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="38.4" result="blur1" />
+            <feGaussianBlur stdDeviation="76.8" result="blur2" />
+            <feMerge>
+                <feMergeNode in="blur2" />
+                <feMergeNode in="blur1" />
+                <feMergeNode in="SourceGraphic" />
+            </feMerge>
+        </filter>
+        <linearGradient id="mGradient" x1="20%" y1="20%" x2="80%" y2="80%">
+            <stop offset="0%" stop-color="#00F59B" />
+            <stop offset="50%" stop-color="#00E5FF" />
+            <stop offset="100%" stop-color="#00F59B" />
+        </linearGradient>
+        <style>
+            .font-title { font-family: -apple-system, BlinkMacSystemFont, "Google Sans", "Segoe UI", Roboto, sans-serif; font-size: 250px; font-weight: 700; letter-spacing: 58px; text-anchor: middle; }
+            .font-sub { font-family: -apple-system, BlinkMacSystemFont, "Google Sans", "Segoe UI", Roboto, sans-serif; font-size: 84px; font-weight: 600; letter-spacing: 31px; text-anchor: middle; }
+        </style>
+    </defs>
+    
+    <g id="grid-dots"><circle cx="921.6" cy="729.6" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1143.47" cy="729.6" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1365.33" cy="729.6" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1587.2" cy="729.6" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1809.07" cy="729.6" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2030.93" cy="729.6" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2252.8" cy="729.6" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2474.67" cy="729.6" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2696.53" cy="729.6" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2918.4" cy="729.6" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="921.6" cy="951.47" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1143.47" cy="951.47" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1365.33" cy="951.47" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1587.2" cy="951.47" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1809.07" cy="951.47" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2030.93" cy="951.47" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2252.8" cy="951.47" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2474.67" cy="951.47" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2696.53" cy="951.47" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2918.4" cy="951.47" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="921.6" cy="1173.33" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1143.47" cy="1173.33" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1365.33" cy="1173.33" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1587.2" cy="1173.33" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1809.07" cy="1173.33" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2030.93" cy="1173.33" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2252.8" cy="1173.33" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2474.67" cy="1173.33" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2696.53" cy="1173.33" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2918.4" cy="1173.33" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="921.6" cy="1395.2" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1143.47" cy="1395.2" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1365.33" cy="1395.2" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1587.2" cy="1395.2" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1809.07" cy="1395.2" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2030.93" cy="1395.2" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2252.8" cy="1395.2" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2474.67" cy="1395.2" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2696.53" cy="1395.2" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2918.4" cy="1395.2" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="921.6" cy="1617.07" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1143.47" cy="1617.07" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1365.33" cy="1617.07" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1587.2" cy="1617.07" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1809.07" cy="1617.07" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2030.93" cy="1617.07" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2252.8" cy="1617.07" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2474.67" cy="1617.07" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2696.53" cy="1617.07" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2918.4" cy="1617.07" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="921.6" cy="1838.93" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1143.47" cy="1838.93" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1365.33" cy="1838.93" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1587.2" cy="1838.93" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1809.07" cy="1838.93" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2030.93" cy="1838.93" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2252.8" cy="1838.93" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2474.67" cy="1838.93" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2696.53" cy="1838.93" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2918.4" cy="1838.93" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="921.6" cy="2060.8" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1143.47" cy="2060.8" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1365.33" cy="2060.8" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1587.2" cy="2060.8" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1809.07" cy="2060.8" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2030.93" cy="2060.8" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2252.8" cy="2060.8" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2474.67" cy="2060.8" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2696.53" cy="2060.8" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2918.4" cy="2060.8" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="921.6" cy="2282.67" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1143.47" cy="2282.67" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1365.33" cy="2282.67" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1587.2" cy="2282.67" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1809.07" cy="2282.67" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2030.93" cy="2282.67" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2252.8" cy="2282.67" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2474.67" cy="2282.67" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2696.53" cy="2282.67" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2918.4" cy="2282.67" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="921.6" cy="2504.53" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1143.47" cy="2504.53" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1365.33" cy="2504.53" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1587.2" cy="2504.53" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1809.07" cy="2504.53" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2030.93" cy="2504.53" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2252.8" cy="2504.53" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2474.67" cy="2504.53" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2696.53" cy="2504.53" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2918.4" cy="2504.53" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="921.6" cy="2726.4" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1143.47" cy="2726.4" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1365.33" cy="2726.4" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1587.2" cy="2726.4" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="1809.07" cy="2726.4" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2030.93" cy="2726.4" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2252.8" cy="2726.4" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2474.67" cy="2726.4" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2696.53" cy="2726.4" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+<circle cx="2918.4" cy="2726.4" r="11.5" fill="rgba(42, 58, 80, 0.6)" />
+</g>
+    <g id="mesh-extra-lines"><line x1="1365.33" y1="1838.93" x2="1143.47" y2="1838.93" stroke="rgba(42, 58, 80, 0.35)" stroke-width="7.7" />
+<line x1="1365.33" y1="1173.33" x2="1587.2" y2="1395.2" stroke="rgba(42, 58, 80, 0.35)" stroke-width="7.7" />
+<line x1="2474.67" y1="1173.33" x2="2252.8" y2="1395.2" stroke="rgba(42, 58, 80, 0.35)" stroke-width="7.7" />
+<line x1="2474.67" y1="1838.93" x2="2696.53" y2="1838.93" stroke="rgba(42, 58, 80, 0.35)" stroke-width="7.7" />
+<line x1="1365.33" y1="2504.53" x2="1587.2" y2="2282.67" stroke="rgba(42, 58, 80, 0.35)" stroke-width="7.7" />
+<line x1="2474.67" y1="2504.53" x2="2252.8" y2="2282.67" stroke="rgba(42, 58, 80, 0.35)" stroke-width="7.7" />
+<line x1="1587.2" y1="1395.2" x2="1809.07" y2="1838.93" stroke="rgba(42, 58, 80, 0.35)" stroke-width="7.7" />
+<line x1="2252.8" y1="1395.2" x2="2030.93" y2="1838.93" stroke="rgba(42, 58, 80, 0.35)" stroke-width="7.7" />
+</g>
+    <g id="mesh-sub-nodes"><circle cx="1143.47" cy="1838.93" r="19.2" fill="#00E5FF" />
+<circle cx="1587.2" cy="1395.2" r="19.2" fill="#00E5FF" />
+<circle cx="2252.8" cy="1395.2" r="19.2" fill="#00E5FF" />
+<circle cx="2696.53" cy="1838.93" r="19.2" fill="#00E5FF" />
+<circle cx="1587.2" cy="2282.67" r="19.2" fill="#00E5FF" />
+<circle cx="2252.8" cy="2282.67" r="19.2" fill="#00E5FF" />
+</g>
+    <polyline points="1365.33,2504.53 1365.33,1838.93 1365.33,1173.33 1809.07,1838.93 2030.93,1838.93 2474.67,1173.33 2474.67,1838.93 2474.67,2504.53" fill="none" stroke="url(#mGradient)" stroke-width="46.1" stroke-linecap="round" stroke-linejoin="round" filter="url(#mGlow)" />
+    <polyline points="1365.33,2504.53 1365.33,1838.93 1365.33,1173.33 1809.07,1838.93 2030.93,1838.93 2474.67,1173.33 2474.67,1838.93 2474.67,2504.53" fill="none" stroke="#FFFFFF" stroke-width="11.5" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.9" />
+    <g id="key-rings">
+            <circle cx="1365.33" cy="2504.53" r="101.4" fill="none" stroke="#00F59B" stroke-width="11.5" stroke-opacity="0.85">
+                <animate attributeName="r" values="87.9;114.8;87.9" dur="2.1s" begin="0.00s" repeatCount="indefinite" />
+                <animate attributeName="stroke-opacity" values="0.5;0.95;0.5" dur="2.1s" begin="0.00s" repeatCount="indefinite" />
+            </circle>
+            <g transform="translate(1365.33, 2504.53)">
+                <circle cx="0" cy="0" r="141.9" fill="none" stroke="#00E5FF" stroke-width="11.5" stroke-dasharray="23.0, 30.7" stroke-opacity="0.75">
+                    <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="12s" begin="0.00s" repeatCount="indefinite" />
+                </circle>
+            </g>
+
+            <circle cx="1365.33" cy="1173.33" r="101.4" fill="none" stroke="#00F59B" stroke-width="11.5" stroke-opacity="0.85">
+                <animate attributeName="r" values="87.9;114.8;87.9" dur="2.1s" begin="0.60s" repeatCount="indefinite" />
+                <animate attributeName="stroke-opacity" values="0.5;0.95;0.5" dur="2.1s" begin="0.60s" repeatCount="indefinite" />
+            </circle>
+            <g transform="translate(1365.33, 1173.33)">
+                <circle cx="0" cy="0" r="141.9" fill="none" stroke="#00E5FF" stroke-width="11.5" stroke-dasharray="23.0, 30.7" stroke-opacity="0.75">
+                    <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="12s" begin="0.60s" repeatCount="indefinite" />
+                </circle>
+            </g>
+
+            <circle cx="1809.07" cy="1838.93" r="101.4" fill="none" stroke="#00F59B" stroke-width="11.5" stroke-opacity="0.85">
+                <animate attributeName="r" values="87.9;114.8;87.9" dur="2.1s" begin="0.90s" repeatCount="indefinite" />
+                <animate attributeName="stroke-opacity" values="0.5;0.95;0.5" dur="2.1s" begin="0.90s" repeatCount="indefinite" />
+            </circle>
+            <g transform="translate(1809.07, 1838.93)">
+                <circle cx="0" cy="0" r="141.9" fill="none" stroke="#00E5FF" stroke-width="11.5" stroke-dasharray="23.0, 30.7" stroke-opacity="0.75">
+                    <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="12s" begin="0.90s" repeatCount="indefinite" />
+                </circle>
+            </g>
+
+            <circle cx="2030.93" cy="1838.93" r="101.4" fill="none" stroke="#00F59B" stroke-width="11.5" stroke-opacity="0.85">
+                <animate attributeName="r" values="87.9;114.8;87.9" dur="2.1s" begin="1.20s" repeatCount="indefinite" />
+                <animate attributeName="stroke-opacity" values="0.5;0.95;0.5" dur="2.1s" begin="1.20s" repeatCount="indefinite" />
+            </circle>
+            <g transform="translate(2030.93, 1838.93)">
+                <circle cx="0" cy="0" r="141.9" fill="none" stroke="#00E5FF" stroke-width="11.5" stroke-dasharray="23.0, 30.7" stroke-opacity="0.75">
+                    <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="12s" begin="1.20s" repeatCount="indefinite" />
+                </circle>
+            </g>
+
+            <circle cx="2474.67" cy="1173.33" r="101.4" fill="none" stroke="#00F59B" stroke-width="11.5" stroke-opacity="0.85">
+                <animate attributeName="r" values="87.9;114.8;87.9" dur="2.1s" begin="1.50s" repeatCount="indefinite" />
+                <animate attributeName="stroke-opacity" values="0.5;0.95;0.5" dur="2.1s" begin="1.50s" repeatCount="indefinite" />
+            </circle>
+            <g transform="translate(2474.67, 1173.33)">
+                <circle cx="0" cy="0" r="141.9" fill="none" stroke="#00E5FF" stroke-width="11.5" stroke-dasharray="23.0, 30.7" stroke-opacity="0.75">
+                    <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="12s" begin="1.50s" repeatCount="indefinite" />
+                </circle>
+            </g>
+
+            <circle cx="2474.67" cy="2504.53" r="101.4" fill="none" stroke="#00F59B" stroke-width="11.5" stroke-opacity="0.85">
+                <animate attributeName="r" values="87.9;114.8;87.9" dur="2.1s" begin="2.10s" repeatCount="indefinite" />
+                <animate attributeName="stroke-opacity" values="0.5;0.95;0.5" dur="2.1s" begin="2.10s" repeatCount="indefinite" />
+            </circle>
+            <g transform="translate(2474.67, 2504.53)">
+                <circle cx="0" cy="0" r="141.9" fill="none" stroke="#00E5FF" stroke-width="11.5" stroke-dasharray="23.0, 30.7" stroke-opacity="0.75">
+                    <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="12s" begin="2.10s" repeatCount="indefinite" />
+                </circle>
+            </g>
+</g>
+    <g id="active-nodes">
+        <circle cx="1365.33" cy="2504.53" r="46.1" fill="#00F59B">
+            <animate attributeName="opacity" values="0.9;1;0.9" dur="2.1s" repeatCount="indefinite" />
+        </circle>
+        <circle cx="1365.33" cy="2504.53" r="17.5" fill="#FFFFFF" />
+
+        <circle cx="1365.33" cy="1838.93" r="46.1" fill="#00E5FF">
+            <animate attributeName="opacity" values="0.9;1;0.9" dur="2.1s" repeatCount="indefinite" />
+        </circle>
+        <circle cx="1365.33" cy="1838.93" r="17.5" fill="#FFFFFF" />
+
+        <circle cx="1365.33" cy="1173.33" r="46.1" fill="#00F59B">
+            <animate attributeName="opacity" values="0.9;1;0.9" dur="2.1s" repeatCount="indefinite" />
+        </circle>
+        <circle cx="1365.33" cy="1173.33" r="17.5" fill="#FFFFFF" />
+
+        <circle cx="1809.07" cy="1838.93" r="46.1" fill="#00F59B">
+            <animate attributeName="opacity" values="0.9;1;0.9" dur="2.1s" repeatCount="indefinite" />
+        </circle>
+        <circle cx="1809.07" cy="1838.93" r="17.5" fill="#FFFFFF" />
+
+        <circle cx="2030.93" cy="1838.93" r="46.1" fill="#00F59B">
+            <animate attributeName="opacity" values="0.9;1;0.9" dur="2.1s" repeatCount="indefinite" />
+        </circle>
+        <circle cx="2030.93" cy="1838.93" r="17.5" fill="#FFFFFF" />
+
+        <circle cx="2474.67" cy="1173.33" r="46.1" fill="#00F59B">
+            <animate attributeName="opacity" values="0.9;1;0.9" dur="2.1s" repeatCount="indefinite" />
+        </circle>
+        <circle cx="2474.67" cy="1173.33" r="17.5" fill="#FFFFFF" />
+
+        <circle cx="2474.67" cy="1838.93" r="46.1" fill="#00E5FF">
+            <animate attributeName="opacity" values="0.9;1;0.9" dur="2.1s" repeatCount="indefinite" />
+        </circle>
+        <circle cx="2474.67" cy="1838.93" r="17.5" fill="#FFFFFF" />
+
+        <circle cx="2474.67" cy="2504.53" r="46.1" fill="#00F59B">
+            <animate attributeName="opacity" values="0.9;1;0.9" dur="2.1s" repeatCount="indefinite" />
+        </circle>
+        <circle cx="2474.67" cy="2504.53" r="17.5" fill="#FFFFFF" />
+</g>
+    <g id="typography">
+        <text x="1920" y="3110.4" fill="#FFFFFF" class="font-title">METRICE</text>
+        <text x="1920" y="3302.4" fill="#00E5FF" class="font-sub">DECENTRALIZED P2P MESH</text>
+    </g>
+</svg>
