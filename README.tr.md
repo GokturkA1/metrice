@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/lisans-GPLv3-blue.svg" alt="Lisans: GPLv3"></a>
-  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D22.12%20%7C%2026.x-339933.svg?logo=node.js&logoColor=white" alt="Node.js: >=22.12 | 26.x"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D24.7.0%20%7C%2026.x-339933.svg?logo=node.js&logoColor=white" alt="Node.js: >=24.7.0 | 26.x"></a>
   <img src="https://img.shields.io/badge/ba%C4%9F%C4%B1ml%C4%B1l%C4%B1k-0%20(s%C4%B1f%C4%B1r%20npm)-brightgreen.svg" alt="Sıfır Dış Bağımlılık">
   <img src="https://img.shields.io/badge/PQC-NIST%20FIPS%20203%20ML--KEM--768-blueviolet.svg" alt="NIST FIPS 203 ML-KEM-768">
   <img src="https://img.shields.io/badge/kimlik-Ed25519%20%7C%20RFC%208032-purple.svg" alt="Ed25519 RFC 8032">
@@ -136,7 +136,7 @@ Sistem; NIST FIPS 203 ML-KEM-768 anahtar kapsülleme, Ed25519 tabanlı RFC 4648 
 ## Kurulum ve Çalıştırma
 
 ### Gereksinimler
-- Node.js v22.0.0 veya üzeri (ML-KEM-768 tam donanım hızlandırması için Node.js v24+ önerilir).
+- Node.js v24.7.0 veya üzeri (Gelişmiş yerleşik performans için Node.js v26+ önerilir).
 - İşletim Sistemi: Linux, macOS, BSD, Windows.
 - Harici paket bağımlılığı bulunmamaktadır (`npm install` gerekmez).
 

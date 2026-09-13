@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue.svg" alt="License: GPLv3"></a>
-  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D22.12%20%7C%2026.x-339933.svg?logo=node.js&logoColor=white" alt="Node.js: >=22.12 | 26.x"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D24.7.0%20%7C%2026.x-339933.svg?logo=node.js&logoColor=white" alt="Node.js: >=24.7.0 | 26.x"></a>
   <img src="https://img.shields.io/badge/dependencies-0%20(zero%20npm)-brightgreen.svg" alt="Zero NPM Dependencies">
   <img src="https://img.shields.io/badge/PQC-NIST%20FIPS%20203%20ML--KEM--768-blueviolet.svg" alt="NIST FIPS 203 ML-KEM-768">
   <img src="https://img.shields.io/badge/identity-Ed25519%20%7C%20RFC%208032-purple.svg" alt="Ed25519 RFC 8032">
@@ -136,7 +136,7 @@ The system incorporates NIST FIPS 203 ML-KEM-768 key encapsulation, Ed25519-base
 ## Installation & Quick Start
 
 ### Prerequisites
-- Node.js v22.0.0 or higher (Node.js v24+ recommended for native hardware-accelerated ML-KEM-768).
+- Node.js v24.7.0 or higher (Node.js v26+ recommended for enhanced native performance).
 - Operating System: Linux, macOS, BSD, Windows.
 - Zero external package dependencies (`npm install` is not required).
 
