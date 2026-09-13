@@ -371,18 +371,34 @@ Telekom operatörlerinden ve merkezi baz istasyonlarından bağımsız, akıllı
   - Ters yönde, dış dünyadan veya diğer ağ üyelerinden gelen `.mesh` çağrılarının kullanıcının telefonunun yerleşik arama arayüzünü tetiklemesi (Native Inbound Call).
   - Kullanıcı arayüzünde ek bir mesajlaşma uygulamasına ihtiyaç kalmadan, doğrudan telefonun ahizesinden konuşarak kuantum sonrası şifreli P2P mesh ses tünelini kullanabilme imkanı.
 
-### 2. Telescopic Onion Routing ile Dandelion++ Ağ Yayılım Protokolü Entegrasyonu (Anonymized Stem-and-Fluff Diffusion)
-Dedikodu (gossip) yayılımlarını ve ağ geneli anonsları ilk atlamada fiziksel IP adresini sızdırmadan dağıtmak üzere, Telescopic Onion Routing ile Dandelion++ ağ yayılım protokolünün entegre edilmesi:
-- **İki Aşamalı Ağ Yayılım Mimarisi (Stem-and-Fluff Phased Diffusion):**
-  - **1. Gövde Aşaması (Stem Phase - Doğrusal İletim):** Bir düğüm ağ genelinde bir dedikodu paketi (`PRESENCE_ANNOUNCE`, kullanıcı durumu veya kanal yayını) ürettiğinde, bu paketi doğrudan tüm komşularına anons etmez. Paket, kuantum sonrası şifrelenmiş Telescopic Onion (`ONION_CELL` + ML-KEM-768) devresi üzerinden rastgele seçilen tek bir transit eşe tekil hat boyunca (linear route) iletilir.
-  - **2. Tüy Aşaması (Fluff Phase - Geniş Alan Dağıtımı):** Gövde hattı boyunca ilerleyen paket, her atlamada olasılıksal bir kararla (örneğin p = 0.9 gövdede devam, 0.1 salınıma geçiş) veya azami atlama sınırına ulaştığında "Fluff" fazına geçer. Bu noktada hedef transit düğüm, paketi açarak standart salınım (epidemic broadcast diffusion) ile tüm ağa yayar.
-- **Kaynak Analizi ve Trafik Dinleme Koruması (Anti-Deanonymization & Timing Defense):**
-  - Düşman dinleyicilerin veya kötü niyetli rölelerin ağ topolojisini izleyerek ilk paketi üreten kaynak düğümü (originating node) tespit etmesi matematiksel olarak engellenir.
-  - Asimetrik rastgele gecikmeler (Anisotropic Poisson Delays) eklenerek paket çıkış zamanlamaları arasındaki korelasyon koparılır (traffic shaping).
-- **Hata Toleransı ve Yedek Yayılım Mekanizması (Fail-safe Stem Timers):**
-  - Gövde aşamasındaki bir transit düğümün çevrimdışı olması veya paketi kasten düşürmesi durumunda, paketi ileten önceki düğümlerdeki yerel zamanlayıcılar (stem timeout) devreye girerek paketi alternatif bir yoldan doğrudan Fluff fazına geçirir ve mesaj kaybını engeller.
-- **İletişim Ağının Katmanlı Sertleştirilmesi (Hardened Communication Layer):**
-  - Kriptografik veya finansal süreçlerden tamamen bağımsız olarak; doğrudan P2P dedikodu protokolünün, varlık bildirimlerinin ve genel kanal paketlerinin gizliliğini ve sansüre dayanıklılığını en üst seviyeye taşır.
+### 2. Telescopic Onion Routing İçin 3 Kademeli Dandelion++ (Stem -> Fluff -> Extended Fluff) ve Bütünleşik Dedikodu (Unified Gossip Cover Traffic) Mimarisi
+Klasik Tor tipi soğan yönlendirmesindeki zamanlama ve trafik hacmi analizi (Timing & Traffic Correlation Attacks) zafiyetlerini bertaraf etmek amacıyla; her atlamada kademeli difüzyon, sahte/yem paket (decoy/chaff) gürültüsü ve dedikodu birleştirmesi içeren 3 kademeli Dandelion++ mimarisinin soğan devrelerine entegrasyonu:
+
+- **1. Atlama: Doğrusal Kök (Hop 1 - Stem Phase / Unicast Stem):**
+  - **Kaynak -> Guard / Stem Düğümü:**
+  - Paket ilk çıkışında tekil ve kuantum sonrası şifreli (`ONION_CELL` + ML-KEM-768) bir hat boyunca ilerler.
+  - Ağ dinleyicisi için bu trafik sıradan iki uç arasındaki tekil bir oturumdur; paketin bir sonraki adımda kaç kola ayrılacağı ve nereye yayılacağı kestirilemez.
+
+- **2. Atlama: İlk Çatallanma ve Difüzyon (Hop 2 - Fluff Phase / Decoy Multicast):**
+  - **Guard -> Ara Düğümler (Intermediate Transit Pool):**
+  - 2. düğüme ulaşan paket tek bir ara düğümle sınırlı kalmaz.
+  - Asıl şifreli paket hedef ara düğüme yönlendirilirken; boyutu, ikili çerçevesi ve dolgusu (padding) gerçek hücrelerle birebir aynı olan **sahte/yem hücreler (decoy/chaff cells)** paralel 2-3 farklı ara düğüme eşzamanlı olarak çoklu yayılımla (multicast fluff) püskürtülür.
+  - Dışarıdan izleyen bir göz için gerçek rota ile yem rotalar matematiksel olarak ayırt edilemez hale gelir (entropi artışı).
+
+- **3. Atlama: Kademeli Difüzyon (Hop 3 - Extended Fluff / Cascade Diffusion):**
+  - **Ara Düğümler -> Çıkış / Rendezvous Noktaları:**
+  - 2. atlamada çatallanan hem asıl hat hem de sahte/yem hatlar, 3. atlamada tekrar difüzyona uğrayarak hedef katmana dağıtılır (Monero'daki çoklu cüzdan zincirleme işlem gürültüsü prensibi).
+  - Gerçek hedef düğüm (veya Rendezvous uç noktası) kuantum sonrası anahtarıyla kendi katmanını açıp orijinal veriye ulaşır.
+  - Çatallanan sahte/yem hücreler ise son duraklarında Poisson gecikmeleriyle güvenle sönümlenir (TTL drop) ya da yerel dedikodu havuzuna dahil edilir.
+
+- **Bütünleşik Dedikodu Sis Perdesi (Unified Gossip Cover Traffic):**
+  - Dedikodu (gossip) protokolü (`PRESENCE_ANNOUNCE`, kullanıcı giriş/çıkışları, kanal anonsları) doğrudan bu soğan hücre rotasyonuna entegre edilir.
+  - Tüm dedikodu verileri sabit boyutlu `ONION_CELL` hücreleri içerisine paketlenerek taşınır.
+  - Kullanıcılar aktif mesajlaşmasa dahi ağda sürekli akan doğal bir dedikodu gürültüsü (cover traffic) oluşur; dinleyiciler akan hücrenin özel bir anlık mesaj mı, devre anahtarı mı yoksa rutin bir varlık anonsu mu olduğunu asla ayırt edemez (Uniform Cell Entropy).
+
+- **Zamanlama ve Arıza Güvenliği (Anisotropic Poisson Delays & Fail-safe Stem Timers):**
+  - Her atlamada Poisson dağılımına göre rastgele mikro-gecikmeler eklenerek paket çıkış zamanlamaları arasındaki korelasyon koparılır (traffic shaping).
+  - Stem veya Fluff aşamasındaki düğümlerden biri çöktüğünde yerel zamanlayıcılar (stem-timer) devreye girerek paketi alternatif rotadan güvenle difüzyona geçirir ve mesaj kaybı riskini sıfırlar.
 
 ---
 
