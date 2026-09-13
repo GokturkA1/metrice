@@ -355,7 +355,7 @@ Düğüm içi iletişim, yönetim duyuruları ve yerel kullanıcı topluluğu i�
 
 ---
 
-## Faz 7 (Ekstrem Vizyon Fazı): Özel Mesh IMS / VoWiFi Telekomünikasyon Şebekesi ve XMR (Monero) Ağ Yönlendirmesi
+## Faz 7 (Ekstrem Vizyon Fazı): Özel Mesh IMS / VoWiFi Telekomünikasyon Şebekesi ve Dandelion++ Ağ Yayılım Protokolü Entegrasyonu
 
 ### 1. Özel SIM / eSIM ve Yerel VoWiFi IMS Çekirdeği (Custom Mesh IMS & Native VoWiFi Dialer Integration)
 Telekom operatörlerinden ve merkezi baz istasyonlarından bağımsız, akıllı telefonların yerleşik arama ekranını (native phone dialer) Metrice ağına bağlayan uçtan uca telekomünikasyon köprüsü:
@@ -371,17 +371,18 @@ Telekom operatörlerinden ve merkezi baz istasyonlarından bağımsız, akıllı
   - Ters yönde, dış dünyadan veya diğer ağ üyelerinden gelen `.mesh` çağrılarının kullanıcının telefonunun yerleşik arama arayüzünü tetiklemesi (Native Inbound Call).
   - Kullanıcı arayüzünde ek bir mesajlaşma uygulamasına ihtiyaç kalmadan, doğrudan telefonun ahizesinden konuşarak kuantum sonrası şifreli P2P mesh ses tünelini kullanabilme imkanı.
 
-### 2. Kuantum Sonrası Soğan Ağında XMR (Monero) Ağ Yönlendirmesi ve İşlem Yayılımı (XMR over Mesh Routing)
-Monero ağının P2P işlem yayılımı ve cüzdan-düğüm RPC iletişiminin Metrice'in çok atlamalı kuantum sonrası soğan devreleri üzerinden taşınması:
-- **PQC Zırhlı Monero İşlem Yayılımı (PQC-Shielded Transaction Broadcast):**
-  - Monero blokzinciri zincir üstü (on-chain) gizliliği (gizli adresler, RingCT, Bulletproofs) sağlarken, ağ taşıma katmanında ilk işlem yayılımını yapan istemcinin fiziksel IP adresinin İSS veya ağ dinleyicileri tarafından korelasyonla tespit edilmesini önlemek amacıyla 3 atlamalı `ONION_CELL` devrelerinin kullanılması.
-  - Monero Dandelion++ kök (stem) aşamasındaki işlem anonslarının doğrudan Metrice ML-KEM-768 şifreli tünelleri üzerinden aktarılması; işlem kaynağının fiziksel IP adresinin ağ katmanında sızdırılmasının engellenmesi.
-- **Dahili XMR Cüzdan ve RPC Ağ Geçidi (Mesh-Native RPC Proxy):**
-  - Yerel arayüzde (`127.0.0.1:18081` veya yerel IPC soketi) çalışan hafif bir RPC/ZMQ proxy katmanı ile Monero cüzdanlarının (Feather Wallet, Monero GUI/CLI vb.) doğrudan Metrice ağına bağlanabilmesi.
-  - Cüzdan sorgularının ve işlem gönderimlerinin açık internete (clearnet) veya güvenilmez Tor çıkış düğümlerine (Tor Exit Nodes) düşmeden, doğrudan Metrice ağı içindeki uzak tam düğümlere (`monero-daemon.xmr.mesh` veya `@xmr-node:NodeID.mesh`) güvenli tünellerle ulaştırılması; çıkış düğümü dinleme ve sansür risklerinin bertaraf edilmesi.
-- **Sansüre Dayanıklı Çevrimdışı/Mesh Blok ve Mempool Senkronizasyonu (Resilient Mempool Forwarding):**
-  - Ağ kesintisi, bölgesel sansür veya internet kısıtlamaları durumunda; Monero mempool işlem paketlerinin ve yeni blok verilerinin Metrice'in yerel UDP broadcast LAN keşfi, ters tüneller ve `CAP_EDGE_TRANSIT` köprüleri üzerinden taşınması.
-  - Madenciler ve cüzdanlar arasında açık internet omurgasına ihtiyaç duymaksızın mesh üzerinden Monero işlem iletimi ve bakiye doğrulama imkanının sunulması.
+### 2. Telescopic Onion Routing ile Dandelion++ Ağ Yayılım Protokolü Entegrasyonu (Anonymized Stem-and-Fluff Diffusion)
+Dedikodu (gossip) yayılımlarını ve ağ geneli anonsları ilk atlamada fiziksel IP adresini sızdırmadan dağıtmak üzere, Telescopic Onion Routing ile Dandelion++ ağ yayılım protokolünün entegre edilmesi:
+- **İki Aşamalı Ağ Yayılım Mimarisi (Stem-and-Fluff Phased Diffusion):**
+  - **1. Gövde Aşaması (Stem Phase - Doğrusal İletim):** Bir düğüm ağ genelinde bir dedikodu paketi (`PRESENCE_ANNOUNCE`, kullanıcı durumu veya kanal yayını) ürettiğinde, bu paketi doğrudan tüm komşularına anons etmez. Paket, kuantum sonrası şifrelenmiş Telescopic Onion (`ONION_CELL` + ML-KEM-768) devresi üzerinden rastgele seçilen tek bir transit eşe tekil hat boyunca (linear route) iletilir.
+  - **2. Tüy Aşaması (Fluff Phase - Geniş Alan Dağıtımı):** Gövde hattı boyunca ilerleyen paket, her atlamada olasılıksal bir kararla (örneğin p = 0.9 gövdede devam, 0.1 salınıma geçiş) veya azami atlama sınırına ulaştığında "Fluff" fazına geçer. Bu noktada hedef transit düğüm, paketi açarak standart salınım (epidemic broadcast diffusion) ile tüm ağa yayar.
+- **Kaynak Analizi ve Trafik Dinleme Koruması (Anti-Deanonymization & Timing Defense):**
+  - Düşman dinleyicilerin veya kötü niyetli rölelerin ağ topolojisini izleyerek ilk paketi üreten kaynak düğümü (originating node) tespit etmesi matematiksel olarak engellenir.
+  - Asimetrik rastgele gecikmeler (Anisotropic Poisson Delays) eklenerek paket çıkış zamanlamaları arasındaki korelasyon koparılır (traffic shaping).
+- **Hata Toleransı ve Yedek Yayılım Mekanizması (Fail-safe Stem Timers):**
+  - Gövde aşamasındaki bir transit düğümün çevrimdışı olması veya paketi kasten düşürmesi durumunda, paketi ileten önceki düğümlerdeki yerel zamanlayıcılar (stem timeout) devreye girerek paketi alternatif bir yoldan doğrudan Fluff fazına geçirir ve mesaj kaybını engeller.
+- **İletişim Ağının Katmanlı Sertleştirilmesi (Hardened Communication Layer):**
+  - Kriptografik veya finansal süreçlerden tamamen bağımsız olarak; doğrudan P2P dedikodu protokolünün, varlık bildirimlerinin ve genel kanal paketlerinin gizliliğini ve sansüre dayanıklılığını en üst seviyeye taşır.
 
 ---
 
