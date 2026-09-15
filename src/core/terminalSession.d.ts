@@ -1,6 +1,9 @@
 /// <reference types="node" />
 import { EventEmitter } from 'node:events';
 import type { Socket } from 'node:net';
+import type { TerminalRenderer } from './terminalRenderer.d.ts';
+
+export * from './terminalRenderer.d.ts';
 
 export interface SystemLogEntry {
   from: string;
@@ -27,6 +30,7 @@ export class TerminalSession extends EventEmitter {
   height: number;
   isSsh: boolean;
   isSecureE2EE: boolean;
+  renderer: TerminalRenderer;
 
   constructor(
     socket: Socket,

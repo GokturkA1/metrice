@@ -1,6 +1,8 @@
 /// <reference types="node" />
-import type { Server, Socket } from 'node:net';
+import type { Server } from 'node:net';
 import { TerminalSession } from './terminalSession.d.ts';
+
+export * from './telnetClientConnection.d.ts';
 
 export class ClientServer {
   db: any;
@@ -14,10 +16,20 @@ export class ClientServer {
   updateTargetMigration(canonicalUser: string): void;
   initFederationListeners(): void;
   getLocalOnlineUsers(): string[];
-  getLocalMemberships(): string[];
+  getLocalMemberships(): any[];
+  getOnlineUsers(): string[];
+  getChannelMembers(target: string): string[];
+  getCurrentConversation(userAddress: string, activeTarget: string, systemLogs: any[]): any[];
   findLocalSession(address: string): TerminalSession | null;
   notifyAllSessionsRender(): void;
-  getSystemStats(): any;
-  start(port?: number): Promise<void>;
-  close(): Promise<void>;
+  handleOutboundMessage(
+    session: TerminalSession,
+    from: string,
+    to: string,
+    content: string,
+    isAction?: boolean,
+    isSnippet?: boolean
+  ): Promise<void>;
+  start(port?: number): void;
+  close(): void;
 }

@@ -1,0 +1,585 @@
+import crypto from 'node:crypto';
+import EventEmitter from 'node:events';
+import { Logger } from '../utils/logger.js';
+import { SshPacketReader, SshPacketWriter } from '../utils/sshPacket.js';
+import { CryptoHelper } from '../utils/cryptoHelper.js';
+import { AddressHelper } from '../utils/addressHelper.js';
+import { InputParser } from '../utils/inputParser.js';
+import { TerminalSession } from './terminalSession.js';
+import { SessionInputHandler } from './sessionInputHandler.js';
+import { I18n } from '../locales/i18n.js';
+import { CONFIG } from '../config/index.js';
+import { SshKexHandler } from './sshKexHandler.js';
+import { SshAuthHandler } from './sshAuthHandler.js';
+import { formatSshServerVersion } from '../version.js';
+
+export { SshKexHandler, SshAuthHandler };
+
+const log = new Logger('SSH_SRV');
+
+export const SSH_MSG = {
+  DISCONNECT: 1,
+  IGNORE: 2,
+  UNIMPLEMENTED: 3,
+  DEBUG: 4,
+  SERVICE_REQUEST: 5,
+  SERVICE_ACCEPT: 6,
+  KEXINIT: 20,
+  NEWKEYS: 21,
+  KEX_ECDH_INIT: 30,
+  KEX_ECDH_REPLY: 31,
+  USERAUTH_REQUEST: 50,
+  USERAUTH_FAILURE: 51,
+  USERAUTH_SUCCESS: 52,
+  USERAUTH_BANNER: 53,
+  USERAUTH_PK_OK: 60,
+  CHANNEL_OPEN: 90,
+  CHANNEL_OPEN_CONFIRMATION: 91,
+  CHANNEL_OPEN_FAILURE: 92,
+  CHANNEL_WINDOW_ADJUST: 93,
+  CHANNEL_DATA: 94,
+  CHANNEL_EOF: 96,
+  CHANNEL_CLOSE: 97,
+  CHANNEL_REQUEST: 98,
+  CHANNEL_SUCCESS: 99,
+  CHANNEL_FAILURE: 100
+};
+
+export class SshClientConnection extends EventEmitter {
+  constructor(socket, hostKey, db, clientServer, options = {}) {
+    super();
+    this.socket = socket;
+    this.hostKey = hostKey;
+    this.db = db;
+    this.clientServer = clientServer;
+    this.options = options;
+
+    this.state = 'IDENT';
+    this.inBuffer = Buffer.alloc(0);
+    this.clientVersion = '';
+
+    // SSH Sunucu Versiyon Dizgesi (Öncelik: options.serverVersion -> CONFIG.sshServerVersion -> Fallback)
+    const configuredVersion = (options && options.serverVersion) || (CONFIG && CONFIG.sshServerVersion);
+    this.serverVersion = formatSshServerVersion(configuredVersion);
+
+    this.clientKexPayload = null;
+    this.serverKexPayload = null;
+    this.selectedKex = 'mlkem768x25519-sha256';
+    this.sharedSecret = null;
+    this.exchangeHash = null;
+    this.sessionIdentifier = null;
+
+    this.isEncryptedIn = false;
+    this.isEncryptedOut = false;
+    this.encryptCipher = null;
+    this.decryptCipher = null;
+    this.outHmacKey = null;
+    this.inHmacKey = null;
+    this.inSeq = 0;
+    this.outSeq = 0;
+
+    this.cipherName = 'aes-128-ctr';
+    this.keyLen = 16;
+    this.ivLen = 16;
+
+    this.offeredClientPub = null;
+    this.derivedE2eeSeed = null;
+    this.authenticatedUser = null;
+    this.channelRemoteId = null;
+    this.channelLocalId = 0;
+    this.channelRemoteWindow = 0;
+    this.channelRemoteMaxPacket = 32768;
+    this.session = null;
+    this.termWidth = 110;
+    this.termHeight = 24;
+
+    this.activeTimeouts = new Set();
+    this.parser = new InputParser();
+    this.initSocket();
+  }
+
+  setManagedTimeout(fn, ms) {
+    const timer = setTimeout(() => {
+      this.activeTimeouts.delete(timer);
+      fn();
+    }, ms);
+    this.activeTimeouts.add(timer);
+    return timer;
+  }
+
+  initSocket() {
+    this.socket.write(this.serverVersion + '\r\n');
+
+    this.socket.on('data', (chunk) => {
+      this.inBuffer = Buffer.concat([this.inBuffer, chunk]);
+      this.processIncoming();
+    });
+
+    this.socket.on('error', (err) => {
+      log.error(I18n.t('SSH_CONN_ERROR', { error: err.message }));
+    });
+
+    this.socket.on('close', () => {
+      this.cleanup();
+    });
+  }
+
+  destroySocket(forceReset = false) {
+    if (!this.socket) return;
+    try {
+      if (forceReset && typeof this.socket.resetAndDestroy === 'function') {
+        this.socket.resetAndDestroy();
+      } else {
+        this.socket.destroy();
+      }
+    } catch {
+      try { this.socket.destroy(); } catch {}
+    }
+  }
+
+  processIncoming() {
+    if (this.state === 'IDENT') {
+      const idx = this.inBuffer.indexOf('\n');
+      if (idx === -1) {
+        // ID satırı çok uzun sürerse veya saçma karakterler dolarsa kopar
+        if (this.inBuffer.length > 256) {
+          log.warn(I18n.t('SSH_INVALID_BANNER_LEN'));
+          this.destroySocket(true);
+        }
+        return;
+      }
+
+      const rawLine = this.inBuffer.subarray(0, idx + 1).toString('utf8');
+      this.inBuffer = this.inBuffer.subarray(idx + 1);
+      this.clientVersion = rawLine.trim();
+
+      log.debug(I18n.t('SSH_CLIENT_IDENTIFIED', { version: this.clientVersion }));
+      this.state = 'KEX';
+      this.sendKexInit();
+    }
+
+    while (this.inBuffer.length > 0) {
+      if (!this.isEncryptedIn) {
+        // 5 baytlık standart SSH paket başlığı gelmeden önce tampon aşırı şişerse saldırıdır
+        if (this.inBuffer.length < 5) {
+          if (this.inBuffer.length > 1024) {
+            log.warn(I18n.t('SSH_HEADER_BUFFER_OVERFLOW'));
+            this.destroySocket(true);
+          }
+          return;
+        }
+
+        const packetLength = this.inBuffer.readUInt32BE(0);
+        const paddingLength = this.inBuffer.readUInt8(4);
+
+        // --- ANINDA FIN/RST (DOS & FUZZING KORUMASI) ---
+        if (packetLength > 65536 || packetLength < 4 || paddingLength >= packetLength) {
+          log.warn(I18n.t('SSH_INVALID_PACKET_SIZE', { size: packetLength }));
+          this.destroySocket(true); // Bağlantıyı anında koparır (FIN/RST)
+          return;
+        }
+
+        if (this.inBuffer.length < 4 + packetLength) return;
+
+        const payload = this.inBuffer.subarray(5, 4 + packetLength - paddingLength);
+        this.inBuffer = this.inBuffer.subarray(4 + packetLength);
+        this.inSeq = (this.inSeq + 1) >>> 0;
+        this.handlePacket(payload);
+      } else {
+        if (this.inBuffer.length < 4) return;
+
+        if (!this.currentPacketLen) {
+          const encHead = this.inBuffer.subarray(0, 4);
+          const decHead = this.decryptCipher.update(encHead);
+          this.currentPacketLen = decHead.readUInt32BE(0);
+          this.decryptedHead = decHead;
+          this.inBuffer = this.inBuffer.subarray(4);
+
+          if (this.currentPacketLen > 65536 || this.currentPacketLen < 4) {
+            log.warn(I18n.t('SSH_INVALID_PACKET_SIZE', { size: this.currentPacketLen }));
+            this.destroySocket(true);
+            return;
+          }
+        }
+
+        const neededBytes = this.currentPacketLen + 32;
+        if (this.inBuffer.length < neededBytes) {
+          return;
+        }
+
+        const encBody = this.inBuffer.subarray(0, this.currentPacketLen);
+        const macReceived = this.inBuffer.subarray(this.currentPacketLen, neededBytes);
+        this.inBuffer = this.inBuffer.subarray(neededBytes);
+
+        const decBody = this.decryptCipher.update(encBody);
+        const fullDecrypted = Buffer.concat([this.decryptedHead, decBody]);
+
+        const hmacCalc = crypto.createHmac('sha256', this.inHmacKey);
+        const seqBuf = Buffer.alloc(4);
+        seqBuf.writeUInt32BE(this.inSeq, 0);
+        hmacCalc.update(seqBuf);
+        hmacCalc.update(fullDecrypted);
+        const expectedMac = hmacCalc.digest();
+
+        if (!crypto.timingSafeEqual(macReceived, expectedMac)) {
+          log.warn(I18n.t('SSH_HMAC_FAIL'));
+          this.destroySocket(true);
+          return;
+        }
+
+        this.inSeq = (this.inSeq + 1) >>> 0;
+        const paddingLength = fullDecrypted.readUInt8(4);
+        const payload = fullDecrypted.subarray(5, 4 + this.currentPacketLen - paddingLength);
+
+        this.currentPacketLen = null;
+        this.decryptedHead = Buffer.alloc(0);
+
+        this.handlePacket(payload);
+      }
+    }
+  }
+
+  sendPacket(payload) {
+    // Soket kapanmış veya sonlandırılmışsa yazmaya çalışma
+    if (!this.socket || this.socket.destroyed || !this.socket.writable || this.socket.writableEnded) {
+      return;
+    }
+
+    const blockSize = 16;
+    let paddingLen = blockSize - ((4 + 1 + payload.length) % blockSize);
+    if (paddingLen < 4) paddingLen += blockSize;
+
+    const packetLen = 1 + payload.length + paddingLen;
+    const padding = crypto.randomBytes(paddingLen);
+
+    const raw = Buffer.alloc(4 + 1 + payload.length + paddingLen);
+    raw.writeUInt32BE(packetLen, 0);
+    raw.writeUInt8(paddingLen, 4);
+    payload.copy(raw, 5);
+    padding.copy(raw, 5 + payload.length);
+
+    if (!this.isEncryptedOut) {
+      this.socket.write(raw);
+    } else {
+      const encrypted = this.encryptCipher.update(raw);
+      const hmac = crypto.createHmac('sha256', this.outHmacKey);
+      const seqBuf = Buffer.alloc(4);
+      seqBuf.writeUInt32BE(this.outSeq, 0);
+      hmac.update(seqBuf);
+      hmac.update(raw);
+      const macDigest = hmac.digest();
+
+      this.socket.write(Buffer.concat([encrypted, macDigest]));
+    }
+    this.outSeq = (this.outSeq + 1) >>> 0;
+  }
+
+  sendKexInit() {
+    const writer = new SshPacketWriter();
+    writer.writeByte(SSH_MSG.KEXINIT);
+    writer.writeRaw(crypto.randomBytes(16));
+    writer.writeNameList(['mlkem768x25519-sha256', 'curve25519-sha256', 'curve25519-sha256@libssh.org']);
+    writer.writeNameList(['ssh-ed25519']);
+    writer.writeNameList(['aes128-ctr', 'aes256-ctr']);
+    writer.writeNameList(['aes128-ctr', 'aes256-ctr']);
+    writer.writeNameList(['hmac-sha2-256']);
+    writer.writeNameList(['hmac-sha2-256']);
+    writer.writeNameList(['none']);
+    writer.writeNameList(['none']);
+    writer.writeNameList([]);
+    writer.writeNameList([]);
+    writer.writeBoolean(false);
+    writer.writeUInt32(0);
+
+    this.serverKexPayload = writer.toBuffer();
+    this.sendPacket(this.serverKexPayload);
+  }
+
+  handlePacket(payload) {
+    const reader = new SshPacketReader(payload);
+    const msgType = reader.readByte();
+
+    switch (msgType) {
+      case SSH_MSG.DISCONNECT:
+        this.socket.end();
+        break;
+
+      case SSH_MSG.KEXINIT: {
+        this.clientKexPayload = Buffer.from(payload);
+        reader.offset += 16;
+        const clientKexList = reader.readNameList();
+        if (clientKexList.includes('mlkem768x25519-sha256') && CryptoHelper.HAS_ML_KEM) {
+          this.selectedKex = 'mlkem768x25519-sha256';
+        } else {
+          this.selectedKex = 'curve25519-sha256';
+        }
+        log.debug(I18n.t('SSH_KEX_NEGOTIATED', { kex: this.selectedKex }));
+        break;
+      }
+
+      case SSH_MSG.KEX_ECDH_INIT:
+        this.handleKexInitMessage(reader);
+        break;
+
+      case SSH_MSG.NEWKEYS:
+        this.isEncryptedIn = true;
+        log.debug(I18n.t('SSH_TRANSPORT_READY'));
+        break;
+
+      case SSH_MSG.SERVICE_REQUEST: {
+        const service = reader.readString();
+        log.debug(I18n.t('SSH_SERVICE_REQUEST_RECEIVED', { service }));
+        if (service === 'ssh-userauth') {
+          const w = new SshPacketWriter();
+          w.writeByte(SSH_MSG.SERVICE_ACCEPT);
+          w.writeString('ssh-userauth');
+          this.sendPacket(w.toBuffer());
+        }
+        break;
+      }
+
+      case SSH_MSG.USERAUTH_REQUEST:
+        this.handleUserAuth(reader, payload);
+        break;
+
+      case SSH_MSG.CHANNEL_OPEN: {
+        const chanType = reader.readString();
+        this.channelRemoteId = reader.readUInt32();
+        this.channelRemoteWindow = reader.readUInt32();
+        this.channelRemoteMaxPacket = reader.readUInt32();
+
+        if (chanType === 'session') {
+          const w = new SshPacketWriter();
+          w.writeByte(SSH_MSG.CHANNEL_OPEN_CONFIRMATION);
+          w.writeUInt32(this.channelRemoteId);
+          w.writeUInt32(this.channelLocalId);
+          w.writeUInt32(1048576);
+          w.writeUInt32(32768);
+          this.sendPacket(w.toBuffer());
+        }
+        break;
+      }
+
+      case SSH_MSG.CHANNEL_REQUEST: {
+        reader.readUInt32();
+        const reqType = reader.readString();
+        const wantReply = reader.readBoolean();
+
+        if (reqType === 'pty-req') {
+          reader.readString();
+          this.termWidth = reader.readUInt32();
+          this.termHeight = reader.readUInt32();
+          if (wantReply) this.sendChannelSuccess();
+        } else if (reqType === 'window-change') {
+          this.termWidth = reader.readUInt32();
+          this.termHeight = reader.readUInt32();
+          if (this.session) {
+            this.session.resize(this.termWidth, this.termHeight);
+          }
+        } else if (reqType === 'shell') {
+          if (wantReply) this.sendChannelSuccess();
+          this.startSshTuiSession();
+        }
+        break;
+      }
+
+      case SSH_MSG.CHANNEL_DATA: {
+        reader.readUInt32();
+        const data = reader.readBuffer();
+        this.handleChannelInput(data);
+        break;
+      }
+
+      case SSH_MSG.CHANNEL_WINDOW_ADJUST: {
+        reader.readUInt32();
+        const addBytes = reader.readUInt32();
+        this.channelRemoteWindow += addBytes;
+        break;
+      }
+
+      case SSH_MSG.CHANNEL_EOF:
+      case SSH_MSG.CHANNEL_CLOSE: {
+        this.cleanup();
+        if (this.socket && !this.socket.destroyed) {
+          const w = new SshPacketWriter();
+          w.writeByte(SSH_MSG.CHANNEL_CLOSE);
+          w.writeUInt32(this.channelRemoteId || 0);
+          this.sendPacket(w.toBuffer());
+          this.socket.end();
+        }
+        break;
+      }
+    }
+  }
+
+  sendChannelSuccess() {
+    const w = new SshPacketWriter();
+    w.writeByte(SSH_MSG.CHANNEL_SUCCESS);
+    w.writeUInt32(this.channelRemoteId);
+    this.sendPacket(w.toBuffer());
+  }
+
+  handleKexInitMessage(reader) {
+    SshKexHandler.handleKexInitMessage(this, reader);
+  }
+
+  deriveKey(char, length) {
+    return SshKexHandler.deriveKey(this, char, length);
+  }
+
+  prepareKeys() {
+    SshKexHandler.prepareKeys(this);
+  }
+
+  async handleUserAuth(reader, rawPayload) {
+    return SshAuthHandler.handleUserAuth(this, reader, rawPayload);
+  }
+
+  startSshTuiSession() {
+    const profile = this.db.getUserProfile(this.authenticatedUser);
+
+    const virtualSocket = new EventEmitter();
+    virtualSocket.write = (data) => {
+      if (!this.session || !this.socket || this.socket.destroyed || !this.socket.writable || this.socket.writableEnded) {
+        return false;
+      }
+
+      try {
+        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        const w = new SshPacketWriter();
+        w.writeByte(SSH_MSG.CHANNEL_DATA);
+        w.writeUInt32(this.channelRemoteId);
+        w.writeBuffer(buf);
+        this.sendPacket(w.toBuffer());
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    
+    virtualSocket.end = (data) => {
+      if (!this.socket || this.socket.destroyed || this.socket.writableEnded) {
+        return;
+      }
+
+      // 1. Çıkış mesajını SSH paketi olarak gönder
+      if (data) {
+        virtualSocket.write(data);
+      }
+
+      // 2. Kopyalama modunu kapat ve temiz bir alt satıra geç
+      virtualSocket.write('\x1b[?2004l\r\n');
+
+      // 3. İstemcinin paketleri render etmesine fırsat verip soketi kapat
+      this.setManagedTimeout(() => {
+        if (this.socket && !this.socket.destroyed && this.socket.writable) {
+          try {
+            this.socket.end();
+          } catch {}
+        }
+      }, 50);
+    };
+
+    virtualSocket.destroy = () => {
+      if (this.socket && !this.socket.destroyed) {
+        this.socket.destroy();
+      }
+    };
+
+    virtualSocket.write('\x1b[?2004h');
+
+    this.session = new TerminalSession(
+      virtualSocket,
+      this.authenticatedUser,
+      profile,
+      () => this.clientServer.getOnlineUsers(),
+      (target) => this.clientServer.getChannelMembers(target),
+      (contacts, history) => {
+        this.db.updateUserProfile(this.authenticatedUser, contacts, history);
+        this.clientServer.federation.broadcastPresence();
+      },
+      () => {
+        const mins = Math.floor(process.uptime() / 60);
+        const mem = (process.memoryUsage().rss / 1024 / 1024).toFixed(1);
+        const peers = this.clientServer.federation.peerManager ? this.clientServer.federation.peerManager.getAllPeers() : [];
+        return {
+          uptime: `${mins}m`,
+          rss: mem,
+          peers,
+          role: this.clientServer.federation.role,
+          nodeId: this.clientServer.federation.nodeId
+        };
+      },
+      () => this.clientServer.commands.getAllUnique().map((c) => c.name)
+    );
+
+    this.session.isSsh = true;
+    this.session.isSecureE2EE = true;
+
+    if (this.derivedE2eeSeed) {
+      this.session.kemKeyPair = CryptoHelper.deriveDeterministicX25519(this.derivedE2eeSeed);
+      this.db.updateUserKemKey(this.authenticatedUser, this.session.kemKeyPair.publicKey);
+    }
+
+    this.session.on('request_render', () => {
+      const conv = this.clientServer.getCurrentConversation(
+        this.authenticatedUser,
+        this.session.activeTarget,
+        this.session.systemLogs
+      );
+      this.session.renderFull(conv);
+    });
+
+    this.session.resize(this.termWidth, this.termHeight);
+    this.clientServer.sessions.set(this.authenticatedUser, this.session);
+
+    this.session.emit('request_render');
+    this.clientServer.notifyAllSessionsRender();
+    this.clientServer.federation.broadcastPresence();
+    this.clientServer.federation.broadcastPresenceAnnounce();
+  }
+
+  async handleChannelInput(buffer) {
+    if (!this.session || !this.socket || this.socket.destroyed) return;
+    const actions = this.parser.parse(buffer);
+
+    for (const action of actions) {
+      if (!this.session) return;
+      await SessionInputHandler.handleAction(
+        action,
+        this.session,
+        this.clientServer,
+        this.authenticatedUser,
+        this.socket,
+        this.db
+      );
+    }
+  }
+
+  cleanup() {
+    for (const timer of this.activeTimeouts) {
+      clearTimeout(timer);
+    }
+    this.activeTimeouts.clear();
+
+    if (this.authenticatedUser && this.session) {
+      const exitingUser = this.authenticatedUser;
+      const session = this.session;
+      this.session = null;
+      this.authenticatedUser = null;
+      try {
+        this.db.updateUserProfile(exitingUser, session.contacts, session.history);
+
+        // SADECE aktif oturum halen bu sokete aitse sil ve offline anonsu yap
+        const currentActiveSession = this.clientServer.sessions.get(exitingUser);
+        if (currentActiveSession === session) {
+          this.clientServer.sessions.delete(exitingUser);
+          this.clientServer.notifyAllSessionsRender();
+          this.clientServer.federation.broadcastUserOffline(exitingUser);
+        }
+      } catch (err) {
+        log.error(I18n.t('SSH_CLEANUP_ERROR', { error: err.message }));
+      }
+    }
+  }
+}

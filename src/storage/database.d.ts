@@ -1,5 +1,7 @@
 import { KeyPairPem } from '../utils/cryptoHelper.d.ts';
 
+export * from './schema.d.ts';
+
 export interface DbMessage {
   id: string;
   sender: string;
