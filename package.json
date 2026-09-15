@@ -1,6 +1,6 @@
 {
   "name": "metrice",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "description": "Zero-dependency post-quantum P2P mesh network with ML-KEM-768, Ed25519 Base32 identities, 3-hop telescopic onion routing, CGNAT rendezvous reverse tunnels, and native SSH-2.",
   "license": "GPL-3.0-only",
   "type": "module",

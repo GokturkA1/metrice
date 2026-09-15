@@ -404,5 +404,5 @@ Klasik Tor tipi soğan yönlendirmesindeki zamanlama ve trafik hacmi analizi (Ti
 
 ## Kabul ve Uyumluluk Kriterleri
 - Sıfır dış npm bağımlılığı kuralı ihlal edilemez (Yalnızca yerleşik çekirdek kütüphaneler: `node:worker_threads`, `node:crypto`, `node:net`, `node:sqlite`, `node:os`, `node:stream`, `node:buffer`).
-- Geriye dönük protokol uyumluluğu korunmalıdır (Mevcut v2.6.0 ağı ile kesintisiz çalışma).
+- Geriye dönük protokol uyumluluğu korunmalıdır (Mevcut v2.7.0 ağı ile kesintisiz çalışma).
 - Tüm fazlar kapsamlı birim ve entegrasyon testleri ile doğrulanmalıdır.
