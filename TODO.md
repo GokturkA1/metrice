@@ -371,37 +371,36 @@ Telekom operatörlerinden ve merkezi baz istasyonlarından bağımsız, akıllı
   - Ters yönde, dış dünyadan veya diğer ağ üyelerinden gelen `.mesh` çağrılarının kullanıcının telefonunun yerleşik arama arayüzünü tetiklemesi (Native Inbound Call).
   - Kullanıcı arayüzünde ek bir mesajlaşma uygulamasına ihtiyaç kalmadan, doğrudan telefonun ahizesinden konuşarak kuantum sonrası şifreli P2P mesh ses tünelini kullanabilme imkanı.
 
-### 2. Telescopic Onion Routing İçin 3-Kademeli Fraktal Dandelion++ (1 ➔ 3 ➔ 9 / 1 ➔ k ➔ k²) ve Bütünleşik Dedikodu Sis Perdesi (Unified Gossip Cover Traffic) Mimarisi
-Klasik Tor tipi soğan yönlendirmesi; tekil doğrusal rotalar üzerinden iletildiğinde küresel pasif dinleyiciler (Global Passive Adversary - GPA / IXP dinleme muslukları), otonom sistem (AS) düzeyinde trafik hacmi analizi, su damgalama (watermarking) ve giriş/çıkış zamanlama korelasyonu (End-to-End Timing Correlation) saldırılarına karşı kırılgan hale gelmektedir.
+### 2. Telescopic Onion Routing İçin 3-Kademeli Fraktal Dandelion++ (1 ➔ 3 ➔ 9 / 1 ➔ k ➔ k²) ve Bütünleşik Dedikodu (Unified Gossip Cover Traffic) Mimarisi
+Literatürde klasik soğan yönlendirmesi (Onion Routing); küresel pasif dinleyiciler (Global Passive Adversary - GPA), otonom sistem ve IXP seviyesinde hat dinlemeleri, paket boyutu analizi ile giriş/çıkış zamanlama korelasyonu (End-to-End Timing Correlation) gibi trafik analizi yöntemlerine karşı incelenmektedir.
 
-Bu zafiyeti kökünden ortadan kaldırmak için; 3-atlamalı kuantum sonrası teleskopik soğan şifrelemesi (NIST FIPS 203 ML-KEM-768 + AES-256-GCM), **1 ➔ 3 ➔ 9 Fraktal Kaskad Difüzyon Modeli** ($k^0 \to k^1 \to k^2$ kaskad matrisi, varsayılan dallanma faktörü $k=3$) ve **Bütünleşik Dedikodu Sis Perdesi** ile tek bir hibrit protokolde birleştirilmiştir:
+Bu faz kapsamında, Fanti ve ark. (2018) tarafından sunulan Dandelion++ yayılım modelinin ve difüzyon ağaçlarının 3-atlamalı kuantum sonrası teleskopik soğan devreleriyle (NIST FIPS 203 ML-KEM-768 + AES-256-GCM) entegre edilmesi planlanmaktadır. Tasarım; doğrusal kök (Stem), çoklu çatallanma (Fluff), genişletilmiş kaskad (Extended Fluff) aşamaları ve arka plan dedikodu (gossip) trafiğinin aynı çerçevede birleştirilmesi hedefine dayanmaktadır.
 
-- **Fraktal Üstel Kaskad Matrisi ($k^0 \to k^1 \to k^2$ / 1 ➔ 3 ➔ 9 Döngüsü):**
-  - **1. Atlama: Doğrusal Kök (Hop 1 - Stem Aşaması / Unicast Stem: $3^0 = 1$ Hat):**
-    - **Kaynak ($A$) -> Guard Düğümü ($B$):**
-    - Paket ilk çıkışında tekil, yönlendirilmiş ve kuantum sonrası şifreli (`ONION_CELL` + ML-KEM-768) bir soket akışı (1 Hat) üzerinden Guard düğümüne iletilir.
-    - Dışarıdan izleyen bir gözlemci için bu trafik, iki uç arasındaki sıradan ve izole bir eşleşmedir; paketin bir sonraki adımda kaç kola ayrılacağı ve nereye yayılacağı kestirilemez.
-    - Guard düğümü $B$, paketin 1. katmanını soyar (`peeledLayers = 1`).
-  - **2. Atlama: 1. Nesil Fluff ve İlk Çatallanma (Hop 2 - Fluff Aşaması / Decoy Multicast: $3^1 = 3$ Hat):**
-    - **Guard Düğümü ($B$) -> Ara Transit Havuzu ($K$, $L$, $M$):**
-    - Guard düğümü $B$, ulaştığı noktada asıl paketi 1 ara transit düğümüne ($K$) iletirken; eşzamanlı olarak topolojiden bağımsız seçilen $(k-1) = 2$ farklı ara düğüme ($L$ ve $M$) 2 adet 1. Nesil sahte/yem hücre (`DECOY_CHAFF` veya `PRESENCE_GOSSIP`) fırlatır.
-    - Ağda aktif hat sayısı $1 \text{ Asıl} + 2 \text{ Yem} = 3 \text{ Hat}$ ($k = 3$) seviyesine çıkar.
-    - 3 paket de birebir aynı sabit 2048 baytlık hücre yapısına ve şifreli görünümüne sahiptir; dış dinleyici için hangisinin asıl hat, hangilerinin yem olduğu matematiksel olarak belirsizdir.
-  - **3. Atlama: 2. Nesil Genişletilmiş Fluff Fraktal Kaskadı (Hop 3 - Extended Fluff Cascade: $3^2 = 9$ Hat!):**
-    - **Ara Transit Düğümleri ($K$, $L$, $M$) -> Çıkış ve Ağ Uçları:**
-    - 2. atlamada 3 ara düğüme varan paketler, ulaştıkları noktalardan $k=3$'er yeni kola kaskad açarak üstel bir yayılım patlaması gerçekleştirir:
-      - **Asıl Paketi Alan Transit Düğüm ($K$):** 2. katmanı soyar (`peeledLayers = 2`). Asıl paketi nihai Çıkış (Exit) düğümüne ($X$) yönlendirirken; paralel olarak 2 bağımsız düğüme ($Y$ ve $Z$) 2 adet sahte kaskad yemi fırlatır ($1 \text{ Asıl} + 2 \text{ Yem} = 3 \text{ Hat}$).
-      - **Yem Paketlerini Alan Ara Düğümler ($L$ ve $M$):** Her biri ulaştığı noktadan $k=3$'er yeni kaskad sahtesi açar ($L \to G, H, J$ ve $M \to P, Q, R$) ($3 + 3 = 6 \text{ Sahte Hat}$).
-      - **Ağ Genelinde Eşzamanlı Difüzyon:** Ağda aynı anda tam $3 + 3 + 3 = 9 \text{ Hat}$ ($k^2 = 9$ paket) difüze olur!
-    - **Matematiksel Dağılım ve Entropi:**
-      - Uçuşan 9 paketten **yalnızca 1'i asıl veridir**, tam **8 tanesi ($k^2 - 1 = 8$) ise sahte kaskad yemidir**.
-      - Saf kaskad gizleme oranı $\frac{k^2 - 1}{k^2} = \frac{8}{9} = \%88.9$'dur; Poisson mikro-gecikmeleri ve dedikodu sisi eklendiğinde **%99.8 Shannon entropisine** ulaşır.
-  - **Teslimat ve Sıfır-Sızıntılı Sönümleme (Zero-Leakage Delivery & Dissolution):**
-    - Hedef / Exit düğümü $X$'e varan asıl paketin 3. ve son katmanı soyulur (`peeledLayers = 3`), uçtan uca veri (Plaintext payload) alıcıya teslim edilir.
-    - Ağın farklı köşelerine dağılan 8 sahte kaskad hücresi son duraklarında hedef bulamayarak Poisson mikro-gecikmeleriyle güvenle sönümlenir (TTL drop) ya da yerel dedikodu havuzuna dahil edilir; ağda hiçbir metaveri veya kimlik izi kalmaz.
+- **Fraktal Kaskad Difüzyon Modeli ($k^0 \to k^1 \to k^2$ / 1 ➔ 3 ➔ 9 Planı):**
+  Dallanma katsayısı $k$ (varsayılan $k=3$) üzerinden 3 atlamalı devre için üstel kaskad yapısı öngörülmektedir:
+  - **1. Atlama: Doğrusal Kök (Hop 1 - Stem Aşaması / Unicast: $k^0 = 1$ Hat):**
+    - Kaynak düğüm ($A$), Guard düğümüne ($B$) tekil bir soket bağlantısı üzerinden sabit boyutlu şifreli bir hücre (`ONION_CELL`) iletir.
+    - Dış gözlemci açısından bu aşama iki uç arasındaki tekil bir akıştır; sonraki adımlardaki çatallanma henüz gerçekleşmemiştir.
+    - Guard düğümü $B$, 1. katman şifresini çözer (`peeledLayers = 1`).
+  - **2. Atlama: 1. Nesil Fluff (Hop 2 - Fluff Aşaması / Decoy Multicast: $k^1 = 3$ Hat):**
+    - Guard düğümü $B$, asıl paketi seçilen bir ara transit düğümüne ($K$) yönlendirirken; paralel olarak $(k-1) = 2$ farklı ara düğüme ($L$ ve $M$) 2 adet 1. Nesil sahte/yem hücre (`DECOY_CHAFF` veya `PRESENCE_GOSSIP`) fırlatır.
+    - Ağda aktif hat sayısı $1 \text{ Asıl} + (k-1) \text{ Yem} = k$ (varsayılan $k=3$ için 3 hat) seviyesine ulaşır.
+    - Yem paketler de asıl paketle aynı sabit ikili çerçeve biçiminde oluşturulur.
+  - **3. Atlama: 2. Nesil Genişletilmiş Fluff Kaskadı (Hop 3 - Extended Fluff: $k^2 = 9$ Hat):**
+    - 2. atlamadaki $k$ adet ara düğüm ($K, L, M$), ulaştıkları noktalardan $k$'ar adet çıkış hattı açarak difüzyonu sürdürür:
+      - Asıl paketi taşıyan transit düğüm ($K$): 2. katmanı çözer (`peeledLayers = 2`). Asıl paketi hedef Çıkış (Exit) düğümüne ($X$) iletirken, paralel olarak $(k-1) = 2$ bağımsız düğüme ($Y$ ve $Z$) 2 adet sahte kaskad hücresi yönlendirir ($1 \text{ Asıl} + 2 \text{ Yem} = 3 \text{ Hat}$).
+      - Yem paketleri alan ara düğümler ($L$ ve $M$): Her biri ulaştığı noktadan $k=3$'er yeni kaskad sahtesi açarak ($L \to G, H, J$ ve $M \to P, Q, R$) difüzyon ağacını genişletir ($3 + 3 = 6 \text{ Sahte Hat}$).
+      - Ağ genelinde toplam $k \times k = k^2$ (varsayılan $k=3$ için 9 hat) aktif hat hedeflenmektedir.
+  - **Matematiksel Dağılım ve Yol Entropisi:**
+    - Üretilen $k^2$ adet paketten $1$'i asıl veriyi taşırken, geriye kalan $k^2 - 1$ tanesi sahte yem hattıdır.
+    - $k=3$ için teorik kaskad yem oranı $\frac{k^2 - 1}{k^2} = \frac{8}{9} \approx \%88.9$'dur.
+    - Yol seçimi belirsizliği, Shannon entropisi formülasyonu $H(X) = -\sum_{i=1}^{n} P(x_i) \log_2 P(x_i)$ uyarınca, eşit olasılıklı $n = k^2$ bağımsız yol dağılımında maksimum entropiye ($H_{\max} = \log_2(k^2)$ bit) yaklaşacak biçimde tasarlanmaktadır.
+  - **Teslimat ve Sönümleme (Dissolution):**
+    - Hedef düğüme ($X$) ulaşan asıl paketin 3. katmanı çözülerek (`peeledLayers = 3`) yük teslim edilir.
+    - Hedefsiz sahte kaskad hücreleri, belirlenen TTL sınırına ulaştıklarında veya yerel dedikodu havuzuna aktarıldıktan sonra sönümlenecek şekilde kurgulanmaktadır.
 
-- **Sabit 2048-Bayt Sıfır-Tahsisli İkili Hücre (Zero-Allocation Buffer - Uniform Binary Frame):**
-  - Tüm paket türleri (Uçtan Uca Özel Mesaj `DIRECT_MESSAGE`, Gerçek Zamanlı Ses Çerçevesi `VOICE_FRAME`, Merkle Dosya Parçası `FILE_CHUNK`, Sahte Yem `DECOY_CHAFF` ve Varlık Anonsu `PRESENCE_ANNOUNCE`); bellek tahsisatı (allocation) ve çöp toplayıcı (GC) baskısı yaratmayan sabit 2048 baytlık ikili tampon (`ONION_CELL`) içine yerleştirilir:
+- **Sabit 2048-Bayt İkili Çerçeveleme (Uniform Binary Cell Framing):**
+  - E2EE doğrudan mesajlar (`DIRECT_MESSAGE`), gerçek zamanlı ses verileri (`VOICE_FRAME`), dosya parçaları (`FILE_CHUNK`), sahte yemler (`DECOY_CHAFF`) ve dedikodu anonsları (`PRESENCE_ANNOUNCE`) için ortak sabit boyutlu ikili tampon (`ONION_CELL`) planlanmaktadır:
     ```text
     +--------------+---------------+-------------------+------------------+
     | Magic (1B)   | Type (1B)     | Payload Len (2B)  | Nonce / CID (16B)|
@@ -411,30 +410,26 @@ Bu zafiyeti kökünden ortadan kaldırmak için; 3-atlamalı kuantum sonrası te
     | GCM IV       | GCM Tag       | Şifreli Gövde     | Toplam: 2048 B   |
     +--------------+---------------+-------------------+------------------+
     ```
-  - Kalan boşluklar deterministik olmayan kriptografik rastgele verilerle (`crypto.randomFillSync`) doldurulur.
-  - Dışarıdan bakan bir düşman için bir hücrenin içeriği, boyutu, entropisi ve bayt dizilimi üzerinden paket türü veya veri boyutu analizi (DPI) yapılması matematiksel olarak imkansızdır.
+  - Yükten arta kalan alan kriptografik rastgele verilerle (`crypto.randomFillSync`) doldurularak, paket boyutu çeşitliliğinden kaynaklanabilecek parmak izi çıkarma riskinin azaltılması amaçlanmaktadır.
 
-- **Bütünleşik Dedikodu Sis Perdesi (Integrated Gossip Smoke Screen / Cover Traffic):**
-  - Ağın rutin varlık anonsları (`PRESENCE_ANNOUNCE`, kullanıcı/düğüm çevrimiçi durumu, itibar puanları), `PEER_EXCHANGE` ve keepalive sinyalleri sıradan açık metin JSON olarak değil, **birebir 2048B `ONION_CELL` formatında ve 1 ➔ 3 ➔ 9 Fraktal Dandelion++ kaskadı ile** periyodik olarak (örneğin 2.5 saniyede bir) ağa enjekte edilir.
-  - Kullanıcılar aktif olarak mesajlaşmasa dahi ağda sürekli olarak 1 ➔ 3 ➔ 9 kaskadıyla akan doğal ve kesintisiz bir dedikodu sisi dolaşır.
-  - Küresel dinleyici, ağda gözlemlediği bir hücrenin özel bir anlık sohbet mi, gerçek zamanlı bir ses çerçevesi mi yoksa arka plan varlık anonsu mu olduğunu asla ayırt edemez (Uniform Cell Entropy).
+- **Bütünleşik Dedikodu Trafiği (Integrated Gossip Cover Traffic):**
+  - Ağdaki periyodik varlık güncellemeleri (`PRESENCE_ANNOUNCE`), eş değişimleri (`PEER_EXCHANGE`) ve keepalive paketleri ayrı bir açık metin kanalı yerine doğrudan bu 2048 baytlık `ONION_CELL` yapısı içerisine kapsüllenerek Dandelion++ kaskadıyla dolaşıma sokulacaktır.
+  - Bu yöntemle, kullanıcı mesajlaşması bulunmayan durumlarda dahi ağda sürekli bir arka plan örtü trafiği (cover traffic) oluşturulması hedeflenmektedir.
 
-- **Dinamik Devre Görevleri ve "Tüm Düğümler Eşittir" İlkesi (Ephemeral Circuit Roles):**
-  - Ağda Tor benzeri statik/merkezi Dizin Otoriteleri (Directory Authorities) veya sabit Guard/Exit sunucu listeleri bulunmaz.
-  - Ağdaki tüm düğüm yetenekleri (`CAP_RELAY`, `EDGE_TRANSIT`, `EDGE_INGRESS`, `EDGE_CLIENT`) eşittir.
-  - Her 3-atlamalı devre kurulurken kaynak düğüm, ağ topolojisinden bağımsız ve anlık olarak rastgele Guard, Transit ve Exit görevleri atar.
-  - Bir düğüm belirli bir devrede Guard rolü üstlenirken, eşzamanlı başka bir devrede Transit veya Exit olabilir; devre ömrü tamamlandığında görev kendiliğinden sona erer. Statik hedef olma, hedeflenmiş sansür veya kalıcı dinleme vektörleri sıfırlanır.
+- **Dinamik Devre Rolleri (Ephemeral Circuit Roles):**
+  - Statik Guard veya Exit dizinleri yerine, her devrede rastgele düğümlerin Guard, Transit veya Exit olarak seçildiği dinamik bir rol modeli öngörülmektedir.
+  - Devre kapandığında geçici görevler sonlanır; böylece düğümlerin ağ üzerinde kalıcı ve öngörülebilir hedefler haline gelmesinin önüne geçilmesi planlanmaktadır.
 
-- **Devlet Düzeyi Tehdit Modeli ve 4 Vektörlü Savunma Matrisi (Nation-State Threat Model / GPA & SIGINT Resilience):**
-  - Küresel Pasif Dinleyiciler (GPA / Omurga IXP muslukları), Aktif Sybil sızmaları ve Zamanlama Su Damgalama (Watermarking) saldırılarına karşı 4 temel analiz vektöründe tam koruma:
-    1. **Topoloji Haritalama:** 1 ➔ 3 ➔ 9 üstel yayılımı, ağ bağlantılarını yapay kaskad hatlarıyla örter; düşmanın mantıksal iletişim grafiğini çıkarmasını engeller.
-    2. **İçerik Tespiti (Kriptanaliz):** NIST FIPS 203 ML-KEM-768 (Kyber) ve AES-256-GCM ile 3 katmanlı teleskopik şifreleme sayesinde içerik sızıntısı %0.00'dır.
-    3. **Akış ve Zamanlama Analizi:** Poisson mikro-gecikmeleri ($e^{-\lambda}$) ve 8 sahte kaskad hattı sayesinde, Guard ve Exit düğümleri dinlense bile giriş ve çıkış paketleri arasındaki korelasyon koparılır.
-    4. **Konum ve Kaynak IP Tespiti (Kimlik İfşası):** Tekil Stem atlaması, dinamik Guard seçimi ve sürekli dedikodu sis perdesi sayesinde ilk atlamadaki Guard düğümü ele geçirilse dahi kaynağın gerçek hedefi ve sonraki 8 hattın hangisinin gerçek olduğu tespit edilemez.
+- **Gözetim Tehdit Modelleri ve Tasarım Hedefleri:**
+  - Tasarım, literatürde tanımlanan temel saldırı sınıflarına karşı hafifletme stratejilerini içerir:
+    - *Topoloji Analizi:* Kaskad biçiminde üretilen sahte bağlantı izleriyle doğrudan gözlemlenebilen rota korelasyonunun zorlaştırılması.
+    - *Kriptanaliz:* NIST FIPS 203 ML-KEM-768 ve AES-256-GCM ile her atlamada bağımsız anahtar katmanları.
+    - *Zamanlama Analizi:* Poisson dağılımına ($f(t) = \lambda e^{-\lambda t}$) dayalı mikro-gecikmeler (jitter) eklenerek paket varış süreleri arasındaki doğrusal korelasyonun zayıflatılması.
+    - *Kaynak Tespiti:* İlk atlamanın tekil Stem olarak ilerlemesi ve örtü trafiğiyle birleşmesi sayesinde çıkış noktasından kaynağa geriye dönük iz sürmenin zorlaştırılması.
 
-- **Anizotropik Poisson Mikro-Gecikmeleri ve Arıza Güvenlikli Zamanlayıcılar (Poisson Delays & Fail-safe Stem Timers):**
-  - Her atlamada Poisson dağılımına dayalı rastgele mikro-gecikmeler ($2-10 \text{ ms}$ jitter) eklenerek paket çıkış zamanlamaları arasındaki deterministik ilişki bozulur.
-  - Stem veya Fluff aşamasındaki düğümlerden biri çöktüğünde veya yanıt vermediğinde yerel zamanlayıcılar (`stem-timer`, `fluff-timeout`) devreye girerek devreyi alternatif düğümler üzerinden onarır ve mesaj kaybını önler.
+- **Zamanlama ve Arıza Yönetimi (Poisson Delays & Stem Timers):**
+  - Deterministik paket aralıklarını kırmak üzere her atlamada rastgele Poisson bekleme süreleri planlanmaktadır.
+  - Stem veya Fluff aşamalarında yanıt vermeyen veya bağlantısı kesilen ara düğümler için zamanlayıcılar (`stem-timer`) tanımlanarak paketin alternatif rotalar üzerinden iletimine devam etmesi sağlanacaktır.
 
 ---
 
