@@ -3,7 +3,6 @@ import EventEmitter from 'node:events';
 import { Logger } from '../utils/logger.js';
 import { SshPacketReader, SshPacketWriter } from '../utils/sshPacket.js';
 import { CryptoHelper } from '../utils/cryptoHelper.js';
-import { AddressHelper } from '../utils/addressHelper.js';
 import { InputParser } from '../utils/inputParser.js';
 import { TerminalSession } from './terminalSession.js';
 import { SessionInputHandler } from './sessionInputHandler.js';

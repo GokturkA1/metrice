@@ -1,10 +1,8 @@
 import net from 'node:net';
-import dns from 'node:dns/promises';
 import EventEmitter from 'node:events';
 import { CONFIG } from '../config/index.js';
 import { Logger } from '../utils/logger.js';
 import { AddressHelper } from '../utils/addressHelper.js';
-import { CryptoHelper } from '../utils/cryptoHelper.js';
 import { I18n } from '../locales/i18n.js';
 import { OnionRouter } from './onionRouter.js';
 import { ProxyProtocolParser } from '../utils/proxyProtocol.js';
