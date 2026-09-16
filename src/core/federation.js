@@ -198,7 +198,9 @@ export class FederationEngine extends EventEmitter {
         });
 
         secureChannel.on('onion_cell', (cell) => {
-          this.onionRouter.handleOnionCell(cell, secureChannel);
+          this.onionRouter.handleOnionCell(cell, secureChannel).catch((err) => {
+            log.error(I18n.t('ONION_CELL_ASYNC_ERR', { error: err.message }));
+          });
         });
 
         secureChannel.on('observed_address', (addr, peer) => {
@@ -230,13 +232,40 @@ export class FederationEngine extends EventEmitter {
   }
 
   startWorkers() {
-    this.outboxInterval = setInterval(() => this.processOutbox(), 5000);
+    this.isProcessingOutbox = false;
+    const scheduleOutbox = async () => {
+      if (this.isClosed) return;
+      if (this.isProcessingOutbox) {
+        this.outboxTimeout = setTimeout(scheduleOutbox, 2000);
+        return;
+      }
+      this.isProcessingOutbox = true;
+      try {
+        await this.processOutbox();
+      } catch (err) {
+        log.error(I18n.t('FED_OUTBOX_EXCEPTION', { error: err.message }));
+      } finally {
+        this.isProcessingOutbox = false;
+        if (!this.isClosed) {
+          this.outboxTimeout = setTimeout(scheduleOutbox, 5000);
+        }
+      }
+    };
+    this.outboxTimeout = setTimeout(scheduleOutbox, 5000);
 
     const scheduleGossip = () => {
+      if (this.isClosed) return;
       const jitter = 12000 + Math.floor(Math.random() * 6000);
       this.gossipTimeout = setTimeout(async () => {
-        await this.performRandomGossip();
-        scheduleGossip();
+        try {
+          await this.performRandomGossip();
+        } catch (err) {
+          log.error(I18n.t('FED_GOSSIP_WORKER_EXCEPTION', { error: err.message }));
+        } finally {
+          if (!this.isClosed) {
+            scheduleGossip();
+          }
+        }
       }, jitter);
     };
     scheduleGossip();
@@ -351,7 +380,9 @@ export class FederationEngine extends EventEmitter {
       });
 
       secureChannel.on('onion_cell', (cell) => {
-        this.onionRouter.handleOnionCell(cell, secureChannel);
+        this.onionRouter.handleOnionCell(cell, secureChannel).catch((err) => {
+          log.error(I18n.t('ONION_CELL_ASYNC_ERR', { error: err.message }));
+        });
       });
 
       secureChannel.on('observed_address', (addr, peer) => {
@@ -838,6 +869,7 @@ export class FederationEngine extends EventEmitter {
   close() {
     this.isClosed = true;
     if (this.outboxInterval) clearInterval(this.outboxInterval);
+    if (this.outboxTimeout) clearTimeout(this.outboxTimeout);
     if (this.presenceInterval) clearInterval(this.presenceInterval);
     if (this.gossipTimeout) clearTimeout(this.gossipTimeout);
     if (this.rendezvousHeartbeatInterval) clearInterval(this.rendezvousHeartbeatInterval);

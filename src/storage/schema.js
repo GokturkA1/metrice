@@ -81,6 +81,7 @@ export function initSchema(db, filepath) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_circuits_cid ON active_circuits(circuit_id);
+    CREATE INDEX IF NOT EXISTS idx_circuits_created ON active_circuits(created_at);
     CREATE INDEX IF NOT EXISTS idx_routing_seen ON routing_table(last_seen);
   `);
 

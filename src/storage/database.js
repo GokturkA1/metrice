@@ -564,4 +564,10 @@ export class Database {
       stmt.run(circuitId);
     }
   }
+
+  deleteExpiredCircuits(maxAgeMs = 600000) {
+    const cutoff = Date.now() - maxAgeMs;
+    const stmt = this.db.prepare('DELETE FROM active_circuits WHERE created_at < ?');
+    return stmt.run(cutoff);
+  }
 }

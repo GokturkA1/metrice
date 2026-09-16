@@ -81,6 +81,10 @@ export default {
   SSH_PUBKEY_READ_ERROR: 'Ed25519 açık anahtar okuma hatası: {error}',
   SSH_UNREGISTERED_PUBKEY_WARN: '[GÜVENLİK] Kullanıcının sunduğu Ed25519 anahtarı bu hesapta kayıtlı değil: {user}',
   SSH_VAULT_SEED_ERROR: 'Vault Seed türetim hatası: {error}',
+  SSH_AUTH_CLEARTEXT_REJECTED: 'Şifresiz (açık metin) SSH kimlik doğrulama girişimi reddedildi',
+  SSH_CHANNEL_PREAUTH_REJECTED: 'Kimlik doğrulama öncesinde SSH kanal açma girişimi reddedildi',
+  SSH_INVALID_USERNAME_FORMAT: 'Geçersiz SSH kullanıcı adı biçimi reddedildi: {username}',
+  SSH_AUTH_EXCEPTION: 'SSH kimlik doğrulama istisnası: {error}',
 
   // Post-Quantum & Kripto Hata Bildirimleri
   CRYPTO_PQ_CRITICAL_BANNER: `
@@ -277,15 +281,21 @@ export default {
   ONION_CELL_EXIT_REACHED: 'Onion hücresi çıkış noktasına ulaştı. Hedef: {node}',
   ONION_MSG_DELIVERED_TUNNEL: 'Onion mesajı tersine tünel üzerinden teslim ediliyor -> NodeID: {node}',
   ONION_CELL_UNDELIVERABLE: 'Onion hücresi teslim edilemedi: {node} için aktif tersine tünel bulunamadı',
+  ONION_CELL_ASYNC_ERR: 'Onion hücresi asenkron işleme hatası: {error}',
+  ONION_INVALID_FORWARD_ADDR: 'Geçersiz iletim adresi biçimi',
+  ONION_INVALID_FORWARD_PORT: 'Geçersiz iletim port aralığı',
 
   // Federation & AutoNAT Ek Bildirimleri
   FED_ROLE_UPDATED: 'Düğüm rolü güncellendi -> {role}',
   FED_PROXY_HANDSHAKE_ERR: 'Proxy Protocol el sıkışma hatası: {error}',
   FED_AUTONAT_SSRF_BLOCKED: 'AutoNAT SSRF Koruması: Özel/Loopback ağa dialback engellendi: {ip}',
   FED_AUTONAT_INBOUND_REQUEST: 'AutoNAT: Inbound Dialback talebi alındı -> {ip}:{port}',
+  FED_AUTONAT_CAPACITY_REACHED: 'AutoNAT: Aktif dialback kapasitesine ulaşıldı (en fazla {max} eşzamanlı istek).',
+  FED_AUTONAT_RATE_LIMITED: 'AutoNAT: İstek sınırlandırması aşıldı (hız sınırı): {ip}',
   FED_RDV_NODE_ID_MISMATCH: 'Rendezvous NodeID eşleşmedi: Beklenen {expected}, Türetilen: {derived}',
   FED_RDV_INVALID_SIG: 'Rendezvous imza geçersiz: {node}',
   FED_RDV_CAPACITY_REACHED: 'Rendezvous tünel kapasitesi aşıldı ({current}/{max}), {node} reddedildi',
+  FED_RDV_IP_LIMIT_REACHED: 'Rendezvous IP sınırı aşıldı: {ip} azami {max} aktif tünel limitine ulaştı',
   FED_RDV_TUNNEL_CLOSED: 'Rendezvous tüneli kapandı: {node}',
   FED_RDV_TUNNEL_BOUND: 'Rendezvous tüneli başarıyla bağlandı: {node} (Aktif tüneller: {current}/64)',
   FED_PRESENCE_ANNOUNCE_SKEW: 'Varlık anonsu zaman aşımı ({node}): Saat farkı 24 saati aştı ({seconds}s)',
@@ -309,6 +319,11 @@ export default {
   FED_USER_OFFLINE_BROADCAST: 'Kullanıcı çevrimdışı anonsu dağıtıldı: {user}',
   FED_STALE_OFFLINE_DROPPED: 'Eski kullanıcı çevrimdışı paketi yok sayıldı (taze oturum korunuyor): {user}',
   FED_BILATERAL_SYNC: 'Bilateral varlık senkronizasyonu yapıldı: {node}',
+  FED_OUTBOX_EXCEPTION: 'Giden kutusu (Outbox) kuyruk işleme hatası: {error}',
+  FED_GOSSIP_WORKER_EXCEPTION: 'Dedikodu (Gossip) iş parçacığı hatası: {error}',
+  FED_BUFFER_OVERFLOW_DOS: 'Tampon taşması / DoS koruması tetiklendi (satır sonu olmadan > {max} bayt)',
+  FED_KEX_UNEXPECTED_INIT: 'Başlatıcı tarafında beklenmeyen HANDSHAKE_INIT paketi alındı',
+  FED_KEX_UNEXPECTED_REPLY: 'Yanıtlayıcı tarafında beklenmeyen HANDSHAKE_REPLY paketi alındı',
 
   E2EE_ENCRYPTED_PLACEHOLDER: '🔒 [ŞİFRELİ METİN]'
 };

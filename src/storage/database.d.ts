@@ -48,4 +48,5 @@ export class Database {
   getConversation(userA: string, userB: string, limit?: number): DbMessage[];
   getChannelMessages(channel: string, limit?: number): DbMessage[];
   clearConversationForUser(userAddress: string, targetAddress: string): void;
+  deleteExpiredCircuits(maxAgeMs?: number): any;
 }

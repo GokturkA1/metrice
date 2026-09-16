@@ -2,6 +2,8 @@
 import { StringDecoder } from 'node:string_decoder';
 
 export class InputParser {
+  static MAX_PASTE_BUFFER_SIZE = 65536; // 64 KB
+
   constructor() {
     this.decoder = new StringDecoder('utf8');
     this.escapeState = 0;
@@ -114,7 +116,9 @@ export class InputParser {
       }
 
       if (this.isPasteMode) {
-        this.pasteBuffer += char;
+        if (this.pasteBuffer.length < InputParser.MAX_PASTE_BUFFER_SIZE) {
+          this.pasteBuffer += char;
+        }
         continue;
       }
 

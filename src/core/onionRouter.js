@@ -420,6 +420,18 @@ export class OnionRouter extends EventEmitter {
 
     // 1. Ara Atlama: Sonraki Relay veya Transit Düğüme İlet
     if (parsed.forwardTo && parsed.cell) {
+      if (typeof parsed.forwardTo !== 'string' || !parsed.forwardTo.includes(':')) {
+        log.warn(I18n.t('ONION_CELL_FORWARD_ERR', { forwardTo: String(parsed.forwardTo), error: I18n.t('ONION_INVALID_FORWARD_ADDR') }));
+        return;
+      }
+
+      const [nextHost, nextPortStr] = parsed.forwardTo.split(':');
+      const nextPort = parseInt(nextPortStr, 10);
+      if (!nextHost || isNaN(nextPort) || nextPort < 1 || nextPort > 65535) {
+        log.warn(I18n.t('ONION_CELL_FORWARD_ERR', { forwardTo: parsed.forwardTo, error: I18n.t('ONION_INVALID_FORWARD_PORT') }));
+        return;
+      }
+
       const paddedObj = OnionRouter.getPaddedCellObject(parsed.cell);
 
       // Transit Köprüleme: forwardTo açık bir tersine tünelimiz veya bağlı rölemiz mi?
@@ -458,9 +470,6 @@ export class OnionRouter extends EventEmitter {
       }
 
       // Standart TCP iletimi
-      const [nextHost, nextPortStr] = parsed.forwardTo.split(':');
-      const nextPort = parseInt(nextPortStr, 10);
-
       try {
         const nextChannel = await this.federation.getOrCreateSecureChannel(nextHost, nextPort);
         if (nextChannel && typeof nextChannel.writePayload === 'function') {
@@ -509,6 +518,9 @@ export class OnionRouter extends EventEmitter {
       if (now - c.createdAt > this.circuitTtl) {
         this.clientCircuits.delete(id);
       }
+    }
+    if (this.db && typeof this.db.deleteExpiredCircuits === 'function') {
+      this.db.deleteExpiredCircuits(this.circuitTtl);
     }
   }
 }

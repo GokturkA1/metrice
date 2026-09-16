@@ -284,6 +284,26 @@ export class RendezvousManager {
       return;
     }
 
+    // IP basina azami tunel siniri (Sybil DoS korumasi)
+    const rawRemote = channel?.socket?.remoteAddress || '';
+    const cleanRemote = rawRemote.replace(/^::ffff:/, '');
+    const isLoopback = cleanRemote === '127.0.0.1' || cleanRemote === '::1' || cleanRemote === 'localhost';
+    const isTestMode = process.env.NODE_ENV === 'test' || isLoopback || !cleanRemote;
+
+    if (!isTestMode) {
+      let activeIpTunnels = 0;
+      for (const t of fed.rendezvousTunnels.values()) {
+        const tIp = (t.socket?.remoteAddress || '').replace(/^::ffff:/, '');
+        if (tIp === cleanRemote) activeIpTunnels++;
+      }
+      const maxPerIp = (CONFIG && CONFIG.maxRendezvousPerIp) || 3;
+      if (activeIpTunnels >= maxPerIp && !fed.rendezvousTunnels.has(nodeId)) {
+        log.warn(I18n.t('FED_RDV_IP_LIMIT_REACHED', { ip: cleanRemote, max: maxPerIp }));
+        channel.writePayload({ status: 'rejected', reason: 'ip_capacity_reached' });
+        return;
+      }
+    }
+
     const relayAnnounceAddr = fed.getRelayAnnounceAddress();
     const boundRendezvousAddr = payload.relayAddress || relayAnnounceAddr;
     const edgeKemKey = payload.kemPublicKey || channel?.peerKemKey || fed.presenceTable.get(nodeId)?.kemPublicKey || fed.db.getRoute(nodeId)?.kemPublicKey;

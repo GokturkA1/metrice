@@ -5,9 +5,10 @@ import { ProtocolPacket } from '../types/protocol.d.ts';
 
 export class NonceTracker {
   ttlMs: number;
+  maxCapacity: number;
   nonces: Map<string, number>;
 
-  constructor(ttlMs?: number);
+  constructor(ttlMs?: number, maxCapacity?: number);
 
   track(nonce: string, remoteIp?: string): boolean;
   cleanup(now: number): void;
@@ -15,9 +16,10 @@ export class NonceTracker {
 
 export class MessageTtlCache {
   ttlMs: number;
+  maxCapacity: number;
   cache: Map<string, number>;
 
-  constructor(ttlMs?: number);
+  constructor(ttlMs?: number, maxCapacity?: number);
 
   has(id: string): boolean;
   add(id: string): void;
@@ -31,6 +33,7 @@ export class SecureChannel extends EventEmitter {
   db: any;
   nonceTracker: NonceTracker;
   isReady: boolean;
+  myNonce: string | null;
   peerNodeAddress: string | null;
   peerIdentityKey: string | null;
   peerKemKey: string | null;

@@ -61,103 +61,117 @@ export class SshKexHandler {
   }
 
   static handleKexInitMessage(conn, reader) {
-    const clientBlob = reader.readBuffer();
+    try {
+      const clientBlob = reader.readBuffer();
 
-    let serverBlob = null;
-    let sharedSecretK = null;
+      let serverBlob = null;
+      let sharedSecretK = null;
 
-    if (conn.selectedKex === 'mlkem768x25519-sha256') {
-      const clientKemPubRaw = clientBlob.subarray(0, 1184);
-      const clientX25519PubRaw = clientBlob.subarray(1184, 1216);
+      if (conn.selectedKex === 'mlkem768x25519-sha256') {
+        if (!clientBlob || clientBlob.length !== 1216) {
+          throw new Error(`Invalid ML-KEM-768/X25519 client blob length: ${clientBlob ? clientBlob.length : 0}`);
+        }
+        const clientKemPubRaw = clientBlob.subarray(0, 1184);
+        const clientX25519PubRaw = clientBlob.subarray(1184, 1216);
 
-      const serverX25519 = crypto.generateKeyPairSync('x25519');
-      const serverX25519PubRaw = serverX25519.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
+        const serverX25519 = crypto.generateKeyPairSync('x25519');
+        const serverX25519PubRaw = serverX25519.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
 
-      const clientX25519PubKeyObj = crypto.createPublicKey({
-        key: Buffer.concat([Buffer.from('302a300506032b656e032100', 'hex'), clientX25519PubRaw]),
-        format: 'der',
-        type: 'spki'
-      });
-      const kCl = crypto.diffieHellman({
-        privateKey: serverX25519.privateKey,
-        publicKey: clientX25519PubKeyObj
-      });
+        const clientX25519PubKeyObj = crypto.createPublicKey({
+          key: Buffer.concat([Buffer.from('302a300506032b656e032100', 'hex'), clientX25519PubRaw]),
+          format: 'der',
+          type: 'spki'
+        });
+        const kCl = crypto.diffieHellman({
+          privateKey: serverX25519.privateKey,
+          publicKey: clientX25519PubKeyObj
+        });
 
-      if (!SshKexHandler.kemSpkiPrefix) {
-        const dummyKey = crypto.generateKeyPairSync('ml-kem-768');
-        const dummyDer = dummyKey.publicKey.export({ type: 'spki', format: 'der' });
-        SshKexHandler.kemSpkiPrefix = dummyDer.subarray(0, dummyDer.length - 1184);
+        if (!SshKexHandler.kemSpkiPrefix) {
+          const dummyKey = crypto.generateKeyPairSync('ml-kem-768');
+          const dummyDer = dummyKey.publicKey.export({ type: 'spki', format: 'der' });
+          SshKexHandler.kemSpkiPrefix = dummyDer.subarray(0, dummyDer.length - 1184);
+        }
+
+        const clientKemPubKeyObj = crypto.createPublicKey({
+          key: Buffer.concat([SshKexHandler.kemSpkiPrefix, clientKemPubRaw]),
+          format: 'der',
+          type: 'spki'
+        });
+
+        const { sharedKey: kPq, ciphertext: sCt2 } = crypto.encapsulate(clientKemPubKeyObj);
+        serverBlob = Buffer.concat([sCt2, serverX25519PubRaw]);
+        sharedSecretK = crypto.createHash('sha256').update(kPq).update(kCl).digest();
+      } else {
+        if (!clientBlob || clientBlob.length !== 32) {
+          throw new Error(`Invalid Curve25519 client blob length: ${clientBlob ? clientBlob.length : 0}`);
+        }
+        const serverEcdh = crypto.generateKeyPairSync('x25519');
+        serverBlob = serverEcdh.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
+
+        const clientPubKeyObj = crypto.createPublicKey({
+          key: Buffer.concat([Buffer.from('302a300506032b656e032100', 'hex'), clientBlob]),
+          format: 'der',
+          type: 'spki'
+        });
+
+        sharedSecretK = crypto.diffieHellman({
+          privateKey: serverEcdh.privateKey,
+          publicKey: clientPubKeyObj
+        });
       }
 
-      const clientKemPubKeyObj = crypto.createPublicKey({
-        key: Buffer.concat([SshKexHandler.kemSpkiPrefix, clientKemPubRaw]),
-        format: 'der',
-        type: 'spki'
-      });
+      conn.sharedSecret = sharedSecretK;
 
-      const { sharedKey: kPq, ciphertext: sCt2 } = crypto.encapsulate(clientKemPubKeyObj);
-      serverBlob = Buffer.concat([sCt2, serverX25519PubRaw]);
-      sharedSecretK = crypto.createHash('sha256').update(kPq).update(kCl).digest();
-    } else {
-      const serverEcdh = crypto.generateKeyPairSync('x25519');
-      serverBlob = serverEcdh.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
+      const hostKeyBlob = new SshPacketWriter();
+      hostKeyBlob.writeString('ssh-ed25519');
+      hostKeyBlob.writeBuffer(conn.hostKey.rawEd25519Pub);
+      const hostKeyBuffer = hostKeyBlob.toBuffer();
 
-      const clientPubKeyObj = crypto.createPublicKey({
-        key: Buffer.concat([Buffer.from('302a300506032b656e032100', 'hex'), clientBlob]),
-        format: 'der',
-        type: 'spki'
-      });
+      const hashWriter = new SshPacketWriter();
+      hashWriter.writeString(conn.clientVersion);
+      hashWriter.writeString(conn.serverVersion);
+      hashWriter.writeBuffer(conn.clientKexPayload);
+      hashWriter.writeBuffer(conn.serverKexPayload);
+      hashWriter.writeBuffer(hostKeyBuffer);
+      hashWriter.writeBuffer(clientBlob);
+      hashWriter.writeBuffer(serverBlob);
 
-      sharedSecretK = crypto.diffieHellman({
-        privateKey: serverEcdh.privateKey,
-        publicKey: clientPubKeyObj
-      });
+      if (conn.selectedKex === 'mlkem768x25519-sha256') {
+        hashWriter.writeBuffer(conn.sharedSecret);
+      } else {
+        hashWriter.writeMpint(conn.sharedSecret);
+      }
+
+      conn.exchangeHash = crypto.createHash('sha256').update(hashWriter.toBuffer()).digest();
+      if (!conn.sessionIdentifier) {
+        conn.sessionIdentifier = conn.exchangeHash;
+      }
+
+      const sigRaw = crypto.sign(null, conn.exchangeHash, conn.hostKey.privateKey);
+      const sigBlob = new SshPacketWriter();
+      sigBlob.writeString('ssh-ed25519');
+      sigBlob.writeBuffer(sigRaw);
+
+      const reply = new SshPacketWriter();
+      reply.writeByte(SSH_MSG.KEX_ECDH_REPLY);
+      reply.writeBuffer(hostKeyBuffer);
+      reply.writeBuffer(serverBlob);
+      reply.writeBuffer(sigBlob.toBuffer());
+      conn.sendPacket(reply.toBuffer());
+
+      const newKeys = new SshPacketWriter();
+      newKeys.writeByte(SSH_MSG.NEWKEYS);
+      conn.sendPacket(newKeys.toBuffer());
+
+      this.prepareKeys(conn);
+      conn.isEncryptedOut = true;
+    } catch {
+      if (typeof conn.destroySocket === 'function') {
+        conn.destroySocket(true);
+      } else if (conn.socket && typeof conn.socket.destroy === 'function') {
+        conn.socket.destroy();
+      }
     }
-
-    conn.sharedSecret = sharedSecretK;
-
-    const hostKeyBlob = new SshPacketWriter();
-    hostKeyBlob.writeString('ssh-ed25519');
-    hostKeyBlob.writeBuffer(conn.hostKey.rawEd25519Pub);
-    const hostKeyBuffer = hostKeyBlob.toBuffer();
-
-    const hashWriter = new SshPacketWriter();
-    hashWriter.writeString(conn.clientVersion);
-    hashWriter.writeString(conn.serverVersion);
-    hashWriter.writeBuffer(conn.clientKexPayload);
-    hashWriter.writeBuffer(conn.serverKexPayload);
-    hashWriter.writeBuffer(hostKeyBuffer);
-    hashWriter.writeBuffer(clientBlob);
-    hashWriter.writeBuffer(serverBlob);
-
-    if (conn.selectedKex === 'mlkem768x25519-sha256') {
-      hashWriter.writeBuffer(conn.sharedSecret);
-    } else {
-      hashWriter.writeMpint(conn.sharedSecret);
-    }
-
-    conn.exchangeHash = crypto.createHash('sha256').update(hashWriter.toBuffer()).digest();
-    if (!conn.sessionIdentifier) {
-      conn.sessionIdentifier = conn.exchangeHash;
-    }
-
-    const sigRaw = crypto.sign(null, conn.exchangeHash, conn.hostKey.privateKey);
-    const sigBlob = new SshPacketWriter();
-    sigBlob.writeString('ssh-ed25519');
-    sigBlob.writeBuffer(sigRaw);
-
-    const reply = new SshPacketWriter();
-    reply.writeByte(SSH_MSG.KEX_ECDH_REPLY);
-    reply.writeBuffer(hostKeyBuffer);
-    reply.writeBuffer(serverBlob);
-    reply.writeBuffer(sigBlob.toBuffer());
-    conn.sendPacket(reply.toBuffer());
-
-    const newKeys = new SshPacketWriter();
-    newKeys.writeByte(SSH_MSG.NEWKEYS);
-    conn.sendPacket(newKeys.toBuffer());
-
-    this.prepareKeys(conn);
-    conn.isEncryptedOut = true;
   }
 }

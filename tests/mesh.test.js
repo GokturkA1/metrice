@@ -10,13 +10,18 @@ import { CryptoHelper } from '../src/utils/cryptoHelper.js';
 import { AddressHelper } from '../src/utils/addressHelper.js';
 import { Database } from '../src/storage/database.js';
 import { FederationEngine, SecureChannel } from '../src/core/federation.js';
+import { NonceTracker, MessageTtlCache } from '../src/core/secureChannel.js';
 import { PeerManager } from '../src/core/peerManager.js';
 import { OnionRouter, UNIFORM_CELL_SIZE } from '../src/core/onionRouter.js';
 import { ClientServer } from '../src/core/clientServer.js';
 import { TerminalSession } from '../src/core/terminalSession.js';
 import { CONFIG } from '../src/config/index.js';
 import { ProxyProtocolParser } from '../src/utils/proxyProtocol.js';
-import { SshClientConnection } from '../src/core/sshServer.js';
+import { SshClientConnection, SSH_MSG } from '../src/core/sshServer.js';
+import { InputParser } from '../src/utils/inputParser.js';
+import { SshKexHandler } from '../src/core/sshKexHandler.js';
+import { SshAuthHandler } from '../src/core/sshAuthHandler.js';
+import { SshPacketWriter, SshPacketReader } from '../src/utils/sshPacket.js';
 
 // ==========================================
 // TEST KONFİGÜRASYONU VE YARDIMCILAR
@@ -3428,6 +3433,374 @@ async function runV2TestSuite() {
     const test768Ok = inPoolBeforeReg && evictedOnEdgeReg && edgeReAddBlocked && gossipDidNotResetFailure && sampleExcludesFailed && gossipAdded && evictedImmediatelyOnGossipFailure;
     record('7.68 [REVİZYON 38 / v2.5.10] Rendezvous Edge Client IP İzolasyonu, Dedikodu Karantinası ve Hızlı Hata Tahliyesi', !!test768Ok,
       `InPool: ${inPoolBeforeReg}, Evicted: ${evictedOnEdgeReg}, Blocked: ${edgeReAddBlocked}, GossipImmune: ${gossipDidNotResetFailure}, SampleClean: ${sampleExcludesFailed}, QuickEvict: ${evictedImmediatelyOnGossipFailure}`);
+
+    // Test 7.69: [REVİZYON 39 / v2.7.1] SecureChannel KEX Durum Makinesi Nonce Replay ve Rol Tersinme Koruması
+    let initReplayBlocked = false;
+    let replyMismatchBlocked = false;
+    let responderReplyBlocked = false;
+    let nonceCapOk = false;
+
+    // 1. Initiator receives unexpected HANDSHAKE_INIT
+    const mockSocketInit = new EventEmitter();
+    let initSocketDestroyed = false;
+    mockSocketInit.destroy = () => { initSocketDestroyed = true; };
+    mockSocketInit.write = () => {};
+    const initChan = new SecureChannel(mockSocketInit, true, {
+      identityKeyPair: CryptoHelper.generateIdentityKeyPair(),
+      kemKeyPair: CryptoHelper.generateKemKeyPair(),
+      nodeAddress: 'localhost:8001',
+      nodeId: 'testnode11111111'
+    }, null, new NonceTracker());
+
+    await initChan.handleFrame({
+      type: 'HANDSHAKE_INIT',
+      nodeAddress: 'localhost:8002',
+      identityPublicKey: 'dummy',
+      kemPublicKey: 'dummy',
+      nonce: '1234567812345678'
+    });
+    initReplayBlocked = initSocketDestroyed;
+
+    // 2. Initiator receives HANDSHAKE_REPLY with wrong nonce
+    let replySocketDestroyed = false;
+    const mockSocketReply = new EventEmitter();
+    mockSocketReply.destroy = () => { replySocketDestroyed = true; };
+    mockSocketReply.write = () => {};
+    const replyChan = new SecureChannel(mockSocketReply, true, {
+      identityKeyPair: CryptoHelper.generateIdentityKeyPair(),
+      kemKeyPair: CryptoHelper.generateKemKeyPair(),
+      nodeAddress: 'localhost:8001',
+      nodeId: 'testnode11111111'
+    }, null, new NonceTracker());
+    replyChan.myNonce = 'correctnonce1234';
+
+    await replyChan.handleFrame({
+      type: 'HANDSHAKE_REPLY',
+      nodeAddress: 'localhost:8002',
+      identityPublicKey: 'dummy',
+      kemPublicKey: 'dummy',
+      encapsulatedKey: 'dummy',
+      nonce: 'wrongnonce5678'
+    });
+    replyMismatchBlocked = replySocketDestroyed;
+
+    // 3. Responder receives unexpected HANDSHAKE_REPLY
+    let respSocketDestroyed = false;
+    const mockSocketResp = new EventEmitter();
+    mockSocketResp.destroy = () => { respSocketDestroyed = true; };
+    mockSocketResp.write = () => {};
+    const respChan = new SecureChannel(mockSocketResp, false, {
+      identityKeyPair: CryptoHelper.generateIdentityKeyPair(),
+      kemKeyPair: CryptoHelper.generateKemKeyPair(),
+      nodeAddress: 'localhost:8001',
+      nodeId: 'testnode11111111'
+    }, null, new NonceTracker());
+
+    await respChan.handleFrame({
+      type: 'HANDSHAKE_REPLY',
+      nodeAddress: 'localhost:8002',
+      identityPublicKey: 'dummy',
+      kemPublicKey: 'dummy',
+      encapsulatedKey: 'dummy',
+      nonce: 'randomnonce1234'
+    });
+    responderReplyBlocked = respSocketDestroyed;
+
+    // 4. NonceTracker & MessageTtlCache Capacity
+    const nt = new NonceTracker(60000, 50);
+    for (let i = 0; i < 100; i++) {
+      nt.track(`nonce_${i}`, '1.2.3.4');
+    }
+    const mtc = new MessageTtlCache(60000, 30);
+    for (let i = 0; i < 100; i++) {
+      mtc.add(`msg_${i}`);
+    }
+    nonceCapOk = nt.nonces.size <= 50 && mtc.cache.size <= 30;
+
+    const test769Ok = initReplayBlocked && replyMismatchBlocked && responderReplyBlocked && nonceCapOk;
+    record('7.69 [REVİZYON 39 / v2.7.1] SecureChannel KEX Durum Makinesi Nonce Replay ve Rol Tersinme Koruması', !!test769Ok,
+      `InitReplayBlocked: ${initReplayBlocked}, ReplyMismatchBlocked: ${replyMismatchBlocked}, RespReplyBlocked: ${responderReplyBlocked}, NonceCap: ${nonceCapOk}`);
+
+    // Test 7.70: [REVİZYON 40 / v2.7.1] ROUTE_UPDATE KEM Anahtarı Manipülasyonu ve MitM Koruması
+    const db770Path = path.join(rootDir, 'v2_test_r40_kem.db');
+    if (fs.existsSync(db770Path)) fs.unlinkSync(db770Path);
+    const mockDb770 = new Database(db770Path);
+    const fed770 = new FederationEngine(mockDb770, new PeerManager());
+
+    const relayKeys770 = CryptoHelper.generateIdentityKeyPair();
+    const relayKem770 = CryptoHelper.generateKemKeyPair();
+    const relayNodeId770 = CryptoHelper.deriveNodeId(relayKeys770.publicKey);
+    const edgeKeys770 = CryptoHelper.generateIdentityKeyPair();
+    const edgeKem770 = CryptoHelper.generateKemKeyPair();
+    const edgeNodeId770 = CryptoHelper.deriveNodeId(edgeKeys770.publicKey);
+
+    // Legitimate route update
+    const ts770 = Date.now();
+    const legitimateDataToSign = JSON.stringify({
+      nodeId: edgeNodeId770,
+      relayNodeId: relayNodeId770,
+      rendezvousNodes: ['198.51.100.10:8001'],
+      kemPublicKey: edgeKem770.publicKey,
+      relayKemPublicKey: relayKem770.publicKey,
+      relayAddress: '198.51.100.10:8001',
+      timestamp: ts770
+    });
+    const sig770 = CryptoHelper.sign(legitimateDataToSign, relayKeys770.privateKey);
+
+    // Attacker tampers with kemPublicKey in the payload without modifying sig
+    const attackerKem770 = CryptoHelper.generateKemKeyPair();
+    const tamperedPayload = {
+      type: 'ROUTE_UPDATE',
+      nodeId: edgeNodeId770,
+      role: 'EDGE',
+      rendezvousNodes: ['198.51.100.10:8001'],
+      kemPublicKey: attackerKem770.publicKey,
+      identityPublicKey: edgeKeys770.publicKey,
+      relayNodeId: relayNodeId770,
+      relayAddress: '198.51.100.10:8001',
+      relayKemPublicKey: relayKem770.publicKey,
+      relayIdentityPublicKey: relayKeys770.publicKey,
+      timestamp: ts770,
+      sig: sig770
+    };
+
+    fed770.packetHandler.handleRouteUpdate(tamperedPayload, null, '198.51.100.10:8001');
+
+    // Verify tampered KEM was rejected
+    const edgeRouteAfterTamper = fed770.presenceTable.get(edgeNodeId770);
+    const tamperBlocked = !edgeRouteAfterTamper || edgeRouteAfterTamper.kemPublicKey !== attackerKem770.publicKey;
+
+    // Send legitimate payload
+    const legitimatePayload = { ...tamperedPayload, kemPublicKey: edgeKem770.publicKey };
+    fed770.packetHandler.handleRouteUpdate(legitimatePayload, null, '198.51.100.10:8001');
+    const edgeRouteLegit = fed770.presenceTable.get(edgeNodeId770);
+    const legitAccepted = edgeRouteLegit && edgeRouteLegit.kemPublicKey === edgeKem770.publicKey;
+
+    fed770.close();
+    mockDb770.close();
+    try { if (fs.existsSync(db770Path)) fs.unlinkSync(db770Path); } catch {}
+
+    const test770Ok = tamperBlocked && legitAccepted;
+    record('7.70 [REVİZYON 40 / v2.7.1] ROUTE_UPDATE KEM Anahtarı Manipülasyonu ve MitM Koruması', !!test770Ok,
+      `TamperBlocked: ${tamperBlocked}, LegitAccepted: ${legitAccepted}`);
+
+    // Test 7.71: [REVİZYON 41 / v2.7.1] SSH Taşıma Katmanı, 2FA Atlatma ve DoS Korumaları
+    const db771Path = path.join(rootDir, 'v2_test_r41_ssh.db');
+    if (fs.existsSync(db771Path)) fs.unlinkSync(db771Path);
+    const mockDb771 = new Database(db771Path);
+
+    // 1. Cleartext userauth rejection
+    let cleartextAuthDestroyed = false;
+    const fakeSshSock1 = new EventEmitter();
+    fakeSshSock1.destroy = () => { cleartextAuthDestroyed = true; };
+    fakeSshSock1.end = () => {};
+    fakeSshSock1.write = () => {};
+    const fakeSshConn1 = new SshClientConnection(fakeSshSock1, { federation: { nodeAddress: 'localhost:8001' } }, mockDb771, { rawEd25519Pub: Buffer.alloc(32) });
+    fakeSshConn1.isEncryptedIn = false;
+
+    const authWriter = new SshPacketWriter();
+    authWriter.writeByte(SSH_MSG.USERAUTH_REQUEST);
+    authWriter.writeString('alice');
+    authWriter.writeString('ssh-connection');
+    authWriter.writeString('none');
+    fakeSshConn1.handlePacket(authWriter.toBuffer());
+    const cleartextAuthBlocked = cleartextAuthDestroyed;
+
+    // 2. Channel open prior to authentication rejection
+    let chanOpenDestroyed = false;
+    const fakeSshSock2 = new EventEmitter();
+    fakeSshSock2.destroy = () => { chanOpenDestroyed = true; };
+    fakeSshSock2.write = () => {};
+    const fakeSshConn2 = new SshClientConnection(fakeSshSock2, { federation: { nodeAddress: 'localhost:8001' } }, mockDb771, { rawEd25519Pub: Buffer.alloc(32) });
+    fakeSshConn2.authenticatedUser = null;
+
+    const chanWriter = new SshPacketWriter();
+    chanWriter.writeByte(SSH_MSG.CHANNEL_OPEN);
+    chanWriter.writeString('session');
+    chanWriter.writeUInt32(1);
+    chanWriter.writeUInt32(1048576);
+    chanWriter.writeUInt32(32768);
+    fakeSshConn2.handlePacket(chanWriter.toBuffer());
+    const unauthChannelBlocked = chanOpenDestroyed;
+
+    // 3. Encrypted padding length bounds check
+    let paddingOverflowDestroyed = false;
+    const fakeSshSock3 = new EventEmitter();
+    fakeSshSock3.destroy = () => { paddingOverflowDestroyed = true; };
+    fakeSshSock3.write = () => {};
+    const fakeSshConn3 = new SshClientConnection(fakeSshSock3, { federation: { nodeAddress: 'localhost:8001' } }, mockDb771, { rawEd25519Pub: Buffer.alloc(32) });
+    fakeSshConn3.state = 'TRANSPORT';
+    fakeSshConn3.isEncryptedIn = true;
+    fakeSshConn3.decryptCipher = { update: (buf) => buf };
+    fakeSshConn3.inHmacKey = Buffer.alloc(32);
+    const forgedHead = Buffer.alloc(4);
+    forgedHead.writeUInt32BE(16, 0);
+    const forgedBody = Buffer.alloc(16);
+    forgedBody.writeUInt8(20, 0); // paddingLength = 20 (>= packetLen 16)
+    const forgedSeq = Buffer.alloc(4);
+    forgedSeq.writeUInt32BE(fakeSshConn3.inSeq, 0);
+    const forgedMac = crypto.createHmac('sha256', fakeSshConn3.inHmacKey)
+      .update(forgedSeq)
+      .update(Buffer.concat([forgedHead, forgedBody]))
+      .digest();
+
+    fakeSshConn3.inBuffer = Buffer.concat([forgedHead, forgedBody, forgedMac]);
+    try {
+      fakeSshConn3.processIncoming();
+    } catch {}
+    const paddingOverflowBlocked = paddingOverflowDestroyed;
+
+    // 4. SSH 2FA Vault Bypass Prevention
+    const userAddr771 = AddressHelper.formatUser('alice');
+    const regKey771 = Buffer.from('ed25519-valid-registered-pubkey-32b').toString('base64');
+    mockDb771.addUserPublicKey(userAddr771, regKey771);
+    mockDb771.updateUserPassword(userAddr771, JSON.stringify({ token: 'test' }));
+
+    const authResponsePackets = [];
+    const fakeConn4 = {
+      db: mockDb771,
+      clientServer: { federation: { nodeAddress: 'localhost:8001' } },
+      offeredClientPub: null, // Did NOT offer public key
+      sendPacket: (buf) => { authResponsePackets.push(buf); }
+    };
+
+    const passWriter = new SshPacketWriter();
+    passWriter.writeString('alice');
+    passWriter.writeString('ssh-connection');
+    passWriter.writeString('password');
+    passWriter.writeBoolean(false);
+    passWriter.writeString('guessedpassword');
+
+    await SshAuthHandler.handleUserAuth(fakeConn4, new SshPacketReader(passWriter.toBuffer()), passWriter.toBuffer());
+    const respReader = new SshPacketReader(authResponsePackets[0]);
+    const respMsgType = respReader.readByte();
+    const methodsLeft = respReader.readNameList();
+    const bypass2FaBlocked = respMsgType === SSH_MSG.USERAUTH_FAILURE && methodsLeft.includes('publickey') && !methodsLeft.includes('password');
+
+    // 5. Malformed KEX blob safe catch
+    let kexCrashDestroyed = false;
+    const fakeSshConn5 = {
+      selectedKex: 'curve25519-sha256',
+      destroySocket: () => { kexCrashDestroyed = true; }
+    };
+    const malformedKexReader = new SshPacketWriter();
+    malformedKexReader.writeBuffer(Buffer.from('too-short-blob'));
+    SshKexHandler.handleKexInitMessage(fakeSshConn5, new SshPacketReader(malformedKexReader.toBuffer()));
+    const malformedKexSafe = kexCrashDestroyed;
+
+    mockDb771.close();
+    try { if (fs.existsSync(db771Path)) fs.unlinkSync(db771Path); } catch {}
+
+    const test771Ok = cleartextAuthBlocked && unauthChannelBlocked && paddingOverflowBlocked && bypass2FaBlocked && malformedKexSafe;
+    record('7.71 [REVİZYON 41 / v2.7.1] SSH Taşıma Katmanı, 2FA Atlatma ve DoS Korumaları', !!test771Ok,
+      `CleartextBlocked: ${cleartextAuthBlocked}, UnauthChannelBlocked: ${unauthChannelBlocked}, PaddingBlocked: ${paddingOverflowBlocked}, 2FaBypassBlocked: ${bypass2FaBlocked}, KexSafe: ${malformedKexSafe}`);
+
+    // Test 7.72: [REVİZYON 42 / v2.7.1] Onion Routing Tip Sahteciliği ve Veritabanı TTL Devre Temizliği
+    const db772Path = path.join(rootDir, 'v2_test_r42_circuit.db');
+    if (fs.existsSync(db772Path)) fs.unlinkSync(db772Path);
+    const mockDb772 = new Database(db772Path);
+
+    // 1. Onion type juggling & invalid port check
+    const router772 = new OnionRouter({
+      federation: { rendezvousRelays: new Map() },
+      db: mockDb772,
+      myIdentity: { nodeId: 'testnode' },
+      rendezvousTunnels: new Map()
+    });
+    let typeJugglingSafe = true;
+    try {
+      mockDb772.saveCircuit({
+        circuitId: 'cid_test_tj',
+        prevHop: 'unknown',
+        symmetricKey: CryptoHelper.generateRandomKey(32).toString('hex'),
+        createdAt: Date.now()
+      });
+      const symKey = mockDb772.getCircuit('cid_test_tj', 'unknown').symmetricKey;
+      const malformedPayload = { forwardTo: 12345, cell: {} };
+      const encCell = CryptoHelper.encrypt(JSON.stringify(malformedPayload), symKey);
+      await router772.handleOnionCell({
+        circuitId: 'cid_test_tj',
+        iv: encCell.iv,
+        authTag: encCell.authTag,
+        ciphertext: encCell.ciphertext
+      }, null);
+    } catch {
+      typeJugglingSafe = false;
+    }
+
+    // 2. Database TTL circuit pruning
+    mockDb772.saveCircuit({
+      circuitId: 'cid_old_1',
+      symmetricKey: 'old_key',
+      createdAt: Date.now() - 700000
+    });
+    mockDb772.saveCircuit({
+      circuitId: 'cid_fresh_1',
+      symmetricKey: 'fresh_key',
+      createdAt: Date.now()
+    });
+
+    const oldBefore = mockDb772.getCircuit('cid_old_1');
+    const freshBefore = mockDb772.getCircuit('cid_fresh_1');
+
+    mockDb772.deleteExpiredCircuits(600000);
+
+    const oldAfter = mockDb772.getCircuit('cid_old_1');
+    const freshAfter = mockDb772.getCircuit('cid_fresh_1');
+
+    const dbCircuitTtlOk = oldBefore !== null && freshBefore !== null && oldAfter === null && freshAfter !== null;
+
+    mockDb772.close();
+    try { if (fs.existsSync(db772Path)) fs.unlinkSync(db772Path); } catch {}
+
+    const test772Ok = typeJugglingSafe && dbCircuitTtlOk;
+    record('7.72 [REVİZYON 42 / v2.7.1] Onion Routing Tip Sahteciliği ve Veritabanı TTL Devre Temizliği', !!test772Ok,
+      `TypeJugglingSafe: ${typeJugglingSafe}, DbCircuitTtlOk: ${dbCircuitTtlOk}`);
+
+    // Test 7.73: [REVİZYON 43 / v2.7.1] Terminal Tamponu, UDP Beacon ve KEM Anahtar Tipi Sınırlandırmaları
+    // 1. InputParser Bracketed Paste 64KB Hard Cap
+    const parser773 = new InputParser();
+    parser773.parse(Buffer.from('\x1b[200~'));
+    const massiveData = Buffer.alloc(100000, 'A');
+    parser773.parse(massiveData);
+    const pasteCapOk = parser773.pasteBuffer.length === 65536;
+
+    // 2. UDP Beacon bounded size filter
+    const pm773 = new PeerManager();
+    let beaconProcessed = false;
+    pm773.addOrUpdate = () => { beaconProcessed = true; };
+    pm773.broadcastPort = 49152;
+    pm773.startLanDiscovery();
+
+    const giantPayload = Buffer.alloc(1024, 0x7B);
+    pm773.udpSocket.emit('message', giantPayload, { address: '192.168.1.50', port: 41234 });
+    const oversizedDropped = !beaconProcessed;
+
+    pm773.close();
+
+    // 3. CryptoHelper KEM key type enforcement
+    let kemTypeEnforced = false;
+    try {
+      const rsaKey = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+      CryptoHelper.encapsulateKey(rsaKey.publicKey.export({ type: 'spki', format: 'pem' }));
+    } catch (err) {
+      kemTypeEnforced = err.message.includes('Unsupported key type');
+    }
+
+    // 4. TerminalSession buffer cap & deleteForward
+    const session773 = new TerminalSession({ write: () => {} }, '@user:testnode.mesh', null, null);
+    session773.inputBuffer = 'X'.repeat(4096);
+    session773.insertChar('Z');
+    const insertCapOk = session773.inputBuffer.length === 4096;
+
+    session773.inputBuffer = 'hello world';
+    session773.cursorIndex = 5;
+    session773.deleteForward();
+    const deleteForwardOk = session773.inputBuffer === 'helloworld';
+
+    const test773Ok = pasteCapOk && oversizedDropped && kemTypeEnforced && insertCapOk && deleteForwardOk;
+    record('7.73 [REVİZYON 43 / v2.7.1] Terminal Tamponu, UDP Beacon ve KEM Anahtar Tipi Sınırlandırmaları', !!test773Ok,
+      `PasteCap: ${pasteCapOk}, OversizedDropped: ${oversizedDropped}, KemTypeEnforced: ${kemTypeEnforced}, InsertCap: ${insertCapOk}, DeleteForward: ${deleteForwardOk}`);
 
     // Temiz Kapanış
     testDbLocale.close();

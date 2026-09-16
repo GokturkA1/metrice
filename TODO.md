@@ -435,5 +435,5 @@ Bu faz kapsamında, Fanti ve ark. (2018) tarafından sunulan Dandelion++ yayıl�
 
 ## Kabul ve Uyumluluk Kriterleri
 - Sıfır dış npm bağımlılığı kuralı ihlal edilemez (Yalnızca yerleşik çekirdek kütüphaneler: `node:worker_threads`, `node:crypto`, `node:net`, `node:sqlite`, `node:os`, `node:stream`, `node:buffer`).
-- Geriye dönük protokol uyumluluğu korunmalıdır (Mevcut v2.7.0 ağı ile kesintisiz çalışma).
+- Geriye dönük protokol uyumluluğu korunmalıdır (Mevcut v2.7.x ağı ile kesintisiz çalışma).
 - Tüm fazlar kapsamlı birim ve entegrasyon testleri ile doğrulanmalıdır.

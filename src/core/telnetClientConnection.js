@@ -174,9 +174,11 @@ export class TelnetClientConnection {
 
   async handleAuthInput(action) {
     if (action.type === 'CHAR') {
-      this.inputBuffer += action.char;
-      if (this.authState === AUTH_STATE.USERNAME) this.socket.write(action.char);
-      else this.socket.write('*');
+      if (this.inputBuffer.length < 1024) {
+        this.inputBuffer += action.char;
+        if (this.authState === AUTH_STATE.USERNAME) this.socket.write(action.char);
+        else this.socket.write('*');
+      }
     } else if (action.type === 'KEY_BACKSPACE') {
       if (this.inputBuffer.length > 0) {
         this.inputBuffer = this.inputBuffer.slice(0, -1);

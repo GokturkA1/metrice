@@ -9,6 +9,9 @@ const log = new Logger('AUTONAT');
 export class AutoNatService {
   constructor(federation) {
     this.federation = federation;
+    this.dialbackRateLimit = new Map();
+    this.activeDialbacks = 0;
+    this.maxConcurrentDialbacks = 5;
   }
 
   handleObservedAddress(observedAddress, peer) {
@@ -143,12 +146,43 @@ export class AutoNatService {
 
     const isLoopback = verifiedIp === '127.0.0.1' || verifiedIp === '::1' || verifiedIp === 'localhost';
     const isPrivate = /^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)/.test(verifiedIp);
+    const isLinkLocalOrCloud = verifiedIp.startsWith('169.254.') || verifiedIp.startsWith('fe80:');
     const isTesting = process.env.NODE_ENV === 'test' || CONFIG.environment === 'test' || process.argv.some((a) => a.includes('test'));
 
-    if ((isLoopback || isPrivate) && !isTesting) {
+    if ((isLoopback || isPrivate || isLinkLocalOrCloud) && !isTesting) {
       log.warn(I18n.t('FED_AUTONAT_SSRF_BLOCKED', { ip: verifiedIp }));
       return;
     }
+
+    if (this.activeDialbacks >= this.maxConcurrentDialbacks) {
+      log.warn(I18n.t('FED_AUTONAT_CAPACITY_REACHED', { max: this.maxConcurrentDialbacks }));
+      return;
+    }
+
+    if (!isTesting) {
+      const now = Date.now();
+      const lastDialback = this.dialbackRateLimit.get(verifiedIp) || 0;
+      if (now - lastDialback < 10000) {
+        log.warn(I18n.t('FED_AUTONAT_RATE_LIMITED', { ip: verifiedIp }));
+        return;
+      }
+      this.dialbackRateLimit.set(verifiedIp, now);
+      if (this.dialbackRateLimit.size > 1000) {
+        for (const [k, ts] of this.dialbackRateLimit.entries()) {
+          if (now - ts > 60000) this.dialbackRateLimit.delete(k);
+          else break;
+        }
+      }
+    }
+
+    this.activeDialbacks++;
+    let released = false;
+    const releaseSlot = () => {
+      if (!released) {
+        released = true;
+        this.activeDialbacks = Math.max(0, this.activeDialbacks - 1);
+      }
+    };
 
     log.info(I18n.t('FED_AUTONAT_INBOUND_REQUEST', { ip: verifiedIp, port: numPort }));
     const dialSocket = net.createConnection({ host: verifiedIp, port: numPort }, () => {
@@ -158,13 +192,20 @@ export class AutoNatService {
         confirmed: true
       });
       dialSocket.end();
+      releaseSlot();
     });
 
     dialSocket.on('error', () => {
+      releaseSlot();
       try { dialSocket.destroy(); } catch {}
     });
 
+    dialSocket.on('close', () => {
+      releaseSlot();
+    });
+
     dialSocket.setTimeout(3000, () => {
+      releaseSlot();
       try { dialSocket.destroy(); } catch {}
     });
   }

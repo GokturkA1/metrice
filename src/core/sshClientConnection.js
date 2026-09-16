@@ -228,6 +228,11 @@ export class SshClientConnection extends EventEmitter {
 
         this.inSeq = (this.inSeq + 1) >>> 0;
         const paddingLength = fullDecrypted.readUInt8(4);
+        if (paddingLength >= this.currentPacketLen || paddingLength < 4) {
+          log.warn(I18n.t('SSH_INVALID_PACKET_SIZE', { size: paddingLength }));
+          this.destroySocket(true);
+          return;
+        }
         const payload = fullDecrypted.subarray(5, 4 + this.currentPacketLen - paddingLength);
 
         this.currentPacketLen = null;
@@ -338,10 +343,22 @@ export class SshClientConnection extends EventEmitter {
       }
 
       case SSH_MSG.USERAUTH_REQUEST:
-        this.handleUserAuth(reader, payload);
+        if (!this.isEncryptedIn) {
+          log.warn(I18n.t('SSH_AUTH_CLEARTEXT_REJECTED'));
+          this.destroySocket(true);
+          return;
+        }
+        this.handleUserAuth(reader, payload).catch(() => {
+          this.sendUserAuthFailure();
+        });
         break;
 
       case SSH_MSG.CHANNEL_OPEN: {
+        if (!this.authenticatedUser) {
+          log.warn(I18n.t('SSH_CHANNEL_PREAUTH_REJECTED'));
+          this.destroySocket(true);
+          return;
+        }
         const chanType = reader.readString();
         this.channelRemoteId = reader.readUInt32();
         this.channelRemoteWindow = reader.readUInt32();
@@ -360,6 +377,10 @@ export class SshClientConnection extends EventEmitter {
       }
 
       case SSH_MSG.CHANNEL_REQUEST: {
+        if (!this.authenticatedUser) {
+          this.destroySocket(true);
+          return;
+        }
         reader.readUInt32();
         const reqType = reader.readString();
         const wantReply = reader.readBoolean();
@@ -383,6 +404,10 @@ export class SshClientConnection extends EventEmitter {
       }
 
       case SSH_MSG.CHANNEL_DATA: {
+        if (!this.authenticatedUser) {
+          this.destroySocket(true);
+          return;
+        }
         reader.readUInt32();
         const data = reader.readBuffer();
         this.handleChannelInput(data);

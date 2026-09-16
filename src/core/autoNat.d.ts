@@ -3,6 +3,9 @@ import type { SecureChannel } from './secureChannel.d.ts';
 
 export class AutoNatService {
   federation: FederationEngine;
+  dialbackRateLimit: Map<string, number>;
+  activeDialbacks: number;
+  maxConcurrentDialbacks: number;
 
   constructor(federation: FederationEngine);
 

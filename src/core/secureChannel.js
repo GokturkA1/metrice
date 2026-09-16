@@ -1,6 +1,7 @@
 import net from 'node:net';
 import dns from 'node:dns/promises';
 import EventEmitter from 'node:events';
+import { StringDecoder } from 'node:string_decoder';
 import { CONFIG } from '../config/index.js';
 import { Logger } from '../utils/logger.js';
 import { AddressHelper } from '../utils/addressHelper.js';
@@ -9,10 +10,11 @@ import { I18n } from '../locales/i18n.js';
 
 const log = new Logger('FEDERATION');
 
-// Nonce Replay Havuzu (Zaman damgasi tabanli TTL)
+// Nonce Replay Havuzu (Zaman damgasi tabanli TTL ve Kapasite Siniri)
 export class NonceTracker {
-  constructor(ttlMs = 60000) {
+  constructor(ttlMs = 60000, maxCapacity = 10000) {
     this.ttlMs = ttlMs;
+    this.maxCapacity = maxCapacity;
     this.nonces = new Map(); // nonce -> { timestamp, ip }
   }
 
@@ -26,6 +28,14 @@ export class NonceTracker {
       return false; 
     }
     this.nonces.set(key, now);
+    if (this.nonces.size > this.maxCapacity) {
+      const toRemove = this.nonces.size - this.maxCapacity;
+      let removed = 0;
+      for (const k of this.nonces.keys()) {
+        this.nonces.delete(k);
+        if (++removed >= toRemove) break;
+      }
+    }
     return true;
   }
 
@@ -37,13 +47,23 @@ export class NonceTracker {
         break;
       }
     }
+
+    if (this.nonces.size > this.maxCapacity) {
+      const toRemove = this.nonces.size - this.maxCapacity;
+      let removed = 0;
+      for (const key of this.nonces.keys()) {
+        this.nonces.delete(key);
+        if (++removed >= toRemove) break;
+      }
+    }
   }
 }
 
 // Mesaj Tekillestirme icin TTL Onbellegi
 export class MessageTtlCache {
-  constructor(ttlMs = 120000) { // 2 dakika TTL
+  constructor(ttlMs = 120000, maxCapacity = 5000) { // 2 dakika TTL
     this.ttlMs = ttlMs;
+    this.maxCapacity = maxCapacity;
     this.cache = new Map(); // id -> timestamp
   }
 
@@ -62,16 +82,31 @@ export class MessageTtlCache {
     const now = Date.now();
     this.cleanup(now);
     this.cache.set(id, now);
+    if (this.cache.size > this.maxCapacity) {
+      const toRemove = this.cache.size - this.maxCapacity;
+      let removed = 0;
+      for (const k of this.cache.keys()) {
+        this.cache.delete(k);
+        if (++removed >= toRemove) break;
+      }
+    }
   }
 
   cleanup(now) {
-    if (this.cache.size > 2000) {
-      for (const [id, ts] of this.cache.entries()) {
-        if (now - ts > this.ttlMs) {
-          this.cache.delete(id);
-        } else {
-          break;
-        }
+    for (const [id, ts] of this.cache.entries()) {
+      if (now - ts > this.ttlMs) {
+        this.cache.delete(id);
+      } else {
+        break;
+      }
+    }
+
+    if (this.cache.size > this.maxCapacity) {
+      const toRemove = this.cache.size - this.maxCapacity;
+      let removed = 0;
+      for (const id of this.cache.keys()) {
+        this.cache.delete(id);
+        if (++removed >= toRemove) break;
       }
     }
   }
@@ -98,6 +133,9 @@ export class SecureChannel extends EventEmitter {
 
     this.pendingQueue = [];
     this.buffer = '';
+    this.decoder = new StringDecoder('utf8');
+    this.isProcessing = false;
+    this.myNonce = null;
     this.lastPong = Date.now();
 
     this.initSocketHandlers();
@@ -121,36 +159,53 @@ export class SecureChannel extends EventEmitter {
         }
       }
 
-      this.buffer += chunk.toString();
+      this.buffer += this.decoder.write(chunk);
       const maxBuffer = (CONFIG && CONFIG.secureBufferLimit) || 65536;
       if (this.buffer.length > maxBuffer) {
-        log.warn(I18n.t('FED_SECURE_CHANNEL_PARSE_ERR', { error: `Buffer overflow / DoS protection triggered (> ${maxBuffer} bytes without newline)` }));
+        log.warn(I18n.t('FED_SECURE_CHANNEL_PARSE_ERR', { error: I18n.t('FED_BUFFER_OVERFLOW_DOS', { max: maxBuffer }) }));
         this.socket.destroy();
         return;
       }
-      const lines = this.buffer.split('\n');
-      this.buffer = lines.pop();
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        if (!trimmed.startsWith('{')) {
-          this.socket.destroy();
-          return;
+      if (this.isProcessing) return;
+      this.isProcessing = true;
+      if (typeof this.socket.pause === 'function') {
+        this.socket.pause();
+      }
+
+      try {
+        while (true) {
+          const newlineIdx = this.buffer.indexOf('\n');
+          if (newlineIdx === -1) break;
+
+          const line = this.buffer.slice(0, newlineIdx).trim();
+          this.buffer = this.buffer.slice(newlineIdx + 1);
+
+          if (!line) continue;
+          if (!line.startsWith('{')) {
+            this.socket.destroy();
+            return;
+          }
+
+          try {
+            const frame = JSON.parse(line);
+            if (frame.type === 'DIALBACK_CONFIRM') {
+              this.emit('dialback_confirm', frame);
+              continue;
+            }
+            if (frame.type === 'ONION_CELL') {
+              this.emit('onion_cell', frame);
+              continue;
+            }
+            await this.handleFrame(frame);
+          } catch (err) {
+            log.warn(I18n.t('FED_SECURE_CHANNEL_PARSE_ERR', { error: err.message }));
+          }
         }
-        try {
-          const frame = JSON.parse(line);
-          if (frame.type === 'DIALBACK_CONFIRM') {
-            this.emit('dialback_confirm', frame);
-            continue;
-          }
-          if (frame.type === 'ONION_CELL') {
-            this.emit('onion_cell', frame);
-            continue;
-          }
-          await this.handleFrame(frame);
-        } catch (err) {
-          log.warn(I18n.t('FED_SECURE_CHANNEL_PARSE_ERR', { error: err.message }));
+      } finally {
+        this.isProcessing = false;
+        if (this.socket && !this.socket.destroyed && typeof this.socket.resume === 'function') {
+          this.socket.resume();
         }
       }
     });
@@ -161,6 +216,7 @@ export class SecureChannel extends EventEmitter {
 
   sendHandshakeInit() {
     const nonce = CryptoHelper.generateRandomKey(16);
+    this.myNonce = nonce;
 
     const isRelay = (typeof this.myIdentity?.role === 'function' ? this.myIdentity.role() : this.myIdentity?.role) === 'RELAY' ||
                     (typeof this.myIdentity?.role === 'function' ? this.myIdentity.role() : this.myIdentity?.role) === 'CAP_RELAY';
@@ -196,6 +252,12 @@ export class SecureChannel extends EventEmitter {
   async handleFrame(frame) {
     // 1. HANDSHAKE_INIT
     if (frame.type === 'HANDSHAKE_INIT') {
+      if (this.isInitiator) {
+        log.warn(I18n.t('FED_SECURE_CHANNEL_PARSE_ERR', { error: I18n.t('FED_KEX_UNEXPECTED_INIT') }));
+        this.socket.destroy();
+        return;
+      }
+
       const remoteIp = this.socket.remoteAddress || '';
       if (!this.nonceTracker.track(frame.nonce, remoteIp)) {
         log.warn(I18n.t('FED_REPLAY_NONCE_DETECTED', { node: frame.nodeAddress }));
@@ -277,6 +339,18 @@ export class SecureChannel extends EventEmitter {
 
     // 2. HANDSHAKE_REPLY
     if (frame.type === 'HANDSHAKE_REPLY') {
+      if (!this.isInitiator) {
+        log.warn(I18n.t('FED_SECURE_CHANNEL_PARSE_ERR', { error: I18n.t('FED_KEX_UNEXPECTED_REPLY') }));
+        this.socket.destroy();
+        return;
+      }
+
+      if (!this.myNonce || frame.nonce !== this.myNonce) {
+        log.warn(I18n.t('FED_REPLAY_NONCE_DETECTED', { node: frame.nodeAddress }));
+        this.socket.destroy();
+        return;
+      }
+
       const verifyObj = {
         type: 'HANDSHAKE_REPLY',
         nodeAddress: frame.nodeAddress,

@@ -246,8 +246,11 @@ export class PeerManager {
     });
 
     this.udpSocket.on('message', (msg, rinfo) => {
+      // Bounded input filter invariant: beacons are small JSON objects (< 512 bytes)
+      if (!msg || msg.length > 512 || msg.length < 2 || msg[0] !== 0x7B) return;
+
       try {
-        const payload = JSON.parse(msg.toString());
+        const payload = JSON.parse(msg.toString('utf8'));
         // Kendi yaydığımız paketi geri aldığımızda yut
         if (payload.nodeAddress === this.selfNodeAddress || payload.nodeAddress === `${CONFIG.serverName}:${CONFIG.federationPort}`) {
           return;
@@ -274,7 +277,8 @@ export class PeerManager {
 
       const scheduleBeacon = () => {
         const interval = 4000 + Math.floor(Math.random() * 2000);
-        setTimeout(() => {
+        this.beaconTimeout = setTimeout(() => {
+          if (!this.udpSocket) return;
           this.sendBeacon();
           scheduleBeacon();
         }, interval);
@@ -300,6 +304,10 @@ export class PeerManager {
   }
 
   close() {
+    if (this.beaconTimeout) {
+      clearTimeout(this.beaconTimeout);
+      this.beaconTimeout = null;
+    }
     if (this.udpSocket) {
       try { this.udpSocket.close(); } catch {}
       this.udpSocket = null;

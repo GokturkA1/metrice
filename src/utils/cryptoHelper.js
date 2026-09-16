@@ -143,6 +143,11 @@ export class CryptoHelper {
   static encapsulateKey(remotePublicKeyPem) {
     const pubKey = crypto.createPublicKey(remotePublicKeyPem);
     const isX25519 = pubKey.asymmetricKeyType === 'x25519';
+    const isMlKem = pubKey.asymmetricKeyType === this.KEM_ALGO;
+
+    if (!isX25519 && !isMlKem) {
+      throw new Error(`Unsupported key type for KEM: ${pubKey.asymmetricKeyType}`);
+    }
 
     if (!isX25519 && this.HAS_ML_KEM) {
       const { sharedKey, ciphertext } = crypto.encapsulate(pubKey);
@@ -163,9 +168,16 @@ export class CryptoHelper {
 
   static decapsulateKey(privateKeyPem, encapsulatedKeyBase64) {
     const privKey = crypto.createPrivateKey(privateKeyPem);
+    const isX25519 = privKey.asymmetricKeyType === 'x25519';
+    const isMlKem = privKey.asymmetricKeyType === this.KEM_ALGO;
+
+    if (!isX25519 && !isMlKem) {
+      throw new Error(`Unsupported key type for KEM: ${privKey.asymmetricKeyType}`);
+    }
+
     const encBuf = Buffer.from(encapsulatedKeyBase64, 'base64');
 
-    if (privKey.asymmetricKeyType !== 'x25519' && this.HAS_ML_KEM) {
+    if (!isX25519 && this.HAS_ML_KEM) {
       return crypto.decapsulate(privKey, encBuf);
     }
 

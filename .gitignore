@@ -14,6 +14,7 @@ project_dump.txt
 .vscode/
 node_modules/
 
+SECURITY_REPORT_*.md
 ARCHITECT.md
 *.txt
 

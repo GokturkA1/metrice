@@ -156,6 +156,9 @@ export class PresenceManager {
       nodeId,
       relayNodeId: fed.nodeId,
       rendezvousNodes: [rendezvousAddr],
+      kemPublicKey: kemPublicKey || null,
+      relayKemPublicKey: fed.kemKeyPair.publicKey,
+      relayAddress: rendezvousAddr,
       timestamp
     });
     const sig = CryptoHelper.sign(dataToSign, fed.identityKeyPair.privateKey);
@@ -651,5 +654,8 @@ export class PresenceManager {
 
     fed.db.deleteExpiredRoutes(presenceTtl);
     fed.onionRouter.cleanupExpiredCircuits();
+    if (fed.db && typeof fed.db.deleteExpiredCircuits === 'function') {
+      fed.db.deleteExpiredCircuits(600000);
+    }
   }
 }

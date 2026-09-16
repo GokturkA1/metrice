@@ -329,10 +329,31 @@ export class FederationPacketHandler {
       nodeId,
       relayNodeId,
       rendezvousNodes: rendezvousNodes || [],
+      kemPublicKey: kemPublicKey || null,
+      relayKemPublicKey: relayKemPublicKey || null,
+      relayAddress: relayAddress || null,
       timestamp
     });
 
-    if (!CryptoHelper.verify(dataToVerify, sig, relayIdentityPublicKey)) return;
+    let effectiveKemPublicKey = kemPublicKey;
+    let effectiveRelayKemPublicKey = relayKemPublicKey;
+
+    let isSigValid = CryptoHelper.verify(dataToVerify, sig, relayIdentityPublicKey);
+    if (!isSigValid) {
+      const dataToVerifyLegacy = JSON.stringify({
+        nodeId,
+        relayNodeId,
+        rendezvousNodes: rendezvousNodes || [],
+        timestamp
+      });
+      if (CryptoHelper.verify(dataToVerifyLegacy, sig, relayIdentityPublicKey)) {
+        effectiveKemPublicKey = null;
+        effectiveRelayKemPublicKey = null;
+        isSigValid = true;
+      }
+    }
+
+    if (!isSigValid) return;
     if (Math.abs(Date.now() - timestamp) > 86400000) {
       log.warn(I18n.t('FED_ROUTE_UPDATE_SKEW', { node: nodeId, seconds: Math.round(Math.abs(Date.now() - timestamp) / 1000) }));
       return;
@@ -361,16 +382,17 @@ export class FederationPacketHandler {
       this.seenRouteUpdates.delete(first);
     }
 
-    if (relayKemPublicKey && relayAddress) {
+    if (relayAddress) {
       const parsedRelay = AddressHelper.parseTarget(relayAddress);
       const canonicalRelayAddr = (parsedRelay && parsedRelay.host && parsedRelay.port)
         ? `${parsedRelay.host}:${parsedRelay.port}`
         : relayAddress;
+      const existingRelay = fed.presenceTable.get(relayNodeId) || fed.db.getRoute(relayNodeId);
       const relayRecord = {
         nodeId: relayNodeId,
         role: 'RELAY',
         rendezvousNodes: [canonicalRelayAddr],
-        kemPublicKey: relayKemPublicKey,
+        kemPublicKey: effectiveRelayKemPublicKey || existingRelay?.kemPublicKey || '',
         identityPublicKey: relayIdentityPublicKey,
         channels: [],
         lastSeen: Date.now()
@@ -388,7 +410,7 @@ export class FederationPacketHandler {
       nodeId,
       role: role || 'EDGE',
       rendezvousNodes: safeRdv,
-      kemPublicKey: kemPublicKey || currentEdge.kemPublicKey || null,
+      kemPublicKey: effectiveKemPublicKey || currentEdge.kemPublicKey || null,
       identityPublicKey: identityPublicKey || currentEdge.identityPublicKey || null,
       channels: currentEdge.channels || [],
       lastSeen: Date.now()

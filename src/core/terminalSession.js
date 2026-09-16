@@ -300,6 +300,7 @@ export class TerminalSession extends EventEmitter {
   }
 
   insertChar(char) {
+    if (this.inputBuffer.length >= 4096) return;
     this.resetTabCompletion();
     this.inputBuffer = this.inputBuffer.slice(0, this.cursorIndex) + char + this.inputBuffer.slice(this.cursorIndex);
     this.cursorIndex += char.length;
@@ -316,7 +317,7 @@ export class TerminalSession extends EventEmitter {
   deleteForward() {
     this.resetTabCompletion();
     if (this.cursorIndex < this.inputBuffer.length) {
-      this.inputBuffer = this.inputBuffer.slice(0, this.cursorIndex + 1);
+      this.inputBuffer = this.inputBuffer.slice(0, this.cursorIndex) + this.inputBuffer.slice(this.cursorIndex + 1);
     }
   }
 

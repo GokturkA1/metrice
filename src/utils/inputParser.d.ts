@@ -15,6 +15,7 @@ export interface ExtractedTelnetEvents {
 }
 
 export class InputParser {
+  static MAX_PASTE_BUFFER_SIZE: number;
   decoder: StringDecoder;
   escapeState: number;
   escapeCode: string;
