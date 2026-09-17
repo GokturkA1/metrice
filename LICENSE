@@ -622,7 +622,7 @@ copy of the Program in return for a fee.
 
            How to Apply These Terms to Your New Programs
 
-  metrice - İstemcisiz dağıtık haberleşme ağı
+  metrice - Zero-dependency post-quantum (ML-KEM-768) P2P mesh network with 3-hop onion routing, CGNAT reverse tunnels, and native SSH-2.
   Copyright (C) 2026 Ahmet Göktürk (GokturkA1) <gokturk@gokturka.net>
 
   This program is free software: you can redistribute it and/or modify
