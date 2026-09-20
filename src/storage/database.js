@@ -16,7 +16,110 @@ export class Database {
   constructor(filepath) {
     this.filepath = filepath;
     this.db = null;
+    this.lockFile = null;
+    this.hasLock = false;
+    this._exitHandler = null;
+    this._exitListenerAttached = false;
     this.init();
+  }
+
+  acquireLock() {
+    if (!this.filepath || this.filepath === ':memory:') {
+      return;
+    }
+
+    this.lockFile = path.resolve(`${this.filepath}.lock`);
+    const lockPayload = JSON.stringify({
+      pid: process.pid,
+      createdAt: Date.now(),
+      filepath: path.resolve(this.filepath)
+    });
+
+    try {
+      fs.writeFileSync(this.lockFile, lockPayload, { flag: 'wx' });
+      this.hasLock = true;
+    } catch (err) {
+      if (err.code === 'EEXIST') {
+        let lockData = null;
+        try {
+          const content = fs.readFileSync(this.lockFile, 'utf8');
+          lockData = JSON.parse(content);
+        } catch {}
+
+        const existingPid = lockData?.pid;
+        let isRunning = false;
+
+        if (typeof existingPid === 'number' && existingPid > 0) {
+          try {
+            process.kill(existingPid, 0);
+            isRunning = true;
+          } catch (e) {
+            isRunning = e.code === 'EPERM';
+          }
+        }
+
+        if (isRunning) {
+          const errorMsg = I18n.t('DB_LOCKED_ERROR', { path: this.filepath, pid: existingPid });
+          log.error(errorMsg);
+          const lockErr = new Error(errorMsg);
+          lockErr.code = 'SQLITE_BUSY_INSTANCE';
+          throw lockErr;
+        }
+
+        log.warn(I18n.t('DB_STALE_LOCK_REMOVED', { path: this.lockFile, pid: existingPid || 'unknown' }));
+        try {
+          fs.unlinkSync(this.lockFile);
+        } catch {}
+
+        try {
+          fs.writeFileSync(this.lockFile, lockPayload, { flag: 'wx' });
+          this.hasLock = true;
+        } catch (retryErr) {
+          const errorMsg = I18n.t('DB_LOCKED_ERROR', { path: this.filepath, pid: 'race_condition' });
+          log.error(errorMsg);
+          const lockErr = new Error(errorMsg);
+          lockErr.code = 'SQLITE_BUSY_INSTANCE';
+          throw lockErr;
+        }
+      } else {
+        throw err;
+      }
+    }
+
+    if (this.hasLock && !this._exitListenerAttached) {
+      this._exitHandler = () => {
+        this.releaseLock();
+      };
+      process.once('exit', this._exitHandler);
+      this._exitListenerAttached = true;
+    }
+  }
+
+  releaseLock() {
+    if (!this.hasLock || !this.lockFile) {
+      return;
+    }
+
+    if (this._exitHandler) {
+      process.removeListener('exit', this._exitHandler);
+      this._exitHandler = null;
+      this._exitListenerAttached = false;
+    }
+
+    try {
+      if (fs.existsSync(this.lockFile)) {
+        try {
+          const content = fs.readFileSync(this.lockFile, 'utf8');
+          const lockData = JSON.parse(content);
+          if (lockData.pid === process.pid) {
+            fs.unlinkSync(this.lockFile);
+          }
+        } catch {
+          fs.unlinkSync(this.lockFile);
+        }
+      }
+    } catch {}
+    this.hasLock = false;
   }
 
   init() {
@@ -26,10 +129,15 @@ export class Database {
         if (dir && dir !== '.' && !fs.existsSync(dir)) {
           fs.mkdirSync(dir, { recursive: true });
         }
+        this.acquireLock();
       }
       this.db = new DatabaseSync(this.filepath);
       initSchema(this.db, this.filepath);
     } catch (err) {
+      if (err.code === 'SQLITE_BUSY_INSTANCE') {
+        throw err;
+      }
+      this.releaseLock();
       log.error(I18n.t('DB_CORRUPT_RESET', { error: err.message }));
       throw err;
     }
@@ -111,6 +219,8 @@ export class Database {
       }
     } catch (err) {
       log.error(I18n.t('DB_CLOSE_ERROR', { error: err.message }));
+    } finally {
+      this.releaseLock();
     }
   }
 

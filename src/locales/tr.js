@@ -34,6 +34,8 @@ export default {
   DB_CLOSE_ERROR: 'Veritabanı kapatılırken hata: {error}',
   DB_OUTBOX_CLEANED: '{count} adet süresi dolmuş veya iletilemeyen giden kutusu (outbox) mesajı temizlendi',
   DB_OUTBOX_CLEAN_ERR: 'Süresi dolmuş giden kutusu mesajları temizlenemedi: {error}',
+  DB_LOCKED_ERROR: '[KİLİTLİ VERİTABANI] Veritabanı dosyası ({path}) şu anda başka bir Metrice süreci (PID: {pid}) tarafından kilitli! Veri bütünlüğünü korumak için eşzamanlı ikinci bir örnek başlatılamaz.',
+  DB_STALE_LOCK_REMOVED: '[KİLİT UYARISI] Önceki çöken süreçten (PID: {pid}) kalan geçersiz kilit dosyası temizlendi: {path}',
 
   // Peer Manager Logs
   PEER_CACHE_LOADED: 'Dinamik eş havuzu yüklendi ({count} eş)',

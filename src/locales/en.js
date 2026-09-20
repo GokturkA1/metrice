@@ -35,6 +35,8 @@ export default {
   DB_LEGACY_CIRCUITS_UPGRADED: 'Legacy active_circuits schema detected and upgraded to composite circuit_key.',
   DB_OUTBOX_CLEANED: 'Cleaned {count} expired or unroutable outbox messages',
   DB_OUTBOX_CLEAN_ERR: 'Failed to clean expired outbox messages: {error}',
+  DB_LOCKED_ERROR: '[LOCKED DATABASE] Database file ({path}) is currently locked by another Metrice process (PID: {pid})! Concurrent instances are blocked to preserve data integrity.',
+  DB_STALE_LOCK_REMOVED: '[LOCK WARNING] Removed stale lockfile from terminated process (PID: {pid}): {path}',
 
   // Peer Manager Logs
   PEER_CACHE_LOADED: 'Dynamic peer pool loaded ({count} peers)',

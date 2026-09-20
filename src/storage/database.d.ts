@@ -47,10 +47,14 @@ export interface OutboxItem {
 export class Database {
   filepath: string;
   db: any;
+  lockFile: string | null;
+  hasLock: boolean;
 
   constructor(filepath: string);
 
   init(): void;
+  acquireLock(): void;
+  releaseLock(): void;
   getNodeIdentity(): DbNodeIdentity;
   saveTrustedNodeKey(nodeAddress: string, identityPublicKey: string, kemPublicKey: string): void;
   getTrustedNodeKey(nodeAddress: string): { identity_public_key: string; kem_public_key: string } | null;

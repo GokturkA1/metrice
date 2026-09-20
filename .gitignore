@@ -5,6 +5,7 @@ peers_*.json
 *.db
 *.db-shm
 *.db-wal
+*.lock
 
 # Dump & Diagnostic Scripts
 dump.js

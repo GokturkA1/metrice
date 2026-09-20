@@ -2,7 +2,7 @@
   <img src="metrice-banner-koyu.svg" alt="Metrice Decentralized P2P Mesh Banner" width="100%">
 </p>
 
-# Metrice v2.7.6
+# Metrice v2.7.7
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue.svg" alt="License: GPLv3"></a>
@@ -79,7 +79,7 @@ The system incorporates NIST FIPS 203 ML-KEM-768 key encapsulation, Ed25519-base
   - Key Exchange: `curve25519-sha256`
   - Server Host Key: `ssh-ed25519`
   - Symmetric Cipher: `aes128-ctr` or `aes256-gcm`
-- **Dynamic Version Synchronisation:** Server identification string (`sshServerVersion`) synchronizes dynamically with `package.json` (`SSH-2.0-Metrice_2.7.6`) and is configurable via `SSH_SERVER_VERSION`.
+- **Dynamic Version Synchronisation:** Server identification string (`sshServerVersion`) synchronizes dynamically with `package.json` (`SSH-2.0-Metrice_2.7.7`) and is configurable via `SSH_SERVER_VERSION`.
 - **Two-Factor Hardware Key Binding (2FA Vault):**
   - Passwords are never verified directly. The password is salted with the client's physical Ed25519 public key (32 bytes).
   - Stretched via Scrypt (N=16384, r=8, p=1, maxmem 64 MB).
@@ -282,7 +282,7 @@ All settings can be configured via environment variables (`process.env`) or `src
 | `publicClientPort` | `PUBLIC_CLIENT_PORT` / `CLIENT_PUBLIC_PORT` | `CLIENT_PORT` (2222) | Public Telnet TUI port announced to peers |
 | `healthPort` | `HEALTH_PORT` | `8050` | TCP Health and Heartbeat listening port |
 | `allowOuterHeartbeat` | `ALLOW_OUTER_HEARTBEAT` | `false` | Allow outer network access to TCP Health port on `0.0.0.0` (Default: `127.0.0.1` only) |
-| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.7.6'` | SSH server identification banner |
+| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.7.7'` | SSH server identification banner |
 | `meshRole` | `MESH_ROLE` | `'EDGE'` | Node routing role (`'RELAY'` or `'EDGE'`) |
 | `bootstrapPeers` | `BOOTSTRAP_PEERS` | `''` | Comma-separated list of static bootstrap relay peers |
 | `maxRendezvousTunnels`| `MAX_RENDEZVOUS_TUNNELS` | `64` | Maximum incoming reverse tunnels a RELAY accepts |
@@ -433,7 +433,7 @@ Server: OK {"status":"healthy","uptime":3600,"database":"healthy","timestamp":17
 
 # Full Telemetry Status Dump:
 Client: STATUS\n
-Server: {"status":"healthy","version":"2.7.6","serverName":"relay1.metrice.network","nodeAddress":"...","meshRole":"RELAY","uptimeSeconds":3600,"timestamp":1789139924935,"database":{"status":"healthy","walMode":true},"federation":{"port":8001,"activeRendezvousTunnels":4,"maxRendezvousTunnels":64,"activeCircuits":2},"peers":{"totalKnown":12,"verified":8},"quantumSecurity":{"mlkem768":true,"strictPq":false},"memory":{"rssMb":42.5,"heapUsedMb":18.2}}\n
+Server: {"status":"healthy","version":"2.7.7","serverName":"relay1.metrice.network","nodeAddress":"...","meshRole":"RELAY","uptimeSeconds":3600,"timestamp":1789139924935,"database":{"status":"healthy","walMode":true},"federation":{"port":8001,"activeRendezvousTunnels":4,"maxRendezvousTunnels":64,"activeCircuits":2},"peers":{"totalKnown":12,"verified":8},"quantumSecurity":{"mlkem768":true,"strictPq":false},"memory":{"rssMb":42.5,"heapUsedMb":18.2}}\n
 
 # Graceful Termination:
 Client: QUIT\n
