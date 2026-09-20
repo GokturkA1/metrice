@@ -518,11 +518,11 @@ export class Database {
           SELECT rowid, id, sender, receiver, content, is_action, is_snippet, is_e2ee, timestamp 
           FROM messages 
           WHERE (
-            ((sender = ? OR sender = ? OR sender LIKE ? || ':%') AND (receiver = ? OR receiver = ? OR receiver LIKE ? || ':%'))
+            ((LOWER(sender) = LOWER(?) OR LOWER(sender) = LOWER(?) OR LOWER(sender) LIKE LOWER(?) || ':%') AND (LOWER(receiver) = LOWER(?) OR LOWER(receiver) = LOWER(?) OR LOWER(receiver) LIKE LOWER(?) || ':%'))
             OR
-            ((sender = ? OR sender = ? OR sender LIKE ? || ':%') AND (receiver = ? OR receiver = ? OR receiver LIKE ? || ':%'))
+            ((LOWER(sender) = LOWER(?) OR LOWER(sender) = LOWER(?) OR LOWER(sender) LIKE LOWER(?) || ':%') AND (LOWER(receiver) = LOWER(?) OR LOWER(receiver) = LOWER(?) OR LOWER(receiver) LIKE LOWER(?) || ':%'))
           )
-          AND (deleted_by NOT LIKE '%' || ? || '%' AND deleted_by NOT LIKE '%' || ? || '%')
+          AND (LOWER(deleted_by) NOT LIKE '%' || LOWER(?) || '%' AND LOWER(deleted_by) NOT LIKE '%' || LOWER(?) || '%')
           ORDER BY rowid DESC 
           LIMIT ?
         ) ORDER BY rowid ASC
@@ -549,19 +549,21 @@ export class Database {
   // --- V2.0 ROUTING TABLE & RENDEZVOUS STORAGE ---
 
   upsertRoute({ nodeId, role, rendezvousNodes = [], kemPublicKey, identityPublicKey, lastSeen = Date.now() }) {
-    if (!nodeId || !kemPublicKey || !identityPublicKey) return;
+    if (!nodeId) return;
+    const cleanIdKey = identityPublicKey || '';
+    const cleanKemKey = kemPublicKey || '';
     const stmt = this.db.prepare(`
       INSERT INTO routing_table (node_id, role, rendezvous_nodes, kem_public_key, identity_public_key, last_seen)
       VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(node_id) DO UPDATE SET
         role = excluded.role,
         rendezvous_nodes = excluded.rendezvous_nodes,
-        kem_public_key = excluded.kem_public_key,
-        identity_public_key = excluded.identity_public_key,
+        kem_public_key = CASE WHEN excluded.kem_public_key != '' THEN excluded.kem_public_key ELSE routing_table.kem_public_key END,
+        identity_public_key = CASE WHEN excluded.identity_public_key != '' THEN excluded.identity_public_key ELSE routing_table.identity_public_key END,
         last_seen = excluded.last_seen
     `);
     const nodesJson = typeof rendezvousNodes === 'string' ? rendezvousNodes : JSON.stringify(rendezvousNodes);
-    stmt.run(nodeId, role, nodesJson, kemPublicKey, identityPublicKey, lastSeen);
+    stmt.run(nodeId, role, nodesJson, cleanKemKey, cleanIdKey, lastSeen);
   }
 
   getRoute(nodeId) {

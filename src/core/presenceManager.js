@@ -198,6 +198,14 @@ export class PresenceManager {
         }
       }
     }
+
+    if (fed.rendezvousTunnels) {
+      for (const [tNodeId, tunnel] of fed.rendezvousTunnels.entries()) {
+        if (tNodeId !== nodeId && tunnel?.channel?.socket?.writable) {
+          tunnel.channel.writePayload(updatePayload);
+        }
+      }
+    }
   }
 
   createPresenceAnnouncePayload() {

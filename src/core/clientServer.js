@@ -91,10 +91,12 @@ export class ClientServer {
         if (msg.from && msg.from.startsWith('@')) {
           this.updateTargetMigration(msg.from);
         }
-        if (msg.to.startsWith('#')) {
+        const isChan = msg.to.startsWith('#') || AddressHelper.isGlobalChannel(msg.to);
+        if (isChan) {
+          const isGlobal = AddressHelper.isGlobalChannel(msg.to);
           for (const [addr, userSession] of this.sessions.entries()) {
             if (msg.from !== addr) {
-              if (userSession.isMemberOf(msg.to)) {
+              if (isGlobal || userSession.isMemberOf(msg.to)) {
                 userSession.incrementUnread(msg.to);
                 const isMentioned = userSession.isUserMentioned(msg.content);
                 const isViewing = userSession.isViewingTarget(msg.to);
@@ -106,7 +108,13 @@ export class ClientServer {
             }
           }
         } else {
-          const recipientSession = this.findLocalSession(msg.to);
+          let recipientSession = this.findLocalSession(msg.to);
+          if (!recipientSession) {
+            const pTo = AddressHelper.parse(msg.to);
+            if (pTo && pTo.name) {
+              recipientSession = this.findLocalSession(pTo.name);
+            }
+          }
           if (recipientSession) {
             recipientSession.addContact(msg.from);
             recipientSession.incrementUnread(msg.from);
@@ -236,13 +244,19 @@ export class ClientServer {
     if (this.sessions.has(userAddressOrTarget)) {
       return this.sessions.get(userAddressOrTarget);
     }
-    const parsedTarget = AddressHelper.parse(userAddressOrTarget);
-    if (!parsedTarget || !parsedTarget.name) return null;
+    const clean = userAddressOrTarget.startsWith('@') || userAddressOrTarget.startsWith('#')
+      ? userAddressOrTarget
+      : `@${userAddressOrTarget}`;
+    const parsedTarget = AddressHelper.parse(clean);
+    const targetName = (parsedTarget?.name || clean.replace(/^[@#]/, '').split(':')[0]).toLowerCase();
 
     for (const [addr, sess] of this.sessions.entries()) {
-      if (addr === userAddressOrTarget) return sess;
+      if (addr.toLowerCase() === userAddressOrTarget.toLowerCase() || addr.toLowerCase() === clean.toLowerCase()) {
+        return sess;
+      }
       const parsedAddr = AddressHelper.parse(addr);
-      if (parsedAddr && parsedAddr.name === parsedTarget.name) {
+      const addrName = (parsedAddr?.name || addr.replace(/^[@#]/, '').split(':')[0]).toLowerCase();
+      if (addrName === targetName) {
         return sess;
       }
     }
@@ -419,23 +433,36 @@ export class ClientServer {
         this.federation.forwardToChannelSubscribers(target.raw, messageRecord);
       }
     } else {
-      if (target.isLocal) {
-        const recipientSession = this.findLocalSession(target.raw);
-        if (recipientSession) {
-          recipientSession.addContact(from);
-          recipientSession.incrementUnread(from);
+      let recipientSession = target.isLocal ? this.findLocalSession(target.raw) : null;
+      if (!recipientSession && target.isLocal && target.name) {
+        recipientSession = this.findLocalSession(target.name);
+      }
 
-          const isMentioned = recipientSession.isUserMentioned(content);
-          const isViewing = recipientSession.isViewingTarget(from);
-          if (!isViewing || isMentioned) {
-            recipientSession.notifyNewMessage();
-          }
-          recipientSession.emit('request_render');
+      if (recipientSession) {
+        recipientSession.addContact(from);
+        recipientSession.incrementUnread(from);
+
+        const isMentioned = recipientSession.isUserMentioned(content);
+        const isViewing = recipientSession.isViewingTarget(from);
+        if (!isViewing || isMentioned) {
+          recipientSession.notifyNewMessage();
         }
+        recipientSession.emit('request_render');
       } else {
-        const res = await this.federation.sendRemoteMessage(from, target.raw, finalContent, isAction, isSnippet, isE2EE);
+        let remoteTarget = target.raw;
+        if (target.isLocal && this.federation?.remoteOnlineUsers) {
+          const targetNick = (target.name || target.raw.split(':')[0].replace('@', '')).toLowerCase();
+          for (const u of this.federation.remoteOnlineUsers.keys()) {
+            const p = AddressHelper.parse(u);
+            if (p && p.name.toLowerCase() === targetNick) {
+              remoteTarget = u;
+              break;
+            }
+          }
+        }
+        const res = await this.federation.sendRemoteMessage(from, remoteTarget, finalContent, isAction, isSnippet, isE2EE);
         if (res && res.status === 'queued') {
-          session.addSystemLog(I18n.t('SYS_OUTBOX_QUEUED', { target: target.raw }));
+          session.addSystemLog(I18n.t('SYS_OUTBOX_QUEUED', { target: remoteTarget }));
         }
       }
     }

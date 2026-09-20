@@ -549,6 +549,21 @@ export class FederationEngine extends EventEmitter {
       }
     }
 
+    if (targetNodeId && this.rendezvousRelays) {
+      for (const [relayAddr, rObj] of this.rendezvousRelays.entries()) {
+        const rChan = rObj.channel;
+        const rSock = rObj.socket || rChan?.socket;
+        if (rSock && rSock.writable === false) continue;
+        const rNodeId = rChan?.peerIdentityKey ? CryptoHelper.deriveNodeId(rChan.peerIdentityKey) : null;
+        if (targetNodeId === rNodeId || this.nodePhysicalAddresses.get(targetNodeId) === relayAddr) {
+          if (rChan && typeof rChan.writePayload === 'function') {
+            rChan.writePayload(payload);
+            return { status: 'delivered' };
+          }
+        }
+      }
+    }
+
     let route = this.presenceTable.get(targetNodeId) || this.db.getRoute(targetNodeId);
     let exitRelayAddress = null;
 
@@ -827,6 +842,22 @@ export class FederationEngine extends EventEmitter {
         const msg = this.db.saveMessage(payload);
         if (msg) this.emit('message', msg);
         return { status: 'delivered' };
+      }
+
+      // Doğrudan bağlı olunan Rendezvous Relayı kontrolü
+      if (this.rendezvousRelays) {
+        for (const [relayAddr, rObj] of this.rendezvousRelays.entries()) {
+          const rChan = rObj.channel;
+          const rSock = rObj.socket || rChan?.socket;
+          if (rSock && rSock.writable === false) continue;
+          const rNodeId = rChan?.peerIdentityKey ? CryptoHelper.deriveNodeId(rChan.peerIdentityKey) : null;
+          if (target.nodeId === rNodeId || this.nodePhysicalAddresses.get(target.nodeId) === relayAddr) {
+            if (rChan && typeof rChan.writePayload === 'function') {
+              rChan.writePayload(payload);
+              return { status: 'delivered' };
+            }
+          }
+        }
       }
 
       try {

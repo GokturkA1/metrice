@@ -184,7 +184,10 @@ export class AddressHelper {
 
   static parse(rawAddress) {
     if (!rawAddress) return null;
-    const clean = rawAddress.trim();
+    let clean = rawAddress.trim();
+    if (!clean.startsWith('@') && !clean.startsWith('#')) {
+      clean = '@' + clean;
+    }
     const isChannel = clean.startsWith('#');
     const isUser = clean.startsWith('@');
 
@@ -382,6 +385,15 @@ export class AddressHelper {
     const hostA = aClean.includes(':') ? aClean.split(':')[1] : null;
     const hostB = bClean.includes(':') ? bClean.split(':')[1] : null;
     if (!hostA || !hostB) return true;
-    return hostA === hostB;
+    if (hostA === hostB) return true;
+
+    const localMesh = this.localNodeId ? `${this.localNodeId.toLowerCase()}.mesh` : null;
+    const isLocalA = hostA === 'local.mesh' || (localMesh && hostA === localMesh) || hostA.startsWith('127.0.0.1') || hostA.startsWith('localhost');
+    const isLocalB = hostB === 'local.mesh' || (localMesh && hostB === localMesh) || hostB.startsWith('127.0.0.1') || hostB.startsWith('localhost');
+    if ((isLocalA && !isLocalB) || (isLocalB && !isLocalA)) {
+      return true;
+    }
+
+    return false;
   }
 }

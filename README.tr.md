@@ -2,7 +2,7 @@
   <img src="metrice-banner-koyu.svg" alt="Metrice Dağıtık P2P Mesh Başlık" width="100%">
 </p>
 
-# Metrice v2.7.2
+# Metrice v2.7.3
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/lisans-GPLv3-blue.svg" alt="Lisans: GPLv3"></a>
@@ -79,7 +79,7 @@ Sistem; NIST FIPS 203 ML-KEM-768 anahtar kapsülleme, Ed25519 tabanlı RFC 4648 
   - Anahtar Değişimi: `curve25519-sha256`
   - Sunucu Host Anahtarı: `ssh-ed25519`
   - Taşıma Şifrelemesi: `aes128-ctr` veya `aes256-gcm`
-- **Dinamik Sürüm Senkronizasyonu:** Sunucu karşılama kimliği (`sshServerVersion`), `package.json` ile dinamik senkronize edilir (`SSH-2.0-Metrice_2.7.2`) ve `SSH_SERVER_VERSION` ortam değişkeni ile tamamen maskelenebilir.
+- **Dinamik Sürüm Senkronizasyonu:** Sunucu karşılama kimliği (`sshServerVersion`), `package.json` ile dinamik senkronize edilir (`SSH-2.0-Metrice_2.7.3`) ve `SSH_SERVER_VERSION` ortam değişkeni ile tamamen maskelenebilir.
 - **Donanım Açık Anahtarı Mühürlemeli İki Faktörlü Kasa (2FA Vault):**
   - Parola asla yalın haliyle işlenmez. Kullanıcı parolası, istemcinin fiziksel Ed25519 açık anahtarından türetilen 32 baytlık tuz (salt) ile birleştirilir.
   - Scrypt (N=16384, r=8, p=1, maxmem 64 MB) algoritmasından geçirilerek anahtar türetilir.
@@ -282,7 +282,7 @@ Tüm parametreler ortam değişkenleri (`process.env`) veya `src/config/index.js
 | `publicClientPort` | `PUBLIC_CLIENT_PORT` / `CLIENT_PUBLIC_PORT` | `CLIENT_PORT` (2222) | Dış ağa duyurulan genel Telnet TUI portu |
 | `healthPort` | `HEALTH_PORT` | `8050` | TCP Sağlık ve Kalp Atışı (Heartbeat) dinleme portu |
 | `allowOuterHeartbeat` | `ALLOW_OUTER_HEARTBEAT` | `false` | TCP Sağlık portunu dış ağa (`0.0.0.0`) açma izni (Varsayılan: Yalnızca `127.0.0.1`) |
-| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.7.2'` | SSH sunucusu protokol kimlik dizgesi (Sürüm sistemi ile dinamik) |
+| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.7.3'` | SSH sunucusu protokol kimlik dizgesi (Sürüm sistemi ile dinamik) |
 | `meshRole` | `MESH_ROLE` | `'EDGE'` | Düğüm rolü (`'RELAY'` veya `'EDGE'`) |
 | `bootstrapPeers` | `BOOTSTRAP_PEERS` | `''` | Kalıcı başlangıç ve korumalı röle eş listesi (virgülle ayrılmış) |
 | `maxRendezvousTunnels`| `MAX_RENDEZVOUS_TUNNELS` | `64` | Bir RELAY düğümünün kabul edeceği azami ters tünel sayısı |
@@ -433,7 +433,7 @@ Sunucu : OK {"status":"healthy","uptime":3600,"database":"healthy","timestamp":1
 
 # Ayrıntılı Telemetri Dökümü:
 İstemci: STATUS\n
-Sunucu : {"status":"healthy","version":"2.7.2","serverName":"relay1.metrice.network","nodeAddress":"...","meshRole":"RELAY","uptimeSeconds":3600,"timestamp":1789139924935,"database":{"status":"healthy","walMode":true},"federation":{"port":8001,"activeRendezvousTunnels":4,"maxRendezvousTunnels":64,"activeCircuits":2},"peers":{"totalKnown":12,"verified":8},"quantumSecurity":{"mlkem768":true,"strictPq":false},"memory":{"rssMb":42.5,"heapUsedMb":18.2}}\n
+Sunucu : {"status":"healthy","version":"2.7.3","serverName":"relay1.metrice.network","nodeAddress":"...","meshRole":"RELAY","uptimeSeconds":3600,"timestamp":1789139924935,"database":{"status":"healthy","walMode":true},"federation":{"port":8001,"activeRendezvousTunnels":4,"maxRendezvousTunnels":64,"activeCircuits":2},"peers":{"totalKnown":12,"verified":8},"quantumSecurity":{"mlkem768":true,"strictPq":false},"memory":{"rssMb":42.5,"heapUsedMb":18.2}}\n
 
 # Oturumu Sonlandırma:
 İstemci: QUIT\n

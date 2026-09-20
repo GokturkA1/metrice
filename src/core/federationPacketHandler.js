@@ -221,6 +221,28 @@ export class FederationPacketHandler {
             if (m.kemPublicKey) {
               fed.db.saveRemoteUserKemKey(canonicalUser, m.kemPublicKey);
             }
+
+            if (uNodeId !== fed.nodeId && !fed.presenceTable.has(uNodeId)) {
+              const rdvAddr = payload.relayAnnounceAddress || fed.nodePhysicalAddresses.get(nodeId) || (channel?.peerNodeAddress && !channel.peerNodeAddress.endsWith('.mesh') ? channel.peerNodeAddress : null);
+              const rdvList = rdvAddr ? [rdvAddr] : [nodeId];
+              fed.presenceTable.set(uNodeId, {
+                nodeId: uNodeId,
+                role: 'EDGE',
+                rendezvousNodes: rdvList,
+                kemPublicKey: m.kemPublicKey || '',
+                identityPublicKey: '',
+                channels: m.channels || [],
+                lastSeen: Date.now()
+              });
+              fed.db.upsertRoute({
+                nodeId: uNodeId,
+                role: 'EDGE',
+                rendezvousNodes: rdvList,
+                kemPublicKey: m.kemPublicKey || '',
+                identityPublicKey: '',
+                lastSeen: Date.now()
+              });
+            }
           }
         }
       });
@@ -472,6 +494,14 @@ export class FederationPacketHandler {
         }
         if (fed.nodePhysicalAddresses.get(nodeId) === peer) continue;
         fed.sendPacket(host, port, payload).catch(() => {});
+      }
+
+      if (fed.rendezvousTunnels) {
+        for (const [tNodeId, tunnel] of fed.rendezvousTunnels.entries()) {
+          if (tNodeId !== nodeId && tunnel?.channel?.socket?.writable) {
+            tunnel.channel.writePayload(payload);
+          }
+        }
       }
     }
 

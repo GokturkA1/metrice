@@ -463,6 +463,132 @@ async function runPresenceTestSuite() {
       }
     }
 
+    // -------------------------------------------------------------
+    // TEST 9: [EDGE-TO-EDGE ROUTE SYNC] Yeni Tünel Bağlandığında Mevcut Tünellerin Rota Eşitlemesi
+    // -------------------------------------------------------------
+    const db9Path = trackFile(path.join(rootDir, 'test_pres_db9.db'));
+    if (fs.existsSync(db9Path)) fs.unlinkSync(db9Path);
+    const db9 = new Database(db9Path);
+    const fed9 = new FederationEngine(db9, new PeerManager());
+
+    // Mevcut bir Edge tüneli simüle et
+    const existingEdgeNodeId = 'edgeexistingnode1';
+    fed9.rendezvousTunnels.set(existingEdgeNodeId, {
+      socket: { writable: true },
+      channel: { writePayload: () => {} },
+      boundRendezvousAddr: 'relay.mesh:8001',
+      edgeKemKey: 'mock_kem_key_1',
+      identityPublicKey: 'mock_id_key_1'
+    });
+
+    const receivedRouteUpdates = [];
+    const newEdgeChannel = {
+      isReady: true,
+      socket: { writable: true },
+      writePayload: (p) => {
+        if (p && p.type === 'ROUTE_UPDATE') {
+          receivedRouteUpdates.push(p);
+        }
+      }
+    };
+
+    const newEdgeIdKey = CryptoHelper.generateIdentityKeyPair();
+    const newEdgeNodeId = CryptoHelper.deriveNodeId(newEdgeIdKey.publicKey);
+    const newEdgeKem = CryptoHelper.generateKemKeyPair();
+    const ts9 = Date.now();
+    const nonce9 = CryptoHelper.generateRandomKey(16);
+    const rdvRelayAddr9 = fed9.nodeAddress;
+    const bindSig9 = CryptoHelper.sign(`${newEdgeNodeId}${rdvRelayAddr9}${ts9}${nonce9}`, newEdgeIdKey.privateKey);
+
+    fed9.rendezvousManager.handleRendezvousBind({
+      nodeId: newEdgeNodeId,
+      relayAddress: rdvRelayAddr9,
+      identityPublicKey: newEdgeIdKey.publicKey,
+      kemPublicKey: newEdgeKem.publicKey,
+      timestamp: ts9,
+      nonce: nonce9,
+      sig: bindSig9
+    }, newEdgeChannel);
+
+    const receivedExistingRoute = receivedRouteUpdates.some((r) => r.nodeId === existingEdgeNodeId && r.role === 'EDGE');
+    const test9Ok = receivedExistingRoute;
+    record('P.9 [KOPUKLUK GİDERME] Yeni Edge Bağlandığında Mevcut Tünellerin Rotalarının Otomatik Eşitlenmesi', !!test9Ok,
+      `Yeni tünel eski rotayı aldı: ${receivedExistingRoute}`);
+
+    fed9.close();
+    db9.close();
+
+    // -------------------------------------------------------------
+    // TEST 10: [PRESENCE ANNOUNCE ROUTE UPSERT] Uzak Üye İçin Rota Tablosuna Otomatik Ekleme
+    // -------------------------------------------------------------
+    const db10Path = trackFile(path.join(rootDir, 'test_pres_db10.db'));
+    if (fs.existsSync(db10Path)) fs.unlinkSync(db10Path);
+    const db10 = new Database(db10Path);
+    const fed10 = new FederationEngine(db10, new PeerManager());
+
+    const remoteEdgeNodeId = 'edge2remotenode9';
+    const remoteUserAddress = `@remoteedgeuser:${remoteEdgeNodeId}.mesh`;
+    
+    const relayIdKey10 = CryptoHelper.generateIdentityKeyPair();
+    const relayNodeId10 = CryptoHelper.deriveNodeId(relayIdKey10.publicKey);
+    const relayKem10 = CryptoHelper.generateKemKeyPair();
+    const ts10 = Date.now();
+    const dataToSign10 = JSON.stringify({
+      nodeId: relayNodeId10,
+      role: 'RELAY',
+      rendezvousNodes: ['198.51.100.10:8001'],
+      kemPublicKey: relayKem10.publicKey,
+      channels: ['#genel'],
+      timestamp: ts10
+    });
+    const sig10 = CryptoHelper.sign(dataToSign10, relayIdKey10.privateKey);
+
+    fed10.handleIncoming({
+      type: 'PRESENCE_ANNOUNCE',
+      nodeId: relayNodeId10,
+      role: 'RELAY',
+      relayAnnounceAddress: '198.51.100.10:8001',
+      rendezvousNodes: ['198.51.100.10:8001'],
+      kemPublicKey: relayKem10.publicKey,
+      identityPublicKey: relayIdKey10.publicKey,
+      channels: ['#genel'],
+      memberships: [
+        {
+          user: remoteUserAddress,
+          channels: ['#genel'],
+          isSsh: true,
+          kemPublicKey: 'mock_remote_kem_key'
+        }
+      ],
+      timestamp: ts10,
+      sig: sig10
+    }, { isReady: true, socket: { writable: true }, writePayload: () => {} }, '198.51.100.10:8001');
+
+    const routeInTable = fed10.presenceTable.get(remoteEdgeNodeId);
+    const routeInDb = fed10.db.getRoute(remoteEdgeNodeId);
+    const test10Ok = routeInTable && routeInDb && routeInTable.rendezvousNodes.includes('198.51.100.10:8001');
+
+    record('P.10 [ROTA TÜRETME] PRESENCE_ANNOUNCE İle Gelen Uzak Edge Üyeliğinin Rota Tablosuna İşlenmesi', !!test10Ok,
+      `Tabloda Var: ${!!routeInTable}, DBde Var: ${!!routeInDb}, Rendezvous: ${routeInTable?.rendezvousNodes?.[0]}`);
+
+    fed10.close();
+    db10.close();
+
+    // -------------------------------------------------------------
+    // TEST 11: [ADRES TOLERANSI] Ön Eksiz Adres Ayrıştırma ve Yerel-Uzak Hedef Eşleşmesi
+    // -------------------------------------------------------------
+    const parseNoPrefix = AddressHelper.parse('alice');
+    const parseOk = parseNoPrefix && parseNoPrefix.name === 'alice' && parseNoPrefix.type === 'USER';
+
+    AddressHelper.localNodeId = 'localedgenode123';
+    const matchSame = AddressHelper.isSameTarget('@relayuser:localedgenode123.mesh', '@relayuser:remoterelay999.mesh');
+    const matchLocalFallback = AddressHelper.isSameTarget('@relayuser:local.mesh', '@relayuser:remoterelay999.mesh');
+    const matchNoHost = AddressHelper.isSameTarget('@relayuser', '@relayuser:remoterelay999.mesh');
+
+    const test11Ok = parseOk && matchSame && matchLocalFallback && matchNoHost;
+    record('P.11 [ADRES & RENDER TOLERANSI] Ön Eksiz Ayrıştırma ve Yerel Fallback ile Uzak Adres Eşleşmesi', !!test11Ok,
+      `Parse: ${parseOk}, MatchSame: ${matchSame}, MatchLocal: ${matchLocalFallback}, MatchNoHost: ${matchNoHost}`);
+
   } catch (err) {
     console.error(`\n${COLOR.RED}[HATA] Test sırasında beklenmeyen hata: ${err.message}${COLOR.RESET}`);
     console.error(err.stack);

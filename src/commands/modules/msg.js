@@ -12,7 +12,8 @@ export default {
       return;
     }
 
-    const parsed = AddressHelper.parse(args[0]);
+    const input = args[0].startsWith('@') || args[0].startsWith('#') ? args[0] : `@${args[0]}`;
+    const parsed = AddressHelper.parse(input);
     if (parsed && parsed.type === 'USER') {
       if (parsed.bracketWarning) {
         session.addSystemLog(I18n.t('CMD_MSG_IPV6_PORT_SYNTAX'));
@@ -23,8 +24,20 @@ export default {
         federation.peerManager.addOrUpdate(`${parsed.host}:${parsed.port}`, true);
       }
 
-      session.setTarget(parsed.raw);
-      session.renderFull(db.getConversation(userAddress, parsed.raw));
+      let targetRaw = parsed.raw;
+      if (parsed.isLocal && federation?.remoteOnlineUsers) {
+        const targetNick = parsed.name.toLowerCase();
+        for (const u of federation.remoteOnlineUsers.keys()) {
+          const p = AddressHelper.parse(u);
+          if (p && p.name.toLowerCase() === targetNick) {
+            targetRaw = u;
+            break;
+          }
+        }
+      }
+
+      session.setTarget(targetRaw);
+      session.renderFull(db.getConversation(userAddress, targetRaw));
     } else {
       session.addSystemLog(I18n.t('CMD_MSG_FORMAT_ERROR', { input: args[0] }));
     }

@@ -119,7 +119,7 @@ export class RendezvousManager {
 
         fed.broadcastPresenceAnnounce();
 
-        if (channel.peerNodeAddress && channel.peerIdentityKey) {
+        if (channel.peerIdentityKey) {
           const rNodeId = CryptoHelper.deriveNodeId(channel.peerIdentityKey);
           fed.presenceTable.set(rNodeId, {
             nodeId: rNodeId,
@@ -348,6 +348,30 @@ export class RendezvousManager {
 
     channel.writePayload({ type: 'RENDEZVOUS_ACK', status: 'bound', nodeId });
     log.info(I18n.t('FED_RDV_BOUND_SUCCESS', { node: nodeId, total: fed.rendezvousTunnels.size }));
+
+    // Mevcut diger tunellerin rotalarini yeni baglanan edge'e aktar
+    for (const [otherNodeId, otherTunnel] of fed.rendezvousTunnels.entries()) {
+      if (otherNodeId !== nodeId && otherTunnel.boundRendezvousAddr) {
+        const routeTs = Date.now();
+        const routePayload = {
+          type: 'ROUTE_UPDATE',
+          nodeId: otherNodeId,
+          role: 'EDGE',
+          rendezvousNodes: [otherTunnel.boundRendezvousAddr],
+          kemPublicKey: otherTunnel.edgeKemKey,
+          identityPublicKey: otherTunnel.identityPublicKey,
+          relayAddress: otherTunnel.boundRendezvousAddr,
+          relayKemPublicKey: fed.kemKeyPair.publicKey,
+          relayIdentityPublicKey: fed.identityKeyPair.publicKey,
+          timestamp: routeTs,
+          sig: CryptoHelper.sign(
+            `${otherNodeId}EDGE${otherTunnel.boundRendezvousAddr}${routeTs}`,
+            fed.identityKeyPair.privateKey
+          )
+        };
+        channel.writePayload(routePayload);
+      }
+    }
 
     fed.broadcastRouteUpdate(nodeId, boundRendezvousAddr, edgeKemKey, identityPublicKey);
     fed.broadcastPresence();

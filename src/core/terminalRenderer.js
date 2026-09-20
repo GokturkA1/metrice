@@ -71,7 +71,7 @@ export class TerminalRenderer {
       let color = isMe ? ANSI.FG_CYAN : ANSI.FG_MAGENTA;
       if (isSystem) color = ANSI.FG_YELLOW + ANSI.BOLD;
 
-      const lockBadge = msg.isE2EE ? `${ANSI.FG_YELLOW}\u{1F512}${ANSI.RESET} ` : '';
+      const lockBadge = msg.isE2EE ? `${ANSI.FG_YELLOW}[SEC]${ANSI.RESET} ` : '';
 
       const isMultiLine = !isUndecryptedE2EE && (raw.includes('\n') || msg.isSnippet);
       const mentionPrefix = isMentioned ? `${ANSI.BG_HEADER}${ANSI.FG_YELLOW}[@] ` : '';
