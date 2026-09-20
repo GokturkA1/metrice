@@ -7,6 +7,7 @@ import { I18n } from '../locales/i18n.js';
 import { OnionRouter } from './onionRouter.js';
 import { ProxyProtocolParser } from '../utils/proxyProtocol.js';
 import { SecureChannel, NonceTracker, MessageTtlCache } from './secureChannel.js';
+import { CryptoHelper } from '../utils/cryptoHelper.js';
 import { AutoNatService } from './autoNat.js';
 import { RendezvousManager } from './rendezvousManager.js';
 import { PresenceManager } from './presenceManager.js';

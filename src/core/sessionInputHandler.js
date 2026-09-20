@@ -17,14 +17,18 @@ export class SessionInputHandler {
     } 
     // 2. Cok satirli kod veya metin blogu yapistirildi
     else if (session && session.activeTarget && !AddressHelper.isSystemConsole(session.activeTarget)) {
-      await clientServer.handleOutboundMessage(
-        session,
-        userAddress,
-        session.activeTarget,
-        rawText,
-        false,
-        true
-      );
+      try {
+        await clientServer.handleOutboundMessage(
+          session,
+          userAddress,
+          session.activeTarget,
+          rawText,
+          false,
+          true
+        );
+      } catch (err) {
+        session.addSystemLog(`\x1b[1;31m${I18n.t('CLIENT_MSG_DISPATCH_ERROR', { error: err.message })}\x1b[0m`);
+      }
       session.emit('request_render');
     }
   }
@@ -193,14 +197,18 @@ export class SessionInputHandler {
         }
 
         if (session.activeTarget) {
-          await clientServer.handleOutboundMessage(
-            session,
-            userAddress,
-            session.activeTarget,
-            input,
-            false,
-            false
-          );
+          try {
+            await clientServer.handleOutboundMessage(
+              session,
+              userAddress,
+              session.activeTarget,
+              input,
+              false,
+              false
+            );
+          } catch (err) {
+            session.addSystemLog(`\x1b[1;31m${I18n.t('CLIENT_MSG_DISPATCH_ERROR', { error: err.message })}\x1b[0m`);
+          }
           session.emit('request_render');
         }
         break;
