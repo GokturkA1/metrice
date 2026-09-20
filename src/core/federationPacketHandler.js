@@ -308,6 +308,14 @@ export class FederationPacketHandler {
             })
             .catch(() => {});
         }
+
+        if (fed.rendezvousTunnels) {
+          for (const [tNodeId, tunnel] of fed.rendezvousTunnels.entries()) {
+            if (tNodeId !== nodeId && tunnel?.channel?.socket?.writable) {
+              tunnel.channel.writePayload(payload);
+            }
+          }
+        }
       } else if (CONFIG.allowEdgeGossip && fed.rendezvousRelays && fed.rendezvousRelays.size >= 2) {
         for (const [relayAddr, rObj] of fed.rendezvousRelays.entries()) {
           if (remotePeer && (relayAddr === remotePeer || rObj.channel?.peerNodeAddress === remotePeer)) continue;
@@ -558,6 +566,22 @@ export class FederationPacketHandler {
         fed.broadcastChannelMessage({ ...msg, hop, ttl }, remotePeer);
       } else if (fed.channelSubscribers.has(payload.to)) {
         this.forwardToChannelSubscribers(payload.to, { ...msg, hop, ttl }, remotePeer);
+      } else if (payload.to.startsWith('@') && hop < ttl) {
+        // Doğrudan Mesaj (DIRECT_MESSAGE) Rendezvous Ters Tünel Transit İletimi:
+        const targetParsed = AddressHelper.parse(payload.to);
+        const targetNodeId = targetParsed?.nodeId;
+        if (targetNodeId && targetNodeId !== fed.nodeId && fed.rendezvousTunnels?.has(targetNodeId)) {
+          const tunnel = fed.rendezvousTunnels.get(targetNodeId);
+          const isSocketWritable = !tunnel?.channel?.socket || tunnel.channel.socket.writable !== false;
+          if (tunnel && tunnel.channel && isSocketWritable) {
+            log.info(I18n.t('FED_TRANSIT_FORWARDED', { from: payload.from, to: payload.to, node: targetNodeId }));
+            if (typeof tunnel.channel.writePayload === 'function') {
+              tunnel.channel.writePayload({ ...payload, hop, ttl });
+            } else if (tunnel.channel.socket && typeof tunnel.channel.socket.write === 'function') {
+              tunnel.channel.socket.write(JSON.stringify({ ...payload, hop, ttl }) + '\n');
+            }
+          }
+        }
       }
     }
 

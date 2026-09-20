@@ -302,6 +302,7 @@ export default {
   FED_RDV_TUNNEL_CLOSED: 'Rendezvous tüneli kapandı: {node}',
   FED_RDV_TUNNEL_BOUND: 'Rendezvous tüneli başarıyla bağlandı: {node} (Aktif tüneller: {current}/64)',
   FED_RDV_BOUND_SUCCESS: 'EDGE düğümü {node} ile rendezvous ters tüneli başarıyla kuruldu (Aktif tünel: {total})',
+  FED_TRANSIT_FORWARDED: 'Transit doğrudan mesaj ters tünel üzerinden {node} düğümüne iletildi (gönderen: {from}, alıcı: {to})',
   FED_PRESENCE_ANNOUNCE_SKEW: 'Varlık anonsu zaman aşımı ({node}): Saat farkı 24 saati aştı ({seconds}s)',
   FED_ROUTE_UPDATE_SKEW: 'Rota güncellemesi zaman aşımı ({node}): Saat farkı 24 saati aştı ({seconds}s)',
   FED_AUTONAT_CONSENSUS: 'AutoNAT: Reflected IP konsensüsüne varıldı: {ip} ({votes} eş onayı)',

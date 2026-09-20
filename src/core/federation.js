@@ -636,6 +636,16 @@ export class FederationEngine extends EventEmitter {
       }
     }
 
+    if (this.rendezvousRelays) {
+      for (const [relayAddr, rObj] of this.rendezvousRelays.entries()) {
+        const rChan = rObj.channel;
+        if (rChan && rChan.peerKemKey && rChan.peerIdentityKey) {
+          const rNodeId = CryptoHelper.deriveNodeId(rChan.peerIdentityKey);
+          addRelayToPool(rNodeId, relayAddr, rChan.peerKemKey);
+        }
+      }
+    }
+
     const peers = this.peerManager ? this.peerManager.getAllPeers() : [];
     for (const p of peers) {
       if (!relayPool.some((rp) => rp.address === p)) {
@@ -655,6 +665,23 @@ export class FederationEngine extends EventEmitter {
     let exitHop = null;
     if (exitRelayAddress) {
       exitHop = relayPool.find((r) => r.address === exitRelayAddress);
+      if (!exitHop && this.rendezvousRelays) {
+        for (const [relayAddr, rObj] of this.rendezvousRelays.entries()) {
+          if (relayAddr === exitRelayAddress || exitRelayAddress.includes(relayAddr) || relayAddr.includes(exitRelayAddress)) {
+            const rChan = rObj.channel;
+            if (rChan && rChan.peerKemKey && rChan.peerIdentityKey) {
+              const rNodeId = CryptoHelper.deriveNodeId(rChan.peerIdentityKey);
+              exitHop = {
+                nodeId: rNodeId,
+                address: exitRelayAddress,
+                kemPublicKey: rChan.peerKemKey
+              };
+              break;
+            }
+          }
+        }
+      }
+
       if (!exitHop) {
         const relayMatch = allRoutes.find((r) =>
           isRelayOrTransit(r.role) &&
@@ -839,25 +866,40 @@ export class FederationEngine extends EventEmitter {
 
     // 2. V2.0 Kriptografik Dugum Adresi (@user:NodeID.mesh veya #channel:NodeID.mesh)
     if (target.nodeId) {
-      if (target.isLocal || target.nodeId === this.nodeId) {
+      if (target.nodeId === this.nodeId) {
         const msg = this.db.saveMessage(payload);
         if (msg) this.emit('message', msg);
         return { status: 'delivered' };
       }
 
-      // Doğrudan bağlı olunan Rendezvous Relayı kontrolü
-      if (this.rendezvousRelays) {
+      // Doğrudan bağlı olunan Rendezvous Relayı kontrolü (hedefin kendisi, hedefin rendezvous düğümü veya varsayılan ağ geçidi)
+      if (this.rendezvousRelays && this.rendezvousRelays.size > 0) {
+        const route = this.presenceTable.get(target.nodeId) || this.db.getRoute(target.nodeId);
+        const targetRdvList = Array.isArray(route?.rendezvousNodes) ? route.rendezvousNodes : [];
+
+        let chosenRelayChan = null;
+
         for (const [relayAddr, rObj] of this.rendezvousRelays.entries()) {
           const rChan = rObj.channel;
           const rSock = rObj.socket || rChan?.socket;
           if (rSock && rSock.writable === false) continue;
           const rNodeId = rChan?.peerIdentityKey ? CryptoHelper.deriveNodeId(rChan.peerIdentityKey) : null;
-          if (target.nodeId === rNodeId || this.nodePhysicalAddresses.get(target.nodeId) === relayAddr) {
-            if (rChan && typeof rChan.writePayload === 'function') {
-              rChan.writePayload(payload);
-              return { status: 'delivered' };
-            }
+
+          const isDirectRelay = target.nodeId === rNodeId || this.nodePhysicalAddresses.get(target.nodeId) === relayAddr;
+          const isTargetRdv = targetRdvList.some((rn) => rn === relayAddr || rn.includes(relayAddr) || relayAddr.includes(rn));
+
+          if (isDirectRelay || isTargetRdv) {
+            chosenRelayChan = rChan;
+            break;
           }
+          if (!chosenRelayChan && !this.isRelay()) {
+            chosenRelayChan = rChan;
+          }
+        }
+
+        if (chosenRelayChan && typeof chosenRelayChan.writePayload === 'function') {
+          chosenRelayChan.writePayload(payload);
+          return { status: 'delivered' };
         }
       }
 

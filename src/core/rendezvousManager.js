@@ -353,21 +353,30 @@ export class RendezvousManager {
     for (const [otherNodeId, otherTunnel] of fed.rendezvousTunnels.entries()) {
       if (otherNodeId !== nodeId && otherTunnel.boundRendezvousAddr) {
         const routeTs = Date.now();
+        const dataToSign = JSON.stringify({
+          nodeId: otherNodeId,
+          relayNodeId: fed.nodeId,
+          rendezvousNodes: [otherTunnel.boundRendezvousAddr],
+          kemPublicKey: otherTunnel.edgeKemKey || null,
+          relayKemPublicKey: fed.kemKeyPair.publicKey,
+          relayAddress: otherTunnel.boundRendezvousAddr,
+          timestamp: routeTs
+        });
+        const sig = CryptoHelper.sign(dataToSign, fed.identityKeyPair.privateKey);
+
         const routePayload = {
           type: 'ROUTE_UPDATE',
           nodeId: otherNodeId,
           role: 'EDGE',
           rendezvousNodes: [otherTunnel.boundRendezvousAddr],
-          kemPublicKey: otherTunnel.edgeKemKey,
-          identityPublicKey: otherTunnel.identityPublicKey,
+          kemPublicKey: otherTunnel.edgeKemKey || null,
+          identityPublicKey: otherTunnel.identityPublicKey || null,
+          relayNodeId: fed.nodeId,
           relayAddress: otherTunnel.boundRendezvousAddr,
           relayKemPublicKey: fed.kemKeyPair.publicKey,
           relayIdentityPublicKey: fed.identityKeyPair.publicKey,
           timestamp: routeTs,
-          sig: CryptoHelper.sign(
-            `${otherNodeId}EDGE${otherTunnel.boundRendezvousAddr}${routeTs}`,
-            fed.identityKeyPair.privateKey
-          )
+          sig
         };
         channel.writePayload(routePayload);
       }

@@ -589,6 +589,126 @@ async function runPresenceTestSuite() {
     record('P.11 [ADRES & RENDER TOLERANSI] Ön Eksiz Ayrıştırma ve Yerel Fallback ile Uzak Adres Eşleşmesi', !!test11Ok,
       `Parse: ${parseOk}, MatchSame: ${matchSame}, MatchLocal: ${matchLocalFallback}, MatchNoHost: ${matchNoHost}`);
 
+    // -------------------------------------------------------------
+    // TEST 12: [EDGE-TO-EDGE DM TRANSİT] İki Edge Arası Relay Ters Tünel DM İletimi
+    // -------------------------------------------------------------
+    const dbRelayPath = trackFile(path.join(rootDir, 'test_pres_dbrelay12.db'));
+    const dbEdgeAPath = trackFile(path.join(rootDir, 'test_pres_dbedgea12.db'));
+    const dbEdgeBPath = trackFile(path.join(rootDir, 'test_pres_dbedgeb12.db'));
+    if (fs.existsSync(dbRelayPath)) fs.unlinkSync(dbRelayPath);
+    if (fs.existsSync(dbEdgeAPath)) fs.unlinkSync(dbEdgeAPath);
+    if (fs.existsSync(dbEdgeBPath)) fs.unlinkSync(dbEdgeBPath);
+
+    const dbRelay = new Database(dbRelayPath);
+    const dbEdgeA = new Database(dbEdgeAPath);
+    const dbEdgeB = new Database(dbEdgeBPath);
+
+    const fedRelay = new FederationEngine(dbRelay, new PeerManager());
+    fedRelay.setRole('RELAY');
+    const fedEdgeA = new FederationEngine(dbEdgeA, new PeerManager());
+    fedEdgeA.setRole('EDGE');
+    const fedEdgeB = new FederationEngine(dbEdgeB, new PeerManager());
+    fedEdgeB.setRole('EDGE');
+
+    const edgeANodeId = fedEdgeA.nodeId;
+    const edgeBNodeId = fedEdgeB.nodeId;
+    const relayNodeId = fedRelay.nodeId;
+    const relayAddr = fedRelay.nodeAddress;
+
+    // Mock soket kanalları ile Edge A <-> Relay ve Edge B <-> Relay bağlantıları
+    const channelRelayToA = {
+      isReady: true,
+      peerIdentityKey: fedEdgeA.identityKeyPair.publicKey,
+      peerKemKey: fedEdgeA.kemKeyPair.publicKey,
+      socket: { writable: true },
+      writePayload: (p) => fedEdgeA.packetHandler.handleIncoming(p, channelAToRelay, relayAddr)
+    };
+    const channelAToRelay = {
+      isReady: true,
+      peerIdentityKey: fedRelay.identityKeyPair.publicKey,
+      peerKemKey: fedRelay.kemKeyPair.publicKey,
+      socket: { writable: true },
+      writePayload: (p) => fedRelay.packetHandler.handleIncoming(p, channelRelayToA, '198.51.100.10:8001')
+    };
+
+    const channelRelayToB = {
+      isReady: true,
+      peerIdentityKey: fedEdgeB.identityKeyPair.publicKey,
+      peerKemKey: fedEdgeB.kemKeyPair.publicKey,
+      socket: { writable: true },
+      writePayload: (p) => fedEdgeB.packetHandler.handleIncoming(p, channelBToRelay, relayAddr)
+    };
+    const channelBToRelay = {
+      isReady: true,
+      peerIdentityKey: fedRelay.identityKeyPair.publicKey,
+      peerKemKey: fedRelay.kemKeyPair.publicKey,
+      socket: { writable: true },
+      writePayload: (p) => fedRelay.packetHandler.handleIncoming(p, channelRelayToB, '198.51.100.20:8001')
+    };
+
+    // Edge A, Relay'e bağlansın
+    fedEdgeA.boundRendezvousRelays.add(relayAddr);
+    fedEdgeA.rendezvousRelays.set(relayAddr, { channel: channelAToRelay, socket: channelAToRelay.socket });
+    fedRelay.rendezvousTunnels.set(edgeANodeId, {
+      channel: channelRelayToA,
+      socket: channelRelayToA.socket,
+      boundRendezvousAddr: relayAddr,
+      edgeKemKey: fedEdgeA.kemKeyPair.publicKey,
+      identityPublicKey: fedEdgeA.identityKeyPair.publicKey
+    });
+
+    // Edge B, Relay'e bağlansın (handleRendezvousBind çağrısıyla)
+    const tsB = Date.now();
+    const nonceB = CryptoHelper.generateRandomKey(16);
+    const bindSigB = CryptoHelper.sign(`${edgeBNodeId}${relayAddr}${tsB}${nonceB}`, fedEdgeB.identityKeyPair.privateKey);
+    fedRelay.rendezvousManager.handleRendezvousBind({
+      nodeId: edgeBNodeId,
+      relayAddress: relayAddr,
+      identityPublicKey: fedEdgeB.identityKeyPair.publicKey,
+      kemPublicKey: fedEdgeB.kemKeyPair.publicKey,
+      timestamp: tsB,
+      nonce: nonceB,
+      sig: bindSigB
+    }, channelRelayToB);
+
+    fedEdgeB.boundRendezvousRelays.add(relayAddr);
+    fedEdgeB.rendezvousRelays.set(relayAddr, { channel: channelBToRelay, socket: channelBToRelay.socket });
+
+    // Edge A'ya da Edge B'nin rota anonsu gitsin
+    fedRelay.broadcastRouteUpdate(edgeBNodeId, relayAddr, fedEdgeB.kemKeyPair.publicKey, fedEdgeB.identityKeyPair.publicKey);
+
+    // Mesaj dinleyicileri
+    let receivedAtB = null;
+    fedEdgeB.on('message', (m) => {
+      if (m && m.content === 'Merhaba Edge B') {
+        receivedAtB = m;
+      }
+    });
+
+    let receivedAtA = null;
+    fedEdgeA.on('message', (m) => {
+      if (m && m.content === 'Selam Edge A!') {
+        receivedAtA = m;
+      }
+    });
+
+    // Edge A -> Edge B DM gönderimi
+    await fedEdgeA.sendRemoteMessage(`@alice:${edgeANodeId}.mesh`, `@bob:${edgeBNodeId}.mesh`, 'Merhaba Edge B');
+
+    // Edge B -> Edge A DM yanıtı
+    await fedEdgeB.sendRemoteMessage(`@bob:${edgeBNodeId}.mesh`, `@alice:${edgeANodeId}.mesh`, 'Selam Edge A!');
+
+    const test12Ok = receivedAtB && receivedAtB.from.includes('alice') && receivedAtA && receivedAtA.from.includes('bob');
+    record('P.12 [EDGE-TO-EDGE DM TRANSİT] İki Edge Arasında Relay Üzerinden Çift Yönlü DM İletimi', !!test12Ok,
+      `Edge B aldı: ${Boolean(receivedAtB)}, Edge A yanıt aldı: ${Boolean(receivedAtA)}`);
+
+    fedRelay.close();
+    fedEdgeA.close();
+    fedEdgeB.close();
+    dbRelay.close();
+    dbEdgeA.close();
+    dbEdgeB.close();
+
   } catch (err) {
     console.error(`\n${COLOR.RED}[HATA] Test sırasında beklenmeyen hata: ${err.message}${COLOR.RESET}`);
     console.error(err.stack);

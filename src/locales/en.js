@@ -81,6 +81,7 @@ export default {
   FED_RDV_TUNNEL_CLOSED: 'Rendezvous tunnel closed: {node}',
   FED_RDV_TUNNEL_BOUND: 'Rendezvous tunnel successfully bound: {node} (Active tunnels: {current}/64)',
   FED_RDV_BOUND_SUCCESS: 'Rendezvous reverse tunnel established successfully with EDGE {node} (Active tunnels: {total})',
+  FED_TRANSIT_FORWARDED: 'Transit direct message forwarded to reverse tunnel {node} (from: {from}, to: {to})',
   FED_PRESENCE_ANNOUNCE_SKEW: 'Presence announcement timeout ({node}): Clock skew exceeds 24h ({seconds}s)',
   FED_ROUTE_UPDATE_SKEW: 'Route update timeout ({node}): Clock skew exceeds 24h ({seconds}s)',
   FED_AUTONAT_CONSENSUS: 'AutoNAT: Reflected IP consensus reached: {ip} ({votes} peer confirmations)',
