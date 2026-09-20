@@ -1,5 +1,6 @@
 import dgram from 'node:dgram';
 import fs from 'node:fs';
+import path from 'node:path';
 import os from 'node:os';
 import { CONFIG } from '../config/index.js';
 import { Logger } from '../utils/logger.js';
@@ -140,6 +141,10 @@ export class PeerManager {
   savePeers() {
     if (!this.storagePath || typeof this.storagePath !== 'string') return;
     try {
+      const dir = path.dirname(this.storagePath);
+      if (dir && dir !== '.' && !fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
       const data = Array.from(this.peers.entries());
       fs.promises.writeFile(this.storagePath, JSON.stringify(data, null, 2), 'utf-8').catch(() => {});
     } catch (err) {

@@ -3802,6 +3802,78 @@ async function runV2TestSuite() {
     record('7.73 [REVİZYON 43 / v2.7.1] Terminal Tamponu, UDP Beacon ve KEM Anahtar Tipi Sınırlandırmaları', !!test773Ok,
       `PasteCap: ${pasteCapOk}, OversizedDropped: ${oversizedDropped}, KemTypeEnforced: ${kemTypeEnforced}, InsertCap: ${insertCapOk}, DeleteForward: ${deleteForwardOk}`);
 
+    // =========================================================================
+    // Test 7.74: Outbox TTL, Azami Deneme Sınırı ve Otomatik Temizleme
+    // =========================================================================
+    const testOutboxDbPath = path.join(rootDir, 'v2_test_outbox_ttl.db');
+    try { if (fs.existsSync(testOutboxDbPath)) fs.unlinkSync(testOutboxDbPath); } catch {}
+    const outboxTestDb = new Database(testOutboxDbPath);
+
+    // 1. queueOutbox normal kayıt
+    outboxTestDb.queueOutbox({
+      id: 'outbox_valid_1',
+      from: '@sender:node1.mesh',
+      to: '@receiver:node2.mesh',
+      content: 'Gecerli mesaj'
+    });
+    const pendingFresh = outboxTestDb.getPendingOutbox(true);
+    const freshCreatedOk = pendingFresh.some((m) => m.id === 'outbox_valid_1' && m.createdAt > 0);
+
+    // 2. TTL süresi dolmuş mesaj ekleme (geçmiş zaman damgası)
+    const oldTimestamp = Date.now() - 90000000; // ~25 saat önce (TTL 24 saat)
+    outboxTestDb.queueOutbox({
+      id: 'outbox_expired_ttl',
+      from: '@sender:node1.mesh',
+      to: '@receiver:node2.mesh',
+      content: 'Zaman asimina ugramis mesaj',
+      createdAt: oldTimestamp
+    });
+
+    // 3. Azami deneme sınırını aşan mesaj ekleme
+    outboxTestDb.queueOutbox({
+      id: 'outbox_exceeded_retries',
+      from: '@sender:node1.mesh',
+      to: '@receiver:node2.mesh',
+      content: 'Fazla denenen mesaj'
+    });
+    outboxTestDb.db.prepare('UPDATE outbox SET retries = 20 WHERE id = ?').run('outbox_exceeded_retries');
+
+    // cleanExpiredOutbox çalıştıralım
+    const cleanedCount = outboxTestDb.cleanExpiredOutbox(86400000, 20);
+    const cleanedCountOk = cleanedCount === 2;
+
+    // 4. updateOutboxRetry sınır aşımı testi
+    outboxTestDb.queueOutbox({
+      id: 'outbox_retry_limit',
+      from: '@sender:node1.mesh',
+      to: '@receiver:node2.mesh',
+      content: 'Limit testi'
+    });
+    outboxTestDb.db.prepare('UPDATE outbox SET retries = 19 WHERE id = ?').run('outbox_retry_limit');
+    const retryResult = outboxTestDb.updateOutboxRetry('outbox_retry_limit', 20, 86400000);
+    const retryExpiredOk = retryResult && retryResult.expired === true && retryResult.retries === 20;
+    const remainingAfterRetry = outboxTestDb.getPendingOutbox(true);
+    const notInPendingOk = !remainingAfterRetry.some((m) => m.id === 'outbox_retry_limit');
+
+    // 5. getPendingOutbox içinde otomatik temizleme testi
+    outboxTestDb.queueOutbox({
+      id: 'outbox_auto_clean',
+      from: '@sender:node1.mesh',
+      to: '@receiver:node2.mesh',
+      content: 'Otomatik temizleme testi',
+      createdAt: Date.now() - 100000000
+    });
+    outboxTestDb._lastOutboxClean = 0;
+    const pendingAuto = outboxTestDb.getPendingOutbox(true);
+    const autoCleanedOk = !pendingAuto.some((m) => m.id === 'outbox_auto_clean');
+
+    outboxTestDb.close();
+    try { if (fs.existsSync(testOutboxDbPath)) fs.unlinkSync(testOutboxDbPath); } catch {}
+
+    const test774Ok = freshCreatedOk && cleanedCountOk && retryExpiredOk && notInPendingOk && autoCleanedOk;
+    record('7.74 [REVİZYON 44 / v2.7.2] Outbox TTL, Azami Deneme Sınırı ve Otomatik Temizleme Optimizasyonu', !!test774Ok,
+      `FreshCreated: ${freshCreatedOk}, CleanedCount: ${cleanedCountOk}, RetryExpired: ${retryExpiredOk}, NotInPending: ${notInPendingOk}, AutoCleaned: ${autoCleanedOk}`);
+
     // Temiz Kapanış
     testDbLocale.close();
     try { if (fs.existsSync(testDbLocalePath)) fs.unlinkSync(testDbLocalePath); } catch {}

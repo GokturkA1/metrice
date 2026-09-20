@@ -1,8 +1,11 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Logger } from '../utils/logger.js';
 import { I18n } from '../locales/i18n.js';
 import { CryptoHelper } from '../utils/cryptoHelper.js';
 import { AddressHelper } from '../utils/addressHelper.js';
+import { CONFIG } from '../config/index.js';
 import { initSchema } from './schema.js';
 
 export { initSchema };
@@ -18,6 +21,12 @@ export class Database {
 
   init() {
     try {
+      if (this.filepath && this.filepath !== ':memory:') {
+        const dir = path.dirname(this.filepath);
+        if (dir && dir !== '.' && !fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+      }
       this.db = new DatabaseSync(this.filepath);
       initSchema(this.db, this.filepath);
     } catch (err) {
@@ -305,22 +314,78 @@ export class Database {
     }
   }
 
-  queueOutbox({ id, from, to, content, isAction = false, isSnippet = false, isE2EE = false, timestamp = new Date().toISOString() }) {
+  cleanExpiredOutbox(
+    ttl = (CONFIG && CONFIG.outboxTtl) ? CONFIG.outboxTtl : 86400000,
+    maxRetries = (CONFIG && CONFIG.outboxMaxRetries) ? CONFIG.outboxMaxRetries : 20
+  ) {
+    if (!this.db || (typeof this.db.open === 'boolean' && !this.db.open)) return 0;
+    try {
+      const now = Date.now();
+      const cutoff = now - ttl;
+
+      // 1. Azami yeniden deneme sayisini asan iletileri sil
+      const retryStmt = this.db.prepare('DELETE FROM outbox WHERE retries >= ?');
+      const retryInfo = retryStmt.run(maxRetries);
+
+      // 2. TTL suresi dolan iletileri sil (created_at veya timestamp uzerinden)
+      const cutoffIso = new Date(cutoff).toISOString();
+      let ttlCleaned = 0;
+      try {
+        const ttlStmt = this.db.prepare(`
+          DELETE FROM outbox 
+          WHERE (created_at > 0 AND created_at < ?)
+             OR (created_at <= 0 AND timestamp < ?)
+        `);
+        const ttlInfo = ttlStmt.run(cutoff, cutoffIso);
+        ttlCleaned = ttlInfo?.changes || 0;
+      } catch {
+        const fallbackTtlStmt = this.db.prepare('DELETE FROM outbox WHERE timestamp < ?');
+        const fallbackInfo = fallbackTtlStmt.run(cutoffIso);
+        ttlCleaned = fallbackInfo?.changes || 0;
+      }
+
+      const totalCleaned = (retryInfo?.changes || 0) + ttlCleaned;
+      if (totalCleaned > 0) {
+        log.info(I18n.t('DB_OUTBOX_CLEANED', { count: totalCleaned }));
+      }
+      return totalCleaned;
+    } catch (err) {
+      log.error(I18n.t('DB_OUTBOX_CLEAN_ERR', { error: err.message }));
+      return 0;
+    }
+  }
+
+  queueOutbox({ id, from, to, content, isAction = false, isSnippet = false, isE2EE = false, timestamp = new Date().toISOString(), createdAt = Date.now() }) {
     const outboxId = id || `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const nextRetry = Date.now() + 5000;
+    const created = typeof createdAt === 'number' && !isNaN(createdAt) && createdAt > 0 ? createdAt : Date.now();
 
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO outbox (id, sender, receiver, content, is_action, is_snippet, is_e2ee, retries, next_retry, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-    `);
-
-    stmt.run(outboxId, from, to, content, isAction ? 1 : 0, isSnippet ? 1 : 0, isE2EE ? 1 : 0, nextRetry, timestamp);
+    try {
+      const stmt = this.db.prepare(`
+        INSERT OR REPLACE INTO outbox (id, sender, receiver, content, is_action, is_snippet, is_e2ee, retries, next_retry, timestamp, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+      `);
+      stmt.run(outboxId, from, to, content, isAction ? 1 : 0, isSnippet ? 1 : 0, isE2EE ? 1 : 0, nextRetry, String(timestamp), created);
+    } catch {
+      const fallbackStmt = this.db.prepare(`
+        INSERT OR REPLACE INTO outbox (id, sender, receiver, content, is_action, is_snippet, is_e2ee, retries, next_retry, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+      `);
+      fallbackStmt.run(outboxId, from, to, content, isAction ? 1 : 0, isSnippet ? 1 : 0, isE2EE ? 1 : 0, nextRetry, String(timestamp));
+    }
   }
 
   getPendingOutbox(forceAll = false) {
     if (!this.db || (typeof this.db.open === 'boolean' && !this.db.open)) return [];
     try {
       const now = Date.now();
+      if (!this._lastOutboxClean || now - this._lastOutboxClean >= 5000) {
+        this._lastOutboxClean = now;
+        if (typeof this.cleanExpiredOutbox === 'function') {
+          try { this.cleanExpiredOutbox(); } catch {}
+        }
+      }
+
       const stmt = forceAll
         ? this.db.prepare('SELECT * FROM outbox LIMIT 50')
         : this.db.prepare('SELECT * FROM outbox WHERE next_retry <= ? LIMIT 50');
@@ -336,7 +401,10 @@ export class Database {
         isE2EE: r.is_e2ee === 1,
         retries: r.retries,
         nextRetry: r.next_retry,
-        timestamp: r.timestamp
+        timestamp: r.timestamp,
+        createdAt: r.created_at && r.created_at > 0
+          ? r.created_at
+          : (typeof r.timestamp === 'number' ? r.timestamp : (new Date(r.timestamp).getTime() || now))
       }));
     } catch {
       return [];
@@ -348,18 +416,42 @@ export class Database {
     stmt.run(id);
   }
 
-  updateOutboxRetry(id) {
-    const selectStmt = this.db.prepare('SELECT retries FROM outbox WHERE id = ?');
-    const row = selectStmt.get(id);
+  updateOutboxRetry(
+    id,
+    maxRetries = (CONFIG && CONFIG.outboxMaxRetries) ? CONFIG.outboxMaxRetries : 20,
+    ttl = (CONFIG && CONFIG.outboxTtl) ? CONFIG.outboxTtl : 86400000
+  ) {
+    let row;
+    try {
+      const selectStmt = this.db.prepare('SELECT retries, timestamp, created_at FROM outbox WHERE id = ?');
+      row = selectStmt.get(id);
+    } catch {
+      const fallbackStmt = this.db.prepare('SELECT retries FROM outbox WHERE id = ?');
+      row = fallbackStmt.get(id);
+    }
 
     if (row) {
-      const nextRetries = row.retries + 1;
+      const nextRetries = (row.retries || 0) + 1;
+      const now = Date.now();
+      const createdAt = row.created_at && row.created_at > 0
+        ? row.created_at
+        : (typeof row.timestamp === 'number' ? row.timestamp : (new Date(row.timestamp).getTime() || now));
+      const isExpired = (now - createdAt) > ttl;
+
+      if (nextRetries >= maxRetries || isExpired) {
+        log.warn(I18n.t('FED_OUTBOX_EXPIRED', { id, retries: nextRetries }));
+        this.removeOutbox(id);
+        return { expired: true, retries: nextRetries };
+      }
+
       const delay = Math.min(120000, 5000 * Math.pow(1.5, Math.min(nextRetries, 10)));
-      const nextRetry = Date.now() + delay;
+      const nextRetry = now + delay;
 
       const updateStmt = this.db.prepare('UPDATE outbox SET retries = ?, next_retry = ? WHERE id = ?');
       updateStmt.run(nextRetries, nextRetry, id);
+      return { expired: false, retries: nextRetries, nextRetry };
     }
+    return null;
   }
 
   resetOutboxForTarget(target) {

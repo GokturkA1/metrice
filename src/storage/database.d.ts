@@ -30,6 +30,20 @@ export interface DbNodeIdentity {
   kemKeyPair: KeyPairPem;
 }
 
+export interface OutboxItem {
+  id: string;
+  from: string;
+  to: string;
+  content: string;
+  isAction: boolean;
+  isSnippet: boolean;
+  isE2EE: boolean;
+  retries: number;
+  nextRetry: number;
+  timestamp: string;
+  createdAt: number;
+}
+
 export class Database {
   filepath: string;
   db: any;
@@ -49,4 +63,20 @@ export class Database {
   getChannelMessages(channel: string, limit?: number): DbMessage[];
   clearConversationForUser(userAddress: string, targetAddress: string): void;
   deleteExpiredCircuits(maxAgeMs?: number): any;
+  queueOutbox(options: {
+    id?: string;
+    from: string;
+    to: string;
+    content: string;
+    isAction?: boolean;
+    isSnippet?: boolean;
+    isE2EE?: boolean;
+    timestamp?: string;
+    createdAt?: number;
+  }): void;
+  getPendingOutbox(forceAll?: boolean): OutboxItem[];
+  removeOutbox(id: string): void;
+  cleanExpiredOutbox(ttl?: number, maxRetries?: number): number;
+  updateOutboxRetry(id: string, maxRetries?: number, ttl?: number): { expired: boolean; retries: number; nextRetry?: number } | null;
+  resetOutboxForTarget(target: string): void;
 }

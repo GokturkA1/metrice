@@ -29,6 +29,8 @@ export const CONFIG = {
   rendezvousKeepaliveInterval: parseInt(process.env.RENDEZVOUS_KEEPALIVE_MS || '30000', 10),
   presenceTtl: parseInt(process.env.PRESENCE_TTL_MS || '60000', 10),
   circuitTtl: parseInt(process.env.CIRCUIT_TTL_MS || '600000', 10),
+  outboxTtl: parseInt(process.env.OUTBOX_TTL_MS || '86400000', 10),
+  outboxMaxRetries: parseInt(process.env.OUTBOX_MAX_RETRIES || '20', 10),
   uniformCellSize: parseInt(process.env.UNIFORM_CELL_SIZE || '2048', 10),
   secureBufferLimit: parseInt(process.env.SECURE_BUFFER_LIMIT || '65536', 10),
 

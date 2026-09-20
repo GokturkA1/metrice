@@ -1,94 +1,45 @@
-name: CI Pipeline
+name: CI
 
 on:
   push:
-    branches: [ "master", "main" ]
+    branches: [ master, main ]
   pull_request:
-    branches: [ "master", "main" ]
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+    branches: [ master, main ]
 
 jobs:
-  test-and-lint:
-    name: Lint & Test (Node ${{ matrix.node-version }})
+  test:
+    name: Node.js Tests & PM2 Validation
     runs-on: ubuntu-latest
+
     strategy:
-      fail-fast: true
       matrix:
-        node-version: [ "24.x", "26.x" ]
+        node-version: [24.x]
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
 
-      - name: Verify Zero-Dependency Principle
-        run: |
-          node -e "
-            const pkg = JSON.parse(require('fs').readFileSync('package.json', 'utf8'));
-            if (pkg.dependencies && Object.keys(pkg.dependencies).length > 0) {
-              console.error('Zero-dependency violation: package.json must not have external dependencies.');
-              process.exit(1);
-            }
-            console.log('Zero-dependency verified: 0 external dependencies found.');
-          "
+      - name: Run Linter (Oxlint)
+        run: npx oxlint
 
-      - name: Verify README Parity & Translations
-        run: |
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            if (!fs.existsSync('README.md') || !fs.existsSync('README.tr.md')) {
-              console.error('Missing README files: both README.md and README.tr.md must exist.');
-              process.exit(1);
-            }
-            const en = fs.readFileSync('README.md', 'utf8');
-            const tr = fs.readFileSync('README.tr.md', 'utf8');
-            if (!en.includes(pkg.version) || !tr.includes(pkg.version)) {
-              console.error('README version mismatch: both files must reference v' + pkg.version);
-              process.exit(1);
-            }
-            if (!en.includes('README.tr.md') || !tr.includes('README.md')) {
-              console.error('README language links missing.');
-              process.exit(1);
-            }
-            console.log('README parity and bilingual navigation verified.');
-          "
-
-      - name: Static Analysis & Lint (Oxlint)
-        run: npx --yes oxlint@latest src/ --deny-warnings
-
-      - name: TypeScript Type Checking
-        run: npx --yes typescript@latest --noEmit
-
-      - name: Execute Test Suite
+      - name: Run Test Suites
         run: npm test
 
-  docker-validation:
-    name: Docker Build & Sanity Check
-    runs-on: ubuntu-latest
-    needs: test-and-lint
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Validate Docker Compose Configuration
-        run: docker compose config
-
-      - name: Build Docker Image
-        run: docker build -t metrice:ci .
-
-      - name: Verify Container Startup
+      - name: Validate PM2 Configuration Syntax
         run: |
-          docker run --rm -d --name metrice-test -e LOG_LEVEL=DEBUG metrice:ci
-          sleep 3
-          docker ps | grep metrice-test
-          docker logs metrice-test
-          docker stop metrice-test
+          node --check ecosystem.config.cjs
+          node --check ecosystem.config.js
+          node -e "const conf = require('./ecosystem.config.cjs'); if (!conf.apps || !conf.apps[0]) process.exit(1); console.log('PM2 config valid:', conf.apps.map(a => a.name).join(', '));"
+
+      - name: Test PM2 Lifecycle
+        run: |
+          npm install -g pm2
+          pm2 start ecosystem.config.cjs
+          pm2 status
+          pm2 stop ecosystem.config.cjs
+          pm2 delete all

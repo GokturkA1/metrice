@@ -32,6 +32,8 @@ export default {
   DB_MIGRATION_WARN: 'Migrasyon uyarısı: {error}',
   DB_WAL_CLOSED: 'Veritabanı WAL temizlendi ve güvenle kapatıldı.',
   DB_CLOSE_ERROR: 'Veritabanı kapatılırken hata: {error}',
+  DB_OUTBOX_CLEANED: '{count} adet süresi dolmuş veya iletilemeyen giden kutusu (outbox) mesajı temizlendi',
+  DB_OUTBOX_CLEAN_ERR: 'Süresi dolmuş giden kutusu mesajları temizlenemedi: {error}',
 
   // Peer Manager Logs
   PEER_CACHE_LOADED: 'Dinamik eş havuzu yüklendi ({count} eş)',
@@ -53,6 +55,7 @@ export default {
   FED_CONN_CLOSED: 'Federasyon bağlantısı kapandı: {peer}',
   FED_OUTBOX_SENT: 'Outbox mesajı başarıyla iletildi: {id}',
   FED_OUTBOX_QUEUED: 'Mesaj iletilemedi, Outbox kuyruğuna alınıyor ({to}): {error}',
+  FED_OUTBOX_EXPIRED: 'Giden kutusu (Outbox) mesajı zaman aşımına uğradı veya azami deneme sınırını aştı ({id}, {retries} deneme), siliniyor',
   FED_CHANNEL_SUBSCRIBED: 'Uzak kanal abonesi eklendi: {peer} -> {channel}',
   FED_CHANNEL_UNSUBSCRIBED: 'Uzak kanal abonesi çıkarıldı: {peer} -> {channel}',
   FED_NODE_IDENTITY_READY: 'Düğüm Kimliği Aktif -> Ed25519 & Kyber-768 | Adres: {address}',
@@ -298,6 +301,7 @@ export default {
   FED_RDV_IP_LIMIT_REACHED: 'Rendezvous IP sınırı aşıldı: {ip} azami {max} aktif tünel limitine ulaştı',
   FED_RDV_TUNNEL_CLOSED: 'Rendezvous tüneli kapandı: {node}',
   FED_RDV_TUNNEL_BOUND: 'Rendezvous tüneli başarıyla bağlandı: {node} (Aktif tüneller: {current}/64)',
+  FED_RDV_BOUND_SUCCESS: 'EDGE düğümü {node} ile rendezvous ters tüneli başarıyla kuruldu (Aktif tünel: {total})',
   FED_PRESENCE_ANNOUNCE_SKEW: 'Varlık anonsu zaman aşımı ({node}): Saat farkı 24 saati aştı ({seconds}s)',
   FED_ROUTE_UPDATE_SKEW: 'Rota güncellemesi zaman aşımı ({node}): Saat farkı 24 saati aştı ({seconds}s)',
   FED_AUTONAT_CONSENSUS: 'AutoNAT: Reflected IP konsensüsüne varıldı: {ip} ({votes} eş onayı)',

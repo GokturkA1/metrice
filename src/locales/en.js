@@ -33,6 +33,8 @@ export default {
   DB_WAL_CLOSED: 'Database WAL flushed and safely closed.',
   DB_CLOSE_ERROR: 'Error closing database: {error}',
   DB_LEGACY_CIRCUITS_UPGRADED: 'Legacy active_circuits schema detected and upgraded to composite circuit_key.',
+  DB_OUTBOX_CLEANED: 'Cleaned {count} expired or unroutable outbox messages',
+  DB_OUTBOX_CLEAN_ERR: 'Failed to clean expired outbox messages: {error}',
 
   // Peer Manager Logs
   PEER_CACHE_LOADED: 'Dynamic peer pool loaded ({count} peers)',
@@ -54,6 +56,7 @@ export default {
   FED_CONN_CLOSED: 'Federation connection closed: {peer}',
   FED_OUTBOX_SENT: 'Outbox message successfully delivered: {id}',
   FED_OUTBOX_QUEUED: 'Message could not be delivered, queued in Outbox ({to}): {error}',
+  FED_OUTBOX_EXPIRED: 'Outbox message expired or exceeded maximum retries ({id}, {retries} retries), discarding',
   FED_CHANNEL_SUBSCRIBED: 'Remote channel subscriber added: {peer} -> {channel}',
   FED_CHANNEL_UNSUBSCRIBED: 'Remote channel subscriber removed: {peer} -> {channel}',
   FED_NODE_IDENTITY_READY: 'Node Identity Active -> Ed25519 & Kyber-768 | Address: {address}',
@@ -77,6 +80,7 @@ export default {
   FED_RDV_IP_LIMIT_REACHED: 'Rendezvous IP limit reached: {ip} reached maximum {max} active rendezvous slots',
   FED_RDV_TUNNEL_CLOSED: 'Rendezvous tunnel closed: {node}',
   FED_RDV_TUNNEL_BOUND: 'Rendezvous tunnel successfully bound: {node} (Active tunnels: {current}/64)',
+  FED_RDV_BOUND_SUCCESS: 'Rendezvous reverse tunnel established successfully with EDGE {node} (Active tunnels: {total})',
   FED_PRESENCE_ANNOUNCE_SKEW: 'Presence announcement timeout ({node}): Clock skew exceeds 24h ({seconds}s)',
   FED_ROUTE_UPDATE_SKEW: 'Route update timeout ({node}): Clock skew exceeds 24h ({seconds}s)',
   FED_AUTONAT_CONSENSUS: 'AutoNAT: Reflected IP consensus reached: {ip} ({votes} peer confirmations)',

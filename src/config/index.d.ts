@@ -21,6 +21,8 @@ export interface AppConfig {
   rendezvousKeepaliveInterval: number;
   presenceTtl: number;
   circuitTtl: number;
+  outboxTtl: number;
+  outboxMaxRetries: number;
   uniformCellSize: number;
   secureBufferLimit: number;
   trustProxy: boolean;

@@ -12,12 +12,9 @@ test_*.json
 .env
 .env.*
 *.log
-ARCHITECT.txt
-REPORT.txt
-REPO_PLAN.txt
+*.txt
 SECURITY.md
 LICENSE
 README.md
-project_dump.txt
 dump.js
 scratch/

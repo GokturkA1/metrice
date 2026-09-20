@@ -1,4 +1,5 @@
 # Runtime and Database
+data/
 data_*.db*
 peers_*.json
 *.db

@@ -59,7 +59,8 @@ export function initSchema(db, filepath) {
       is_e2ee INTEGER DEFAULT 0,
       retries INTEGER DEFAULT 0,
       next_retry INTEGER NOT NULL,
-      timestamp TEXT NOT NULL
+      timestamp TEXT NOT NULL,
+      created_at INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS routing_table (
@@ -83,6 +84,7 @@ export function initSchema(db, filepath) {
     CREATE INDEX IF NOT EXISTS idx_circuits_cid ON active_circuits(circuit_id);
     CREATE INDEX IF NOT EXISTS idx_circuits_created ON active_circuits(created_at);
     CREATE INDEX IF NOT EXISTS idx_routing_seen ON routing_table(last_seen);
+    CREATE INDEX IF NOT EXISTS idx_outbox_next_retry ON outbox(next_retry);
   `);
 
   try {
@@ -127,6 +129,15 @@ export function initSchema(db, filepath) {
         WHERE public_key IS NOT NULL AND public_key != '' AND public_keys = '[]';
       `);
     }
+
+    const outboxInfo = db.prepare('PRAGMA table_info(outbox)').all();
+    if (outboxInfo.length > 0 && !outboxInfo.some((col) => col.name === 'created_at')) {
+      db.exec("ALTER TABLE outbox ADD COLUMN created_at INTEGER DEFAULT 0;");
+      db.exec("UPDATE outbox SET created_at = CAST(strftime('%s', timestamp) AS INTEGER) * 1000 WHERE created_at = 0 AND timestamp LIKE '%-%';");
+      db.exec("UPDATE outbox SET created_at = CAST(timestamp AS INTEGER) WHERE created_at = 0 AND timestamp NOT LIKE '%-%';");
+      db.exec("UPDATE outbox SET created_at = strftime('%s', 'now') * 1000 WHERE created_at <= 0;");
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_outbox_retry ON outbox(next_retry, created_at);");
 
     // Profil kontaklarini mevcut locale dogrultusunda senkronize et
     try {

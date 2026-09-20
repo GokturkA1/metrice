@@ -2,7 +2,7 @@
   <img src="metrice-banner-koyu.svg" alt="Metrice Dağıtık P2P Mesh Başlık" width="100%">
 </p>
 
-# Metrice v2.7.1
+# Metrice v2.7.2
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/lisans-GPLv3-blue.svg" alt="Lisans: GPLv3"></a>
@@ -79,7 +79,7 @@ Sistem; NIST FIPS 203 ML-KEM-768 anahtar kapsülleme, Ed25519 tabanlı RFC 4648 
   - Anahtar Değişimi: `curve25519-sha256`
   - Sunucu Host Anahtarı: `ssh-ed25519`
   - Taşıma Şifrelemesi: `aes128-ctr` veya `aes256-gcm`
-- **Dinamik Sürüm Senkronizasyonu:** Sunucu karşılama kimliği (`sshServerVersion`), `package.json` ile dinamik senkronize edilir (`SSH-2.0-Metrice_2.7.1`) ve `SSH_SERVER_VERSION` ortam değişkeni ile tamamen maskelenebilir.
+- **Dinamik Sürüm Senkronizasyonu:** Sunucu karşılama kimliği (`sshServerVersion`), `package.json` ile dinamik senkronize edilir (`SSH-2.0-Metrice_2.7.2`) ve `SSH_SERVER_VERSION` ortam değişkeni ile tamamen maskelenebilir.
 - **Donanım Açık Anahtarı Mühürlemeli İki Faktörlü Kasa (2FA Vault):**
   - Parola asla yalın haliyle işlenmez. Kullanıcı parolası, istemcinin fiziksel Ed25519 açık anahtarından türetilen 32 baytlık tuz (salt) ile birleştirilir.
   - Scrypt (N=16384, r=8, p=1, maxmem 64 MB) algoritmasından geçirilerek anahtar türetilir.
@@ -282,13 +282,15 @@ Tüm parametreler ortam değişkenleri (`process.env`) veya `src/config/index.js
 | `publicClientPort` | `PUBLIC_CLIENT_PORT` / `CLIENT_PUBLIC_PORT` | `CLIENT_PORT` (2222) | Dış ağa duyurulan genel Telnet TUI portu |
 | `healthPort` | `HEALTH_PORT` | `8050` | TCP Sağlık ve Kalp Atışı (Heartbeat) dinleme portu |
 | `allowOuterHeartbeat` | `ALLOW_OUTER_HEARTBEAT` | `false` | TCP Sağlık portunu dış ağa (`0.0.0.0`) açma izni (Varsayılan: Yalnızca `127.0.0.1`) |
-| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.7.1'` | SSH sunucusu protokol kimlik dizgesi (Sürüm sistemi ile dinamik) |
+| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.7.2'` | SSH sunucusu protokol kimlik dizgesi (Sürüm sistemi ile dinamik) |
 | `meshRole` | `MESH_ROLE` | `'EDGE'` | Düğüm rolü (`'RELAY'` veya `'EDGE'`) |
 | `bootstrapPeers` | `BOOTSTRAP_PEERS` | `''` | Kalıcı başlangıç ve korumalı röle eş listesi (virgülle ayrılmış) |
 | `maxRendezvousTunnels`| `MAX_RENDEZVOUS_TUNNELS` | `64` | Bir RELAY düğümünün kabul edeceği azami ters tünel sayısı |
 | `rendezvousKeepaliveInterval` | `RENDEZVOUS_KEEPALIVE_MS` | `30000` | Ters tünel denetim aralığı (0x09/0x0A PING-PONG ms) |
 | `presenceTtl` | `PRESENCE_TTL_MS` | `60000` | Yönlendirme tablosu varlık süresi (ms) |
 | `circuitTtl` | `CIRCUIT_TTL_MS` | `600000` | Onion devreleri yaşam süresi (ms) |
+| `outboxTtl` | `OUTBOX_TTL_MS` | `86400000` | Giden kutusu (Outbox) mesaj yaşam süresi sınırı ms cinsinden (24 saat) |
+| `outboxMaxRetries` | `OUTBOX_MAX_RETRIES` | `20` | İletim için azami yeniden deneme sınırı (sınır aşılınca silinir) |
 | `uniformCellSize` | `UNIFORM_CELL_SIZE` | `2048` | Sabit soğan hücresi boyutu (bayt) |
 | `secureBufferLimit` | `SECURE_BUFFER_LIMIT` | `65536` | Çerçeveleme tampon üst sınırı (64 KB) |
 | `trustProxy` | `TRUST_PROXY` | `false` | Vekil sunucu arkasında IP doğrulama toleransı |
@@ -301,6 +303,37 @@ Tüm parametreler ortam değişkenleri (`process.env`) veya `src/config/index.js
 | `dbFile` | `DB_FILE` | `./data_<PORT>.db` | SQLite veritabanı dosya yolu |
 | `peerCacheFile` | `PEER_FILE` | `./peers_<PORT>.json` | Bilinen eşler önbellek dosya yolu |
 | `logLevel` | `LOG_LEVEL` | `'DEBUG'` | Günlük kayıt seviyesi (`DEBUG`, `INFO`, `WARN`, `ERROR`) |
+
+---
+
+## Süreç Yönetimi ve Dağıtım
+
+### 1. PM2 Süreç Yöneticisi
+Metrice, konteyner ve sunucu dağıtım ortamlarıyla tam uyumlu PM2 yapılandırmaları içerir:
+
+```bash
+# Düğümü RELAY modunda arka planda başlatma (docker-compose varsayılanları ile):
+npm run pm2:start
+# veya doğrudan PM2 ile:
+pm2 start ecosystem.config.cjs
+
+# Düğümü EDGE profili ile başlatma:
+pm2 start ecosystem.config.cjs --env edge
+
+# PM2 süreçlerini yönetme:
+npm run pm2:stop      # Düğümü durdur
+npm run pm2:restart   # Düğümü yeniden başlat
+npm run pm2:logs      # Canlı günlük kayıtlarını izle
+```
+
+### 2. Docker ve Docker Compose
+```bash
+# Docker Compose ile arka planda başlatma:
+docker compose up -d
+
+# Konteyner loglarını canlı izleme:
+docker compose logs -f
+```
 
 ---
 
@@ -400,7 +433,7 @@ Sunucu : OK {"status":"healthy","uptime":3600,"database":"healthy","timestamp":1
 
 # Ayrıntılı Telemetri Dökümü:
 İstemci: STATUS\n
-Sunucu : {"status":"healthy","version":"2.7.1","serverName":"relay1.metrice.network","nodeAddress":"...","meshRole":"RELAY","uptimeSeconds":3600,"timestamp":1789139924935,"database":{"status":"healthy","walMode":true},"federation":{"port":8001,"activeRendezvousTunnels":4,"maxRendezvousTunnels":64,"activeCircuits":2},"peers":{"totalKnown":12,"verified":8},"quantumSecurity":{"mlkem768":true,"strictPq":false},"memory":{"rssMb":42.5,"heapUsedMb":18.2}}\n
+Sunucu : {"status":"healthy","version":"2.7.2","serverName":"relay1.metrice.network","nodeAddress":"...","meshRole":"RELAY","uptimeSeconds":3600,"timestamp":1789139924935,"database":{"status":"healthy","walMode":true},"federation":{"port":8001,"activeRendezvousTunnels":4,"maxRendezvousTunnels":64,"activeCircuits":2},"peers":{"totalKnown":12,"verified":8},"quantumSecurity":{"mlkem768":true,"strictPq":false},"memory":{"rssMb":42.5,"heapUsedMb":18.2}}\n
 
 # Oturumu Sonlandırma:
 İstemci: QUIT\n
@@ -410,14 +443,14 @@ Sunucu : {"status":"healthy","version":"2.7.1","serverName":"relay1.metrice.netw
 
 ## Doğrulama ve Testler
 
-Sistem bütünlüğü `tests/` klasöründeki altı kapsamlı test süiti (toplam 154 test) ve GitHub Actions CI/CD boru hattı ile doğrulanır:
+Sistem bütünlüğü `tests/` klasöründeki altı kapsamlı test süiti (toplam 155 test) ve GitHub Actions CI/CD boru hattı ile doğrulanır:
 
 ```bash
 # Tüm test süitlerini sırayla çalıştırmak için:
 npm test
 
 # Veya test süitlerini bağımsız çalıştırmak için:
-node tests/mesh.test.js       # 1. P2P-Mesh, AutoNAT, Rendezvous, PROXY ve Transit Spesifikasyon Süiti (83 Test)
+node tests/mesh.test.js       # 1. P2P-Mesh, AutoNAT, Rendezvous, PROXY ve Transit Spesifikasyon Süiti (84 Test)
 node tests/protocol.test.js   # 2. Protokol, Ağ Keşfi, Post-Quantum SSH-2 ve Veritabanı Süiti (24 Test)
 node tests/security.test.js   # 3. Protokol Güvenliği, Nonce Replay, DoS, SSRF ve PROXY Spoofing Süiti (10 Test)
 node tests/presence.test.js   # 4. Presence Senkronizasyonu, Dedikodu, Yarış Koruması & Proxy Keepalive (8 Test)

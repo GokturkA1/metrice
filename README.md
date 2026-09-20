@@ -2,7 +2,7 @@
   <img src="metrice-banner-koyu.svg" alt="Metrice Decentralized P2P Mesh Banner" width="100%">
 </p>
 
-# Metrice v2.7.1
+# Metrice v2.7.2
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue.svg" alt="License: GPLv3"></a>
@@ -79,7 +79,7 @@ The system incorporates NIST FIPS 203 ML-KEM-768 key encapsulation, Ed25519-base
   - Key Exchange: `curve25519-sha256`
   - Server Host Key: `ssh-ed25519`
   - Symmetric Cipher: `aes128-ctr` or `aes256-gcm`
-- **Dynamic Version Synchronisation:** Server identification string (`sshServerVersion`) synchronizes dynamically with `package.json` (`SSH-2.0-Metrice_2.7.1`) and is configurable via `SSH_SERVER_VERSION`.
+- **Dynamic Version Synchronisation:** Server identification string (`sshServerVersion`) synchronizes dynamically with `package.json` (`SSH-2.0-Metrice_2.7.2`) and is configurable via `SSH_SERVER_VERSION`.
 - **Two-Factor Hardware Key Binding (2FA Vault):**
   - Passwords are never verified directly. The password is salted with the client's physical Ed25519 public key (32 bytes).
   - Stretched via Scrypt (N=16384, r=8, p=1, maxmem 64 MB).
@@ -282,13 +282,15 @@ All settings can be configured via environment variables (`process.env`) or `src
 | `publicClientPort` | `PUBLIC_CLIENT_PORT` / `CLIENT_PUBLIC_PORT` | `CLIENT_PORT` (2222) | Public Telnet TUI port announced to peers |
 | `healthPort` | `HEALTH_PORT` | `8050` | TCP Health and Heartbeat listening port |
 | `allowOuterHeartbeat` | `ALLOW_OUTER_HEARTBEAT` | `false` | Allow outer network access to TCP Health port on `0.0.0.0` (Default: `127.0.0.1` only) |
-| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.7.1'` | SSH server identification banner |
+| `sshServerVersion` | `SSH_SERVER_VERSION` | `'SSH-2.0-Metrice_2.7.2'` | SSH server identification banner |
 | `meshRole` | `MESH_ROLE` | `'EDGE'` | Node routing role (`'RELAY'` or `'EDGE'`) |
 | `bootstrapPeers` | `BOOTSTRAP_PEERS` | `''` | Comma-separated list of static bootstrap relay peers |
 | `maxRendezvousTunnels`| `MAX_RENDEZVOUS_TUNNELS` | `64` | Maximum incoming reverse tunnels a RELAY accepts |
 | `rendezvousKeepaliveInterval` | `RENDEZVOUS_KEEPALIVE_MS` | `30000` | Reverse tunnel keepalive interval (PING/PONG ms) |
 | `presenceTtl` | `PRESENCE_TTL_MS` | `60000` | Routing table presence expiration TTL (ms) |
 | `circuitTtl` | `CIRCUIT_TTL_MS` | `600000` | Onion circuit lifespan (ms) |
+| `outboxTtl` | `OUTBOX_TTL_MS` | `86400000` | Outbox message time-to-live expiration threshold in ms (24h) |
+| `outboxMaxRetries` | `OUTBOX_MAX_RETRIES` | `20` | Maximum transmission retry threshold before discarding |
 | `uniformCellSize` | `UNIFORM_CELL_SIZE` | `2048` | Constant onion cell size in bytes |
 | `secureBufferLimit` | `SECURE_BUFFER_LIMIT` | `65536` | Framing buffer security threshold (64 KB) |
 | `trustProxy` | `TRUST_PROXY` | `false` | Header resolution tolerance behind reverse proxies |
@@ -301,6 +303,37 @@ All settings can be configured via environment variables (`process.env`) or `src
 | `dbFile` | `DB_FILE` | `./data_<PORT>.db` | SQLite database file path |
 | `peerCacheFile` | `PEER_FILE` | `./peers_<PORT>.json` | Known peer cache file path |
 | `logLevel` | `LOG_LEVEL` | `'DEBUG'` | Log verbosity (`DEBUG`, `INFO`, `WARN`, `ERROR`) |
+
+---
+
+## Process Management & Deployment
+
+### 1. PM2 Process Manager
+Metrice includes production-ready PM2 ecosystem configurations matching the container deployment specifications:
+
+```bash
+# Start node as RELAY daemon (matching docker-compose defaults):
+npm run pm2:start
+# or directly with PM2:
+pm2 start ecosystem.config.cjs
+
+# Start node with EDGE profile:
+pm2 start ecosystem.config.cjs --env edge
+
+# Manage PM2 instance:
+npm run pm2:stop      # Stop node process
+npm run pm2:restart   # Restart node process
+npm run pm2:logs      # Stream real-time logs
+```
+
+### 2. Docker & Docker Compose
+```bash
+# Start in background using Docker Compose:
+docker compose up -d
+
+# View container logs:
+docker compose logs -f
+```
 
 ---
 
@@ -400,7 +433,7 @@ Server: OK {"status":"healthy","uptime":3600,"database":"healthy","timestamp":17
 
 # Full Telemetry Status Dump:
 Client: STATUS\n
-Server: {"status":"healthy","version":"2.7.1","serverName":"relay1.metrice.network","nodeAddress":"...","meshRole":"RELAY","uptimeSeconds":3600,"timestamp":1789139924935,"database":{"status":"healthy","walMode":true},"federation":{"port":8001,"activeRendezvousTunnels":4,"maxRendezvousTunnels":64,"activeCircuits":2},"peers":{"totalKnown":12,"verified":8},"quantumSecurity":{"mlkem768":true,"strictPq":false},"memory":{"rssMb":42.5,"heapUsedMb":18.2}}\n
+Server: {"status":"healthy","version":"2.7.2","serverName":"relay1.metrice.network","nodeAddress":"...","meshRole":"RELAY","uptimeSeconds":3600,"timestamp":1789139924935,"database":{"status":"healthy","walMode":true},"federation":{"port":8001,"activeRendezvousTunnels":4,"maxRendezvousTunnels":64,"activeCircuits":2},"peers":{"totalKnown":12,"verified":8},"quantumSecurity":{"mlkem768":true,"strictPq":false},"memory":{"rssMb":42.5,"heapUsedMb":18.2}}\n
 
 # Graceful Termination:
 Client: QUIT\n
@@ -410,14 +443,14 @@ Client: QUIT\n
 
 ## Verification & Test Suites
 
-System correctness and protocol resilience are enforced across six comprehensive test suites (154 tests total) and automated GitHub Actions CI/CD workflows:
+System correctness and protocol resilience are enforced across six comprehensive test suites (155 tests total) and automated GitHub Actions CI/CD workflows:
 
 ```bash
 # Execute the entire test suite:
 npm test
 
 # Run individual test suites:
-node tests/mesh.test.js       # 1. P2P-Mesh, AutoNAT, Rendezvous, PROXY & Transit Routing Suite (83 Tests)
+node tests/mesh.test.js       # 1. P2P-Mesh, AutoNAT, Rendezvous, PROXY & Transit Routing Suite (84 Tests)
 node tests/protocol.test.js   # 2. Wire Protocol, Discovery, Post-Quantum SSH-2 & DB Suite (24 Tests)
 node tests/security.test.js   # 3. Security Audit, Nonce Replay, DoS, SSRF & PROXY Spoofing Suite (10 Tests)
 node tests/presence.test.js   # 4. Presence Sync, Gossip Flooding, Stale Drop & Keepalive Suite (8 Tests)
