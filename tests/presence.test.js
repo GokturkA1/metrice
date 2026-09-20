@@ -10,6 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { Database } from '../src/storage/database.js';
 import { PeerManager } from '../src/core/peerManager.js';
@@ -708,6 +709,168 @@ async function runPresenceTestSuite() {
     dbRelay.close();
     dbEdgeA.close();
     dbEdgeB.close();
+
+    // -------------------------------------------------------------
+    // TEST 13: [CROSS-RELAY TRANSİT DM] İki Ayrı Relay Üzerinden Çapraz DM İletimi
+    // -------------------------------------------------------------
+    const dbR1Path = trackFile(path.join(rootDir, 'test_r1.db'));
+    const dbR2Path = trackFile(path.join(rootDir, 'test_r2.db'));
+    const dbE1Path = trackFile(path.join(rootDir, 'test_e1.db'));
+    const dbE2Path = trackFile(path.join(rootDir, 'test_e2.db'));
+
+    [dbR1Path, dbR2Path, dbE1Path, dbE2Path].forEach((p) => { if (fs.existsSync(p)) fs.unlinkSync(p); });
+
+    const dbR1 = new Database(dbR1Path);
+    const dbR2 = new Database(dbR2Path);
+    const dbE1 = new Database(dbE1Path);
+    const dbE2 = new Database(dbE2Path);
+
+    const fedR1 = new FederationEngine(dbR1, new PeerManager());
+    const fedR2 = new FederationEngine(dbR2, new PeerManager());
+    const fedE1 = new FederationEngine(dbE1, new PeerManager());
+    const fedE2 = new FederationEngine(dbE2, new PeerManager());
+
+    fedR1.role = 'RELAY';
+    fedR2.role = 'RELAY';
+    fedE1.role = 'EDGE';
+    fedE2.role = 'EDGE';
+
+    const r1Addr = '198.51.100.101:7171';
+    const r2Addr = '198.51.100.102:7171';
+    fedR1.nodeAddress = r1Addr;
+    fedR2.nodeAddress = r2Addr;
+
+    const e1NodeId = fedE1.nodeId;
+    const e2NodeId = fedE2.nodeId;
+
+    // Relay 1 <-> Relay 2 federe kanalı
+    class TestChannel extends EventEmitter {
+      constructor(peerKey, peerKem, peerAddr) {
+        super();
+        this.isReady = true;
+        this.peerIdentityKey = peerKey;
+        this.peerKemKey = peerKem;
+        this.peerNodeAddress = peerAddr;
+        this.socket = { writable: true };
+        this.targetHandler = null;
+        this.targetChannel = null;
+        this.fromAddr = null;
+      }
+      writePayload(p) {
+        if (this.targetHandler) {
+          setImmediate(() => {
+            const res = this.targetHandler(p, this.targetChannel, this.fromAddr);
+            this.emit('payload', res || { status: 'delivered' });
+          });
+        }
+      }
+    }
+
+    const chanR1toR2 = new TestChannel(fedR2.identityKeyPair.publicKey, fedR2.kemKeyPair.publicKey, r2Addr);
+    const chanR2toR1 = new TestChannel(fedR1.identityKeyPair.publicKey, fedR1.kemKeyPair.publicKey, r1Addr);
+    chanR1toR2.targetHandler = (p, c, f) => fedR2.packetHandler.handleIncoming(p, c, f);
+    chanR1toR2.targetChannel = chanR2toR1;
+    chanR1toR2.fromAddr = r1Addr;
+
+    chanR2toR1.targetHandler = (p, c, f) => fedR1.packetHandler.handleIncoming(p, c, f);
+    chanR2toR1.targetChannel = chanR1toR2;
+    chanR2toR1.fromAddr = r2Addr;
+
+    fedR1.peerManager.addOrUpdate(r2Addr, true, true);
+    fedR2.peerManager.addOrUpdate(r1Addr, true, true);
+    fedR1.connectionPool.set(r2Addr, chanR1toR2);
+    fedR2.connectionPool.set(r1Addr, chanR2toR1);
+
+    // Edge 1 <-> Relay 1
+    const chanE1toR1 = new TestChannel(fedR1.identityKeyPair.publicKey, fedR1.kemKeyPair.publicKey, r1Addr);
+    const chanR1toE1 = new TestChannel(fedE1.identityKeyPair.publicKey, fedE1.kemKeyPair.publicKey, 'edge1:8001');
+    chanE1toR1.targetHandler = (p, c, f) => fedR1.packetHandler.handleIncoming(p, c, f);
+    chanE1toR1.targetChannel = chanR1toE1;
+    chanE1toR1.fromAddr = 'edge1:8001';
+
+    chanR1toE1.targetHandler = (p, c, f) => fedE1.packetHandler.handleIncoming(p, c, f);
+    chanR1toE1.targetChannel = chanE1toR1;
+    chanR1toE1.fromAddr = r1Addr;
+
+    fedE1.boundRendezvousRelays.add(r1Addr);
+    fedE1.rendezvousRelays.set(r1Addr, { channel: chanE1toR1, socket: chanE1toR1.socket });
+    fedR1.rendezvousTunnels.set(e1NodeId, {
+      channel: chanR1toE1,
+      socket: chanR1toE1.socket,
+      boundRendezvousAddr: r1Addr,
+      edgeKemKey: fedE1.kemKeyPair.publicKey,
+      identityPublicKey: fedE1.identityKeyPair.publicKey
+    });
+    fedR1.presenceTable.set(e1NodeId, {
+      nodeId: e1NodeId,
+      role: 'EDGE',
+      rendezvousNodes: [r1Addr],
+      kemPublicKey: fedE1.kemKeyPair.publicKey,
+      identityPublicKey: fedE1.identityKeyPair.publicKey,
+      channels: [],
+      lastSeen: Date.now()
+    });
+
+    // Edge 2 <-> Relay 2
+    const chanE2toR2 = new TestChannel(fedR2.identityKeyPair.publicKey, fedR2.kemKeyPair.publicKey, r2Addr);
+    const chanR2toE2 = new TestChannel(fedE2.identityKeyPair.publicKey, fedE2.kemKeyPair.publicKey, 'edge2:8001');
+    chanE2toR2.targetHandler = (p, c, f) => fedR2.packetHandler.handleIncoming(p, c, f);
+    chanE2toR2.targetChannel = chanR2toE2;
+    chanE2toR2.fromAddr = 'edge2:8001';
+
+    chanR2toE2.targetHandler = (p, c, f) => fedE2.packetHandler.handleIncoming(p, c, f);
+    chanR2toE2.targetChannel = chanE2toR2;
+    chanR2toE2.fromAddr = r2Addr;
+
+    fedE2.boundRendezvousRelays.add(r2Addr);
+    fedE2.rendezvousRelays.set(r2Addr, { channel: chanE2toR2, socket: chanE2toR2.socket });
+    fedR2.rendezvousTunnels.set(e2NodeId, {
+      channel: chanR2toE2,
+      socket: chanR2toE2.socket,
+      boundRendezvousAddr: r2Addr,
+      edgeKemKey: fedE2.kemKeyPair.publicKey,
+      identityPublicKey: fedE2.identityKeyPair.publicKey
+    });
+    fedR2.presenceTable.set(e2NodeId, {
+      nodeId: e2NodeId,
+      role: 'EDGE',
+      rendezvousNodes: [r2Addr],
+      kemPublicKey: fedE2.kemKeyPair.publicKey,
+      identityPublicKey: fedE2.identityKeyPair.publicKey,
+      channels: [],
+      lastSeen: Date.now()
+    });
+
+    let msgAtE2 = null;
+    fedE2.on('message', (m) => {
+      if (m && m.content === 'Selam E2!') msgAtE2 = m;
+    });
+
+    let msgAtE1 = null;
+    fedE1.on('message', (m) => {
+      if (m && m.content === 'Selam E1!') msgAtE1 = m;
+    });
+
+    // E1 (Relay 1 arkasında) -> E2 (Relay 2 arkasında) DM gönderimi
+    await fedE1.sendRemoteMessage(`@user1:${e1NodeId}.mesh`, `@user2:${e2NodeId}.mesh`, 'Selam E2!');
+    await new Promise((r) => setTimeout(r, 60));
+
+    // E2 -> E1 DM yanıtı
+    await fedE2.sendRemoteMessage(`@user2:${e2NodeId}.mesh`, `@user1:${e1NodeId}.mesh`, 'Selam E1!');
+    await new Promise((r) => setTimeout(r, 60));
+
+    const test13Ok = msgAtE2 && msgAtE2.from.includes('user1') && msgAtE1 && msgAtE1.from.includes('user2');
+    record('P.13 [CROSS-RELAY TRANSİT DM] İki Ayrı Relay Üzerinden Çapraz Federe DM İletimi', !!test13Ok,
+      `E2 aldı: ${Boolean(msgAtE2)}, E1 yanıt aldı: ${Boolean(msgAtE1)}`);
+
+    fedR1.close();
+    fedR2.close();
+    fedE1.close();
+    fedE2.close();
+    dbR1.close();
+    dbR2.close();
+    dbE1.close();
+    dbE2.close();
 
   } catch (err) {
     console.error(`\n${COLOR.RED}[HATA] Test sırasında beklenmeyen hata: ${err.message}${COLOR.RESET}`);

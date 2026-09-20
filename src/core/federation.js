@@ -877,7 +877,8 @@ export class FederationEngine extends EventEmitter {
         const route = this.presenceTable.get(target.nodeId) || this.db.getRoute(target.nodeId);
         const targetRdvList = Array.isArray(route?.rendezvousNodes) ? route.rendezvousNodes : [];
 
-        let chosenRelayChan = null;
+        const targetRelayChans = [];
+        let defaultRelayChan = null;
 
         for (const [relayAddr, rObj] of this.rendezvousRelays.entries()) {
           const rChan = rObj.channel;
@@ -889,16 +890,29 @@ export class FederationEngine extends EventEmitter {
           const isTargetRdv = targetRdvList.some((rn) => rn === relayAddr || rn.includes(relayAddr) || relayAddr.includes(rn));
 
           if (isDirectRelay || isTargetRdv) {
-            chosenRelayChan = rChan;
-            break;
+            targetRelayChans.push(rChan);
           }
-          if (!chosenRelayChan && !this.isRelay()) {
-            chosenRelayChan = rChan;
+          if (!defaultRelayChan) {
+            defaultRelayChan = rChan;
           }
         }
 
-        if (chosenRelayChan && typeof chosenRelayChan.writePayload === 'function') {
-          chosenRelayChan.writePayload(payload);
+        // Hedef röle biliniyorsa doğrudan o röleye; bilinmiyorsa bağlı olunan tüm rölelere fan-out:
+        const dispatchChans = targetRelayChans.length > 0
+          ? targetRelayChans
+          : (!this.isRelay()
+              ? Array.from(this.rendezvousRelays.values()).map((r) => r.channel).filter((c) => (!c?.socket || c.socket.writable !== false))
+              : (defaultRelayChan ? [defaultRelayChan] : []));
+
+        let sentAny = false;
+        for (const ch of dispatchChans) {
+          if (ch && typeof ch.writePayload === 'function') {
+            ch.writePayload(payload);
+            sentAny = true;
+          }
+        }
+
+        if (sentAny) {
           return { status: 'delivered' };
         }
       }

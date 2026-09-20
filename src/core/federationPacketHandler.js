@@ -436,10 +436,12 @@ export class FederationPacketHandler {
     }
 
     const currentEdge = fed.presenceTable.get(nodeId) || fed.db.getRoute(nodeId) || {};
+    const existingRdv = Array.isArray(currentEdge.rendezvousNodes) ? currentEdge.rendezvousNodes : [];
+    const mergedRdv = Array.from(new Set([...existingRdv, ...safeRdv]));
     const edgeRecord = {
       nodeId,
       role: role || 'EDGE',
-      rendezvousNodes: safeRdv,
+      rendezvousNodes: mergedRdv.length > 0 ? mergedRdv : safeRdv,
       kemPublicKey: effectiveKemPublicKey || currentEdge.kemPublicKey || null,
       identityPublicKey: identityPublicKey || currentEdge.identityPublicKey || null,
       channels: currentEdge.channels || [],
@@ -541,9 +543,39 @@ export class FederationPacketHandler {
           fed.remoteOnlineUsers.set(payload.from, existing);
         }
 
-        if (parsedSender.nodeId && fed.presenceTable.has(parsedSender.nodeId)) {
-          const pRec = fed.presenceTable.get(parsedSender.nodeId);
-          pRec.lastSeen = now;
+        // Opportunistic Route Learning: Mesajın geldiği kanal/peer Rendezvous Relay bilgisi içeriyorsa rotaya işle
+        let incomingRelayAddr = null;
+        if (channel?.peerNodeAddress && !channel.peerNodeAddress.endsWith('.mesh')) {
+          incomingRelayAddr = channel.peerNodeAddress;
+        } else if (remotePeer && !remotePeer.endsWith('.mesh')) {
+          incomingRelayAddr = remotePeer;
+        }
+
+        if (parsedSender.nodeId) {
+          const pRec = fed.presenceTable.get(parsedSender.nodeId) || fed.db.getRoute(parsedSender.nodeId);
+          if (pRec) {
+            pRec.lastSeen = now;
+            if (incomingRelayAddr) {
+              const currentRdv = Array.isArray(pRec.rendezvousNodes) ? pRec.rendezvousNodes : [];
+              if (!currentRdv.includes(incomingRelayAddr)) {
+                pRec.rendezvousNodes = [...currentRdv, incomingRelayAddr];
+                fed.presenceTable.set(parsedSender.nodeId, pRec);
+                fed.db.upsertRoute(pRec);
+              }
+            }
+          } else if (incomingRelayAddr && parsedSender.nodeId !== fed.nodeId) {
+            const newRec = {
+              nodeId: parsedSender.nodeId,
+              role: 'EDGE',
+              rendezvousNodes: [incomingRelayAddr],
+              kemPublicKey: '',
+              identityPublicKey: '',
+              channels: [],
+              lastSeen: now
+            };
+            fed.presenceTable.set(parsedSender.nodeId, newRec);
+            fed.db.upsertRoute(newRec);
+          }
         }
 
         fed.emit('presence_change');
@@ -567,18 +599,73 @@ export class FederationPacketHandler {
       } else if (fed.channelSubscribers.has(payload.to)) {
         this.forwardToChannelSubscribers(payload.to, { ...msg, hop, ttl }, remotePeer);
       } else if (payload.to.startsWith('@') && hop < ttl) {
-        // Doğrudan Mesaj (DIRECT_MESSAGE) Rendezvous Ters Tünel Transit İletimi:
+        // Doğrudan Mesaj (DIRECT_MESSAGE) Rendezvous Ters Tünel & Çapraz Röle Transit İletimi:
         const targetParsed = AddressHelper.parse(payload.to);
         const targetNodeId = targetParsed?.nodeId;
-        if (targetNodeId && targetNodeId !== fed.nodeId && fed.rendezvousTunnels?.has(targetNodeId)) {
-          const tunnel = fed.rendezvousTunnels.get(targetNodeId);
-          const isSocketWritable = !tunnel?.channel?.socket || tunnel.channel.socket.writable !== false;
-          if (tunnel && tunnel.channel && isSocketWritable) {
-            log.info(I18n.t('FED_TRANSIT_FORWARDED', { from: payload.from, to: payload.to, node: targetNodeId }));
-            if (typeof tunnel.channel.writePayload === 'function') {
-              tunnel.channel.writePayload({ ...payload, hop, ttl });
-            } else if (tunnel.channel.socket && typeof tunnel.channel.socket.write === 'function') {
-              tunnel.channel.socket.write(JSON.stringify({ ...payload, hop, ttl }) + '\n');
+        if (targetNodeId && targetNodeId !== fed.nodeId) {
+          let forwarded = false;
+          // 1. Doğrudan yerel rendezvous ters tünel kontrolü
+          if (fed.rendezvousTunnels?.has(targetNodeId)) {
+            const tunnel = fed.rendezvousTunnels.get(targetNodeId);
+            const isSocketWritable = !tunnel?.channel?.socket || tunnel.channel.socket.writable !== false;
+            if (tunnel && tunnel.channel && isSocketWritable) {
+              log.info(I18n.t('FED_TRANSIT_FORWARDED', { from: payload.from, to: payload.to, node: targetNodeId }));
+              if (typeof tunnel.channel.writePayload === 'function') {
+                tunnel.channel.writePayload({ ...payload, hop, ttl });
+              } else if (tunnel.channel.socket && typeof tunnel.channel.socket.write === 'function') {
+                tunnel.channel.socket.write(JSON.stringify({ ...payload, hop, ttl }) + '\n');
+              }
+              forwarded = true;
+            }
+          }
+
+          // 2. Röle Çapraz Federe Transit İletimi (Cross-Relay Transit Forwarding)
+          if (!forwarded && fed.isRelay()) {
+            const route = fed.presenceTable.get(targetNodeId) || fed.db.getRoute(targetNodeId);
+            const targetRdvList = Array.isArray(route?.rendezvousNodes) ? route.rendezvousNodes : [];
+
+            // Öncelikli olarak hedefin bağlı olduğu bilinen Rendezvous Relay(ler)ine ilet
+            const candidatePeers = new Set();
+            for (const rn of targetRdvList) {
+              if (rn && rn.includes(':') && !rn.endsWith('.mesh')) {
+                const [h, p] = rn.split(':');
+                const pNum = parseInt(p, 10);
+                if (h && !isNaN(pNum) && !fed.isSelfPeerAddress(h, pNum)) {
+                  candidatePeers.add(`${h}:${pNum}`);
+                }
+              }
+            }
+
+            // Hedef röle adresi bilinmiyorsa veya boşsa, bilinen tüm federe röle eşlerine ilet
+            if (candidatePeers.size === 0 && fed.peerManager) {
+              const peers = fed.peerManager.getAllPeers();
+              for (const p of peers) {
+                if (p && p.includes(':') && !p.endsWith('.mesh')) {
+                  const [h, pStr] = p.split(':');
+                  const pNum = parseInt(pStr, 10);
+                  if (h && !isNaN(pNum) && !fed.isSelfPeerAddress(h, pNum)) {
+                    candidatePeers.add(`${h}:${pNum}`);
+                  }
+                }
+              }
+            }
+
+            for (const peerAddr of candidatePeers) {
+              if (remotePeer && (peerAddr === remotePeer || peerAddr.split(':')[0] === remotePeer.split(':')[0])) continue;
+              if (channel?.peerNodeAddress && (peerAddr === channel.peerNodeAddress || peerAddr.split(':')[0] === channel.peerNodeAddress.split(':')[0])) continue;
+
+              const [targetHost, targetPortStr] = peerAddr.split(':');
+              const targetPort = parseInt(targetPortStr, 10);
+              if (!targetHost || isNaN(targetPort)) continue;
+
+              log.info(I18n.t('FED_TRANSIT_CROSS_RELAY', { relay: peerAddr, target: payload.to, from: payload.from }));
+
+              const existingChan = fed.connectionPool.get(peerAddr);
+              if (existingChan && existingChan.isReady && (!existingChan.socket || existingChan.socket.writable !== false)) {
+                existingChan.writePayload({ ...payload, hop, ttl });
+              } else {
+                fed.sendPacket(targetHost, targetPort, { ...payload, hop, ttl }).catch(() => {});
+              }
             }
           }
         }
