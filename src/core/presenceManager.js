@@ -583,6 +583,29 @@ export class PresenceManager {
       channel,
       subscriberNode: fed.meshAddress || fed.nodeId
     };
+
+    // 1. Rendezvous Rölelerine bildir (Edge -> Relay kanalı)
+    if (fed.rendezvousRelays && fed.rendezvousRelays.size > 0) {
+      for (const [, rObj] of fed.rendezvousRelays.entries()) {
+        const rChan = rObj.channel;
+        if (rChan && typeof rChan.writePayload === 'function') {
+          const isWritable = !rChan.socket || rChan.socket.writable !== false;
+          if (isWritable) {
+            try { rChan.writePayload(payload); } catch {}
+          }
+        }
+      }
+    }
+
+    // 2. Doğrudan yerel tünel varsa
+    if (fed.rendezvousTunnels && fed.rendezvousTunnels.has(cleanNodeId)) {
+      const tun = fed.rendezvousTunnels.get(cleanNodeId);
+      if (tun?.channel?.socket?.writable) {
+        try { tun.channel.writePayload(payload); } catch {}
+      }
+    }
+
+    // 3. Onion devresi ile ulaştırmayı dene
     try {
       await fed.sendViaOnion(cleanNodeId, payload);
     } catch {}
@@ -597,6 +620,26 @@ export class PresenceManager {
       channel,
       subscriberNode: fed.meshAddress || fed.nodeId
     };
+
+    if (fed.rendezvousRelays && fed.rendezvousRelays.size > 0) {
+      for (const [, rObj] of fed.rendezvousRelays.entries()) {
+        const rChan = rObj.channel;
+        if (rChan && typeof rChan.writePayload === 'function') {
+          const isWritable = !rChan.socket || rChan.socket.writable !== false;
+          if (isWritable) {
+            try { rChan.writePayload(payload); } catch {}
+          }
+        }
+      }
+    }
+
+    if (fed.rendezvousTunnels && fed.rendezvousTunnels.has(cleanNodeId)) {
+      const tun = fed.rendezvousTunnels.get(cleanNodeId);
+      if (tun?.channel?.socket?.writable) {
+        try { tun.channel.writePayload(payload); } catch {}
+      }
+    }
+
     try {
       await fed.sendViaOnion(cleanNodeId, payload);
     } catch {}

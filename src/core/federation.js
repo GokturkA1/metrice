@@ -868,7 +868,12 @@ export class FederationEngine extends EventEmitter {
     if (target.nodeId) {
       if (target.nodeId === this.nodeId) {
         const msg = this.db.saveMessage(payload);
-        if (msg) this.emit('message', msg);
+        if (msg) {
+          this.emit('message', msg);
+          if (target.type === 'CHANNEL') {
+            this.forwardToChannelSubscribers(target.raw, msg);
+          }
+        }
         return { status: 'delivered' };
       }
 

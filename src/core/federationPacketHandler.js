@@ -596,7 +596,7 @@ export class FederationPacketHandler {
 
       if (payload.to.startsWith('#') && !payload.to.includes(':') && hop < ttl) {
         fed.broadcastChannelMessage({ ...msg, hop, ttl }, remotePeer);
-      } else if (fed.channelSubscribers.has(payload.to)) {
+      } else if (payload.to.startsWith('#') && hop < ttl) {
         this.forwardToChannelSubscribers(payload.to, { ...msg, hop, ttl }, remotePeer);
       } else if (payload.to.startsWith('@') && hop < ttl) {
         // Doğrudan Mesaj (DIRECT_MESSAGE) Rendezvous Ters Tünel & Çapraz Röle Transit İletimi:
@@ -684,6 +684,19 @@ export class FederationPacketHandler {
       fed.channelSubscribers.get(payload.channel).add(payload.subscriberNode);
       log.info(I18n.t('FED_CHANNEL_SUBSCRIBED', { peer: payload.subscriberNode, channel: payload.channel }));
       fed.peerManager.addOrUpdate(payload.subscriberNode, true, true);
+
+      // Röle ise ve kanal sahibi başka bir ters tünel ise, kanal sahibine de aboneliği ilet
+      if (fed.isRelay() && fed.rendezvousTunnels) {
+        const parsedChan = AddressHelper.parse(payload.channel);
+        const ownerNodeId = parsedChan?.nodeId;
+        if (ownerNodeId && ownerNodeId !== fed.nodeId && fed.rendezvousTunnels.has(ownerNodeId)) {
+          const ownerTunnel = fed.rendezvousTunnels.get(ownerNodeId);
+          if (ownerTunnel?.channel?.socket?.writable) {
+            try { ownerTunnel.channel.writePayload(payload); } catch {}
+          }
+        }
+      }
+
       channel.writePayload({ status: 'subscribed', channel: payload.channel });
     }
   }
@@ -693,6 +706,19 @@ export class FederationPacketHandler {
     if (payload.channel && payload.subscriberNode && fed.channelSubscribers.has(payload.channel)) {
       fed.channelSubscribers.get(payload.channel).delete(payload.subscriberNode);
       log.info(I18n.t('FED_CHANNEL_UNSUBSCRIBED', { peer: payload.subscriberNode, channel: payload.channel }));
+
+      // Röle ise ve kanal sahibi başka bir ters tünel ise, kanal sahibine de abonelikten çıkışı ilet
+      if (fed.isRelay() && fed.rendezvousTunnels) {
+        const parsedChan = AddressHelper.parse(payload.channel);
+        const ownerNodeId = parsedChan?.nodeId;
+        if (ownerNodeId && ownerNodeId !== fed.nodeId && fed.rendezvousTunnels.has(ownerNodeId)) {
+          const ownerTunnel = fed.rendezvousTunnels.get(ownerNodeId);
+          if (ownerTunnel?.channel?.socket?.writable) {
+            try { ownerTunnel.channel.writePayload(payload); } catch {}
+          }
+        }
+      }
+
       channel.writePayload({ status: 'unsubscribed', channel: payload.channel });
     }
   }
@@ -839,7 +865,6 @@ export class FederationPacketHandler {
   forwardToChannelSubscribers(channelName, msg, exceptPeer = null) {
     const fed = this.federation;
     const subscribers = fed.channelSubscribers.get(channelName);
-    if (!subscribers) return;
 
     const payload = {
       type: 'CHANNEL_MESSAGE',
@@ -855,23 +880,44 @@ export class FederationPacketHandler {
       timestamp: msg.timestamp
     };
 
-    for (const peer of subscribers) {
-      if (peer === exceptPeer) continue;
-      if (peer.includes(':')) {
-        const [host, portStr] = peer.split(':');
-        const port = parseInt(portStr, 10);
-        if (!host || isNaN(port)) continue;
+    // 1. Kayıtlı Doğrudan Abonelere Dağıtım (host:port veya Onion)
+    if (subscribers) {
+      for (const peer of subscribers) {
+        if (peer === exceptPeer) continue;
+        if (peer.includes(':')) {
+          const [host, portStr] = peer.split(':');
+          const port = parseInt(portStr, 10);
+          if (!host || isNaN(port)) continue;
 
-        fed.sendPacket(host, port, payload).catch(() => {});
-      } else if (AddressHelper.isValidNodeId(peer) || peer.endsWith('.mesh')) {
-        const targetNodeId = peer.replace('.mesh', '');
-        fed.sendViaOnion(targetNodeId, payload).catch(() => {});
+          fed.sendPacket(host, port, payload).catch(() => {});
+        } else if (AddressHelper.isValidNodeId(peer) || peer.endsWith('.mesh')) {
+          const targetNodeId = peer.replace('.mesh', '');
+          fed.sendViaOnion(targetNodeId, payload).catch(() => {});
+        }
       }
     }
 
-    for (const [, tunnel] of fed.rendezvousTunnels.entries()) {
-      if (tunnel && tunnel.channel && tunnel.channel.socket && tunnel.channel.socket.writable) {
-        tunnel.channel.writePayload(payload);
+    // 2. Röle Tarafı: Aktif Yerel Rendezvous Ters Tünellerine Dağıtım
+    if (fed.rendezvousTunnels) {
+      for (const [tNodeId, tunnel] of fed.rendezvousTunnels.entries()) {
+        if (exceptPeer && (tNodeId === exceptPeer || `${tNodeId}.mesh` === exceptPeer)) continue;
+        if (tunnel && tunnel.channel && tunnel.channel.socket && tunnel.channel.socket.writable) {
+          tunnel.channel.writePayload(payload);
+        }
+      }
+    }
+
+    // 3. EDGE Tarafı: Yerel Kanal Mesajını Bağlı Olunan Rendezvous Rölelerine Aktarma
+    if (fed.rendezvousRelays && fed.rendezvousRelays.size > 0) {
+      for (const [relayAddr, rObj] of fed.rendezvousRelays.entries()) {
+        if (exceptPeer && (relayAddr === exceptPeer || relayAddr.split(':')[0] === exceptPeer.split(':')[0])) continue;
+        const rChan = rObj.channel;
+        if (rChan && typeof rChan.writePayload === 'function') {
+          const isWritable = !rChan.socket || rChan.socket.writable !== false;
+          if (isWritable) {
+            rChan.writePayload(payload);
+          }
+        }
       }
     }
   }

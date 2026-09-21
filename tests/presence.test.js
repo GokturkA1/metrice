@@ -872,6 +872,133 @@ async function runPresenceTestSuite() {
     dbE1.close();
     dbE2.close();
 
+    // -------------------------------------------------------------
+    // TEST 14: [EDGE-TO-EDGE KANAL İLETİMİ] İki Edge Düğümü Arasında Relay Üzerinden Çift Yönlü Kanal Mesajı İletimi
+    // -------------------------------------------------------------
+    const dbRelay14Path = trackFile(path.join(rootDir, 'test_r14.db'));
+    const dbEdgeA14Path = trackFile(path.join(rootDir, 'test_ea14.db'));
+    const dbEdgeB14Path = trackFile(path.join(rootDir, 'test_eb14.db'));
+
+    [dbRelay14Path, dbEdgeA14Path, dbEdgeB14Path].forEach((p) => { if (fs.existsSync(p)) fs.unlinkSync(p); });
+
+    const dbRelay14 = new Database(dbRelay14Path);
+    const dbEdgeA14 = new Database(dbEdgeA14Path);
+    const dbEdgeB14 = new Database(dbEdgeB14Path);
+
+    const fedRelay14 = new FederationEngine(dbRelay14, new PeerManager());
+    const fedEdgeA14 = new FederationEngine(dbEdgeA14, new PeerManager());
+    const fedEdgeB14 = new FederationEngine(dbEdgeB14, new PeerManager());
+
+    const relay14Addr = '198.51.100.14:8001';
+    fedRelay14.isRelay = () => true;
+    fedRelay14.meshRole = 'RELAY';
+    fedRelay14.nodeAddress = relay14Addr;
+
+    const edgeA14NodeId = fedEdgeA14.nodeId;
+    const edgeB14NodeId = fedEdgeB14.nodeId;
+
+    fedEdgeA14.isRelay = () => false;
+    fedEdgeA14.meshRole = 'EDGE';
+
+    fedEdgeB14.isRelay = () => false;
+    fedEdgeB14.meshRole = 'EDGE';
+
+    // Mock Kanal Çiftleri
+    const channelRelayToA14 = {
+      isReady: true,
+      peerIdentityKey: fedEdgeA14.identityKeyPair.publicKey,
+      peerKemKey: fedEdgeA14.kemKeyPair.publicKey,
+      socket: { writable: true },
+      writePayload: (p) => fedEdgeA14.packetHandler.handleIncoming(p, channelAToRelay14, relay14Addr)
+    };
+    const channelAToRelay14 = {
+      isReady: true,
+      peerIdentityKey: fedRelay14.identityKeyPair.publicKey,
+      peerKemKey: fedRelay14.kemKeyPair.publicKey,
+      socket: { writable: true },
+      writePayload: (p) => fedRelay14.packetHandler.handleIncoming(p, channelRelayToA14, '198.51.100.141:8001')
+    };
+
+    const channelRelayToB14 = {
+      isReady: true,
+      peerIdentityKey: fedEdgeB14.identityKeyPair.publicKey,
+      peerKemKey: fedEdgeB14.kemKeyPair.publicKey,
+      socket: { writable: true },
+      writePayload: (p) => fedEdgeB14.packetHandler.handleIncoming(p, channelBToRelay14, relay14Addr)
+    };
+    const channelBToRelay14 = {
+      isReady: true,
+      peerIdentityKey: fedRelay14.identityKeyPair.publicKey,
+      peerKemKey: fedRelay14.kemKeyPair.publicKey,
+      socket: { writable: true },
+      writePayload: (p) => fedRelay14.packetHandler.handleIncoming(p, channelRelayToB14, '198.51.100.142:8001')
+    };
+
+    // Edge A, Relay'e bağlansın
+    fedEdgeA14.boundRendezvousRelays.add(relay14Addr);
+    fedEdgeA14.rendezvousRelays.set(relay14Addr, { channel: channelAToRelay14, socket: channelAToRelay14.socket });
+    fedRelay14.rendezvousTunnels.set(edgeA14NodeId, {
+      channel: channelRelayToA14,
+      socket: channelRelayToA14.socket,
+      boundRendezvousAddr: relay14Addr,
+      edgeKemKey: fedEdgeA14.kemKeyPair.publicKey,
+      identityPublicKey: fedEdgeA14.identityKeyPair.publicKey
+    });
+
+    // Edge B, Relay'e bağlansın
+    fedEdgeB14.boundRendezvousRelays.add(relay14Addr);
+    fedEdgeB14.rendezvousRelays.set(relay14Addr, { channel: channelBToRelay14, socket: channelBToRelay14.socket });
+    fedRelay14.rendezvousTunnels.set(edgeB14NodeId, {
+      channel: channelRelayToB14,
+      socket: channelRelayToB14.socket,
+      boundRendezvousAddr: relay14Addr,
+      edgeKemKey: fedEdgeB14.kemKeyPair.publicKey,
+      identityPublicKey: fedEdgeB14.identityKeyPair.publicKey
+    });
+
+    const testChannelName = `#sohbet:${edgeA14NodeId}.mesh`;
+
+    // Edge B kanala abone olur
+    await fedEdgeB14.subscribeNodeChannel(edgeA14NodeId, testChannelName);
+
+    let chanMsgAtB = null;
+    let chanMsgAtA = null;
+
+    fedEdgeB14.on('message', (m) => {
+      if (m && m.to === testChannelName && m.content === 'Kanal Selami Edge A!') {
+        chanMsgAtB = m;
+      }
+    });
+
+    fedEdgeA14.on('message', (m) => {
+      if (m && m.to === testChannelName && m.content === 'Kanal Yaniti Edge B!') {
+        chanMsgAtA = m;
+      }
+    });
+
+    // 1. Edge A kendi yerel kanalına mesaj atar -> Relay üzerinden Edge B'ye ulaşmalı
+    fedEdgeA14.forwardToChannelSubscribers(testChannelName, {
+      id: `m_chan_${Date.now()}_1`,
+      from: `@alice:${edgeA14NodeId}.mesh`,
+      to: testChannelName,
+      content: 'Kanal Selami Edge A!',
+      timestamp: new Date().toISOString()
+    });
+
+    // 2. Edge B kanala yanıt atar -> Relay üzerinden Edge A'ya ulaşmalı
+    await fedEdgeB14.sendRemoteMessage(`@bob:${edgeB14NodeId}.mesh`, testChannelName, 'Kanal Yaniti Edge B!');
+
+    const test14Ok = chanMsgAtB && chanMsgAtB.from.includes('alice') && chanMsgAtA && chanMsgAtA.from.includes('bob');
+    record('P.14 [EDGE-TO-EDGE KANAL İLETİMİ] İki Edge Düğümü Arasında Relay Üzerinden Çift Yönlü Kanal Mesajı İletimi', !!test14Ok,
+      `Edge B kanal mesajı aldı: ${Boolean(chanMsgAtB)}, Edge A kanal yanıtı aldı: ${Boolean(chanMsgAtA)}`);
+
+    fedRelay14.close();
+    fedEdgeA14.close();
+    fedEdgeB14.close();
+    dbRelay14.close();
+    dbEdgeA14.close();
+    dbEdgeB14.close();
+
   } catch (err) {
     console.error(`\n${COLOR.RED}[HATA] Test sırasında beklenmeyen hata: ${err.message}${COLOR.RESET}`);
     console.error(err.stack);
