@@ -226,6 +226,7 @@ export class FederationEngine extends EventEmitter {
       }
     });
 
+    this.server.maxConnections = (CONFIG && CONFIG.maxServerConnections) || 1000;
     this.server.listen(CONFIG.federationPort, () => {
       log.info(I18n.t('FED_LISTENING', { port: CONFIG.federationPort }));
       this.startWorkers();
@@ -368,6 +369,22 @@ export class FederationEngine extends EventEmitter {
       const rawSocket = net.createConnection({ host: targetHost, port: targetPort }, () => {
         rawSocket.setKeepAlive(true, 10000);
       });
+
+      // Guvenlik (MET-05): Baglanti havuzu boyut siniri (Connection pool OOM engelleme)
+      const MAX_POOL_SIZE = (CONFIG && CONFIG.maxConnectionPoolSize) || 500;
+      if (this.connectionPool.size >= MAX_POOL_SIZE && !this.connectionPool.has(key)) {
+        const oldestKey = this.connectionPool.keys().next().value;
+        const oldChannel = this.connectionPool.get(oldestKey);
+        try {
+          if (oldChannel?.socket && typeof oldChannel.socket.destroy === 'function') {
+            oldChannel.socket.destroy();
+          }
+        } catch {}
+        this.connectionPool.delete(oldestKey);
+        if (this.onionRouter && typeof this.onionRouter.removeCircuitsForHop === 'function') {
+          this.onionRouter.removeCircuitsForHop(oldestKey);
+        }
+      }
 
       const secureChannel = new SecureChannel(rawSocket, true, this.myIdentity, this.db, this.nonceTracker);
       this.connectionPool.set(key, secureChannel);

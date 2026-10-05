@@ -12,7 +12,7 @@ const log = new Logger('FEDERATION');
 
 // Nonce Replay Havuzu (Zaman damgasi tabanli TTL ve Kapasite Siniri)
 export class NonceTracker {
-  constructor(ttlMs = 60000, maxCapacity = 10000) {
+  constructor(ttlMs = 60000, maxCapacity = 50000) {
     this.ttlMs = ttlMs;
     this.maxCapacity = maxCapacity;
     this.nonces = new Map(); // nonce -> { timestamp, ip }
@@ -29,11 +29,14 @@ export class NonceTracker {
     }
     this.nonces.set(key, now);
     if (this.nonces.size > this.maxCapacity) {
-      const toRemove = this.nonces.size - this.maxCapacity;
-      let removed = 0;
-      for (const k of this.nonces.keys()) {
-        this.nonces.delete(k);
-        if (++removed >= toRemove) break;
+      this.cleanup(now);
+      if (this.nonces.size > this.maxCapacity) {
+        const toRemove = this.nonces.size - this.maxCapacity;
+        let removed = 0;
+        for (const k of this.nonces.keys()) {
+          this.nonces.delete(k);
+          if (++removed >= toRemove) break;
+        }
       }
     }
     return true;
@@ -137,6 +140,15 @@ export class SecureChannel extends EventEmitter {
     this.isProcessing = false;
     this.myNonce = null;
     this.lastPong = Date.now();
+    // Guvenlik (MET-08): Slowloris ve askida kalan el sikismalara karsi timeout
+    if (this.socket && typeof this.socket.setTimeout === 'function') {
+      this.socket.setTimeout(30000, () => {
+        if (!this.isReady) {
+          log.warn(I18n.t('FED_SECURE_CHANNEL_PARSE_ERR', { error: 'Handshake timeout' }));
+          this.socket.destroy();
+        }
+      });
+    }
 
     this.initSocketHandlers();
     if (this.isInitiator) {
@@ -161,7 +173,7 @@ export class SecureChannel extends EventEmitter {
 
       this.buffer += this.decoder.write(chunk);
       const maxBuffer = (CONFIG && CONFIG.secureBufferLimit) || 65536;
-      if (this.buffer.length > maxBuffer) {
+      if (Buffer.byteLength(this.buffer, 'utf-8') > maxBuffer) {
         log.warn(I18n.t('FED_SECURE_CHANNEL_PARSE_ERR', { error: I18n.t('FED_BUFFER_OVERFLOW_DOS', { max: maxBuffer }) }));
         this.socket.destroy();
         return;
@@ -464,27 +476,18 @@ export class SecureChannel extends EventEmitter {
       return true;
     }
 
-    // 4. Ozel aglar / Container / Proxy toleransi
-    const isPrivateOrCgnatSubnet = (ip) => {
-      return /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.)/.test(ip);
-    };
-    if (isPrivateOrCgnatSubnet(cleanRemote)) {
-      return true;
-    }
-
-    if (process.env.TRUST_PROXY === 'true' || process.env.DOCKER === 'true' || process.env.CONTAINER === 'true') {
-      return true;
-    }
-
-    // 5. Dogrudan IP eslesmesi
+    // 4. Dogrudan IP eslesmesi
     if (declaredHost === cleanRemote) {
       return true;
     }
 
-    // 6. DNS Cozumleme (Domain -> IP Eslesmesi - VDS & Alan Adi Arkasi)
+    // 5. DNS Cozumleme (Domain -> IP Eslesmesi - VDS & Alan Adi Arkasi)
+    // Guvenlik (MET-03): DNS Rebinding saldirilarina karsi dahili IP filtrelemesi
     try {
+      const PRIVATE_RANGES = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1|fe80:|fc00:|fd00:)/i;
       const resolved = await dns.lookup(declaredHost, { all: true });
       return resolved.some((entry) => {
+        if (PRIVATE_RANGES.test(entry.address)) return false; // Dahili IP -> Reddet (DNS Rebinding engeli)
         const entryAddr = net.isIPv6(entry.address) ? AddressHelper.canonicalizeIPv6(entry.address) : entry.address;
         return entryAddr === cleanRemote;
       });
@@ -503,6 +506,9 @@ export class SecureChannel extends EventEmitter {
 
   markReady() {
     this.isReady = true;
+    if (this.socket && typeof this.socket.setTimeout === 'function') {
+      this.socket.setTimeout(0);
+    }
     this.emit('ready');
 
     while (this.pendingQueue.length > 0) {

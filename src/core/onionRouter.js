@@ -300,6 +300,14 @@ export class OnionRouter extends EventEmitter {
           return;
         }
 
+        // Guvenlik (MET-06): Cozulen extendPayload boyut kontrolu
+        const extBytes = Buffer.byteLength(typeof decryptedJson === 'string' ? decryptedJson : JSON.stringify(decryptedJson), 'utf-8');
+        if (extBytes > UNIFORM_CELL_SIZE * 2) {
+          log.warn(I18n.t('ONION_PAYLOAD_SIZE_EXCEEDED', { size: extBytes, max: UNIFORM_CELL_SIZE * 2 }));
+          channel.writePayload({ status: 'error', reason: 'extend_payload_too_large' });
+          return;
+        }
+
         let nextExtendPayload;
         try {
           nextExtendPayload = typeof decryptedJson === 'string' ? JSON.parse(decryptedJson) : decryptedJson;
@@ -420,6 +428,13 @@ export class OnionRouter extends EventEmitter {
 
     // 1. Ara Atlama: Sonraki Relay veya Transit Düğüme İlet
     if (parsed.forwardTo && parsed.cell) {
+      // Guvenlik (MET-06): Relay forwarding hucre boyutu kontrolu
+      const cellBytes = Buffer.byteLength(JSON.stringify(parsed.cell), 'utf-8');
+      if (cellBytes > UNIFORM_CELL_SIZE * 2) {
+        log.warn(I18n.t('ONION_PAYLOAD_SIZE_EXCEEDED', { size: cellBytes, max: UNIFORM_CELL_SIZE * 2 }));
+        return;
+      }
+
       if (typeof parsed.forwardTo !== 'string' || !parsed.forwardTo.includes(':')) {
         log.warn(I18n.t('ONION_CELL_FORWARD_ERR', { forwardTo: String(parsed.forwardTo), error: I18n.t('ONION_INVALID_FORWARD_ADDR') }));
         return;
@@ -486,6 +501,13 @@ export class OnionRouter extends EventEmitter {
 
     // 2. Çıkış / Rendezvous Atlaması: Hedefe Teslim Et
     if (parsed.deliverTo && parsed.payload) {
+      // Guvenlik (MET-06): Cikis/Teslimat payload boyut kontrolu
+      const payloadBytes = Buffer.byteLength(JSON.stringify(parsed.payload), 'utf-8');
+      if (payloadBytes > UNIFORM_CELL_SIZE * 2) {
+        log.warn(I18n.t('ONION_PAYLOAD_SIZE_EXCEEDED', { size: payloadBytes, max: UNIFORM_CELL_SIZE * 2 }));
+        return;
+      }
+
       const targetNodeId = parsed.deliverTo;
       log.info(I18n.t('ONION_CELL_EXIT_REACHED', { node: targetNodeId }));
 

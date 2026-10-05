@@ -81,10 +81,15 @@ export class CryptoHelper {
       maxmem: 64 * 1024 * 1024
     });
 
+    const combinedSalt = crypto.createHash('sha256')
+      .update(clientRawPub)
+      .update(Buffer.from(String(nodeAddress)))
+      .digest('hex');
+
     const rawArrayBuffer = crypto.hkdfSync(
       'sha256',
       scryptKey,
-      Buffer.from(`metrice-vault-salt:${nodeAddress}`),
+      Buffer.from(`metrice-vault-salt:${combinedSalt}`),
       Buffer.from('metrice-vault-seed-v2'),
       32
     );

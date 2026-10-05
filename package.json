@@ -1,6 +1,6 @@
 {
   "name": "metrice",
-  "version": "2.7.7",
+  "version": "2.7.8",
   "description": "Zero-dependency post-quantum P2P mesh network with ML-KEM-768, Ed25519 Base32 identities, 3-hop telescopic onion routing, CGNAT rendezvous reverse tunnels, and native SSH-2.",
   "license": "GPL-3.0-only",
   "type": "module",
@@ -65,7 +65,7 @@
   ],
   "scripts": {
     "start": "node src/index.js",
-    "test": "node tests/mesh.test.js && node tests/protocol.test.js && node tests/security.test.js && node tests/presence.test.js && node tests/crypto-kat.test.js && node tests/health.test.js && node tests/database_lock.test.js",
+    "test": "node tests/mesh.test.js && node tests/protocol.test.js && node tests/security.test.js && node tests/presence.test.js && node tests/crypto-kat.test.js && node tests/health.test.js && node tests/database_lock.test.js && node tests/audit_v278.test.js",
     "test:mesh": "node tests/mesh.test.js",
     "test:protocol": "node tests/protocol.test.js",
     "test:security": "node tests/security.test.js",
@@ -73,6 +73,7 @@
     "test:crypto": "node tests/crypto-kat.test.js",
     "test:health": "node tests/health.test.js",
     "test:lock": "node tests/database_lock.test.js",
+    "test:audit": "node tests/audit_v278.test.js",
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:stop": "pm2 stop ecosystem.config.cjs",
     "pm2:restart": "pm2 restart ecosystem.config.cjs",

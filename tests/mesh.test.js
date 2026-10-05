@@ -16,6 +16,8 @@ import { OnionRouter, UNIFORM_CELL_SIZE } from '../src/core/onionRouter.js';
 import { ClientServer } from '../src/core/clientServer.js';
 import { TerminalSession } from '../src/core/terminalSession.js';
 import { CONFIG } from '../src/config/index.js';
+process.env.NODE_ENV = 'test';
+CONFIG.environment = 'test';
 import { ProxyProtocolParser } from '../src/utils/proxyProtocol.js';
 import { SshClientConnection, SSH_MSG } from '../src/core/sshServer.js';
 import { InputParser } from '../src/utils/inputParser.js';

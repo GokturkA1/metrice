@@ -85,8 +85,19 @@ export class HealthServer {
           const prefix = health.status === 'healthy' ? 'OK ' : 'ERR ';
           socket.write(prefix + JSON.stringify(health) + '\n');
         } else if (cmd === 'STATUS' || cmd === 'INFO') {
-          const status = this.getStatusData();
-          socket.write(JSON.stringify(status) + '\n');
+          const rawRemote = socket.remoteAddress || '';
+          const cleanRemote = rawRemote.replace(/^::ffff:/, '');
+          const isLoopback = cleanRemote === '127.0.0.1' || cleanRemote === '::1' || cleanRemote === 'localhost';
+
+          // Guvenlik (MET-12): STATUS ve INFO gibi hassas ag ve bellek istihbarati verileri
+          // dis agdan erisime kapatilir. Yalnizca loopback (127.0.0.1) baglantilarina verilir.
+          if (!isLoopback) {
+            log.warn(`[SECURITY] Unauthorized STATUS/INFO request blocked from ${cleanRemote}`);
+            socket.write('ERR unauthorized\n');
+          } else {
+            const status = this.getStatusData();
+            socket.write(JSON.stringify(status) + '\n');
+          }
         } else if (cmd === 'QUIT') {
           socket.end();
           break;

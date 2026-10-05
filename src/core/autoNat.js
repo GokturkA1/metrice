@@ -147,7 +147,7 @@ export class AutoNatService {
     const isLoopback = verifiedIp === '127.0.0.1' || verifiedIp === '::1' || verifiedIp === 'localhost';
     const isPrivate = /^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)/.test(verifiedIp);
     const isLinkLocalOrCloud = verifiedIp.startsWith('169.254.') || verifiedIp.startsWith('fe80:');
-    const isTesting = process.env.NODE_ENV === 'test' || CONFIG.environment === 'test' || process.argv.some((a) => a.includes('test'));
+    const isTesting = process.env.NODE_ENV === 'test' || CONFIG.environment === 'test';
 
     if ((isLoopback || isPrivate || isLinkLocalOrCloud) && !isTesting) {
       log.warn(I18n.t('FED_AUTONAT_SSRF_BLOCKED', { ip: verifiedIp }));

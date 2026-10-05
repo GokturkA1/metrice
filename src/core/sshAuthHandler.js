@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { Logger } from '../utils/logger.js';
 import { SshPacketReader, SshPacketWriter } from '../utils/sshPacket.js';
 import { CryptoHelper } from '../utils/cryptoHelper.js';
@@ -6,6 +7,9 @@ import { I18n } from '../locales/i18n.js';
 import { SSH_MSG } from './sshClientConnection.js';
 
 const log = new Logger('SSH_AUTH');
+
+// Rate limiting ve brute-force engelleme (MET-04)
+const failedAttempts = new Map();
 
 export class SshAuthHandler {
   static async handleUserAuth(conn, reader, _rawPayload) {
@@ -59,6 +63,34 @@ export class SshAuthHandler {
       }
 
       if (method === 'password') {
+        const rawRemote = conn.socket?.realRemoteAddress || conn.socket?.remoteAddress || '';
+        const clientIp = rawRemote.replace(/^::ffff:/, '') || 'unknown';
+        const now = Date.now();
+
+        // 1. IP bazli kilit kontrolu (MET-04)
+        if (clientIp !== 'unknown') {
+          const attemptRecord = failedAttempts.get(clientIp);
+          if (attemptRecord && attemptRecord.lockedUntil > now) {
+            log.warn(`[SECURITY] SSH auth rate limited for IP ${clientIp}`);
+            const w = new SshPacketWriter();
+            w.writeByte(SSH_MSG.USERAUTH_FAILURE);
+            w.writeNameList(['password']);
+            w.writeBoolean(false);
+            conn.sendPacket(w.toBuffer());
+            return;
+          }
+        }
+
+        // 2. Baglanti bazli deneme siniri (MET-04)
+        if (!conn.failedAuthCount) conn.failedAuthCount = 0;
+        if (conn.failedAuthCount >= 3) {
+          log.warn(`[SECURITY] Too many failed SSH auth attempts for connection from ${clientIp}`);
+          if (conn.socket && typeof conn.socket.destroy === 'function') {
+            conn.socket.destroy();
+          }
+          return;
+        }
+
         reader.readBoolean();
         const password = reader.readString();
 
@@ -99,7 +131,10 @@ export class SshAuthHandler {
           : conn.offeredClientPub;
 
         if (!saltPub) {
-          saltPub = Buffer.from(`salt:${conn.clientServer.federation.nodeAddress}`);
+          const fedAddr = conn.clientServer?.federation?.nodeAddress || 'default';
+          saltPub = crypto.createHash('sha256')
+            .update(`salt:${fedAddr}:${formattedAddr}`)
+            .digest();
         }
 
         try {
@@ -143,12 +178,34 @@ export class SshAuthHandler {
         }
 
         if (authOk) {
+          if (clientIp !== 'unknown') {
+            failedAttempts.delete(clientIp);
+          }
+          conn.failedAuthCount = 0;
           conn.authenticatedUser = formattedAddr;
           const w = new SshPacketWriter();
           w.writeByte(SSH_MSG.USERAUTH_SUCCESS);
           conn.sendPacket(w.toBuffer());
           log.info(I18n.t('SSH_AUTH_SUCCESS', { user: conn.authenticatedUser }));
         } else {
+          conn.failedAuthCount = (conn.failedAuthCount || 0) + 1;
+          if (clientIp !== 'unknown') {
+            const rec = failedAttempts.get(clientIp) || { count: 0, lockedUntil: 0, lastAttempt: now };
+            rec.count += 1;
+            rec.lastAttempt = now;
+            if (rec.count >= 5) {
+              rec.lockedUntil = now + 30000;
+            }
+            failedAttempts.set(clientIp, rec);
+
+            if (failedAttempts.size > 1000) {
+              for (const [ip, r] of failedAttempts.entries()) {
+                if (now - r.lastAttempt > 60000 && r.lockedUntil < now) {
+                  failedAttempts.delete(ip);
+                }
+              }
+            }
+          }
           const w = new SshPacketWriter();
           w.writeByte(SSH_MSG.USERAUTH_FAILURE);
           w.writeNameList(['password']);

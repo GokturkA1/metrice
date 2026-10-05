@@ -17,6 +17,7 @@ project_dump.txt
 node_modules/
 
 SECURITY_REPORT_*.md
+*-security-audit*.md
 ARCHITECT.md
 *.txt
 

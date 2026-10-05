@@ -271,8 +271,20 @@ export class RendezvousManager {
       return;
     }
 
-    if (Math.abs(Date.now() - timestamp) > 86400000) {
+    // Guvenlik (MET-11): BIND zaman damgasi toleransi 24 saatten 5 dakikaya (300.000 ms) indirildi
+    const maxSkewMs = (CONFIG && CONFIG.rendezvousBindMaxSkewMs) || 300000;
+    if (Math.abs(Date.now() - timestamp) > maxSkewMs) {
       channel.writePayload({ status: 'rejected', reason: 'expired_timestamp' });
+      return;
+    }
+
+    const rawRemote = channel?.socket?.remoteAddress || '';
+    const cleanRemote = rawRemote.replace(/^::ffff:/, '');
+
+    // Guvenlik (MET-11): Nonce replay engeli
+    if (fed.nonceTracker && !fed.nonceTracker.track(nonce, cleanRemote || nodeId)) {
+      log.warn(I18n.t('FED_REPLAY_NONCE_DETECTED', { node: nodeId }));
+      channel.writePayload({ status: 'rejected', reason: 'replay_nonce' });
       return;
     }
 
@@ -285,8 +297,6 @@ export class RendezvousManager {
     }
 
     // IP basina azami tunel siniri (Sybil DoS korumasi)
-    const rawRemote = channel?.socket?.remoteAddress || '';
-    const cleanRemote = rawRemote.replace(/^::ffff:/, '');
     const isLoopback = cleanRemote === '127.0.0.1' || cleanRemote === '::1' || cleanRemote === 'localhost';
     const isTestMode = process.env.NODE_ENV === 'test' || isLoopback || !cleanRemote;
 

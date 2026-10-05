@@ -20,6 +20,9 @@ export class Database {
     this.hasLock = false;
     this._exitHandler = null;
     this._exitListenerAttached = false;
+    // Guvenlik (MET-07): Bellek ici devre anahtari ve gecici master key
+    this.circuitMasterKey = CryptoHelper.generateRandomKey(32);
+    this.memoryCircuits = new Map();
     this.init();
   }
 
@@ -722,18 +725,43 @@ export class Database {
 
   // --- V2.0 ONION CIRCUITS STORAGE ---
 
+  _decryptCircuitKey(storedKey) {
+    if (!storedKey) return null;
+    if (typeof storedKey === 'string' && storedKey.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(storedKey);
+        const decrypted = CryptoHelper.decrypt(parsed, this.circuitMasterKey);
+        if (decrypted) return decrypted;
+      } catch {}
+    }
+    return storedKey;
+  }
+
   saveCircuit({ circuitId, prevHop = null, nextHop = null, symmetricKey, createdAt = Date.now() }) {
     const circuitKey = prevHop ? `${circuitId}_${prevHop}` : circuitId;
+    this.memoryCircuits.set(circuitKey, {
+      circuitId,
+      prevHop,
+      nextHop,
+      symmetricKey,
+      createdAt
+    });
+
+    // Guvenlik (MET-07): Simetrik anahtar diske asla acik metin yazilmaz, AEAD ile sifrelenir
+    const encryptedKey = JSON.stringify(CryptoHelper.encrypt(symmetricKey, this.circuitMasterKey));
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO active_circuits (circuit_key, circuit_id, prev_hop, next_hop, symmetric_key, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(circuitKey, circuitId, prevHop, nextHop, symmetricKey, createdAt);
+    stmt.run(circuitKey, circuitId, prevHop, nextHop, encryptedKey, createdAt);
   }
 
   getCircuit(circuitId, prevHop = null) {
     if (prevHop) {
       const circuitKey = `${circuitId}_${prevHop}`;
+      if (this.memoryCircuits.has(circuitKey)) {
+        return this.memoryCircuits.get(circuitKey);
+      }
       const stmt = this.db.prepare('SELECT * FROM active_circuits WHERE circuit_key = ?');
       const row = stmt.get(circuitKey);
       if (row) {
@@ -741,9 +769,14 @@ export class Database {
           circuitId: row.circuit_id,
           prevHop: row.prev_hop,
           nextHop: row.next_hop,
-          symmetricKey: row.symmetric_key,
+          symmetricKey: this._decryptCircuitKey(row.symmetric_key),
           createdAt: row.created_at
         };
+      }
+    }
+    for (const c of this.memoryCircuits.values()) {
+      if (c.circuitId === circuitId) {
+        return c;
       }
     }
     const stmt = this.db.prepare('SELECT * FROM active_circuits WHERE circuit_id = ? ORDER BY created_at DESC LIMIT 1');
@@ -753,7 +786,7 @@ export class Database {
       circuitId: row.circuit_id,
       prevHop: row.prev_hop,
       nextHop: row.next_hop,
-      symmetricKey: row.symmetric_key,
+      symmetricKey: this._decryptCircuitKey(row.symmetric_key),
       createdAt: row.created_at
     };
   }
@@ -761,9 +794,15 @@ export class Database {
   deleteCircuit(circuitId, prevHop = null) {
     if (prevHop) {
       const circuitKey = `${circuitId}_${prevHop}`;
+      this.memoryCircuits.delete(circuitKey);
       const stmt = this.db.prepare('DELETE FROM active_circuits WHERE circuit_key = ?');
       stmt.run(circuitKey);
     } else {
+      for (const [key, c] of this.memoryCircuits.entries()) {
+        if (c.circuitId === circuitId) {
+          this.memoryCircuits.delete(key);
+        }
+      }
       const stmt = this.db.prepare('DELETE FROM active_circuits WHERE circuit_id = ?');
       stmt.run(circuitId);
     }
@@ -771,6 +810,11 @@ export class Database {
 
   deleteExpiredCircuits(maxAgeMs = 600000) {
     const cutoff = Date.now() - maxAgeMs;
+    for (const [key, c] of this.memoryCircuits.entries()) {
+      if (c.createdAt < cutoff) {
+        this.memoryCircuits.delete(key);
+      }
+    }
     const stmt = this.db.prepare('DELETE FROM active_circuits WHERE created_at < ?');
     return stmt.run(cutoff);
   }
