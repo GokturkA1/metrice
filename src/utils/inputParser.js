@@ -58,6 +58,25 @@ export class InputParser {
     let text = this.decoder.write(sanitizedBuffer);
     text = text.replace(/\r\x00/g, '\n').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
+    // Bracketed Paste (\x1b[200~) göndermeyen terminallerde tek pakette gelen çok satırlı blok yapıştırma tespiti
+    if (!this.isPasteMode && this.escapeState === 0 && !text.includes('\x1b')) {
+      const strippedEdges = text.replace(/^\n+|\n+$/g, '');
+      if (strippedEdges.includes('\n')) {
+        const content = strippedEdges.slice(0, InputParser.MAX_PASTE_BUFFER_SIZE);
+        actions.push({ type: 'PASTE_COMPLETE', content, bracketed: false });
+        return actions;
+      }
+    }
+
+    let hasCharsInChunk = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text.charCodeAt(i);
+      if (c >= 32 && c !== 0x7F) {
+        hasCharsInChunk = true;
+        break;
+      }
+    }
+
     for (let i = 0; i < text.length; i++) {
       const char = text[i];
       const code = char.charCodeAt(0);
@@ -70,15 +89,31 @@ export class InputParser {
         this.escapeCode = '\x1b';
         continue;
       } else if (this.escapeState === 1) {
-        this.escapeCode += char;
+        if (code === 0x1B) {
+          if (!this.isPasteMode) {
+            actions.push({ type: 'KEY_ESC' });
+          }
+          this.escapeState = 1;
+          this.escapeCode = '\x1b';
+          continue;
+        }
         if (char === '[' || char === 'O') {
+          this.escapeCode += char;
           this.escapeState = 2;
+          continue;
         } else {
           this.escapeState = 0;
-          actions.push({ type: 'KEY_ESC' });
+          this.escapeCode = '';
+          if (!this.isPasteMode) {
+            actions.push({ type: 'KEY_ESC' });
+          }
         }
-        continue;
       } else if (this.escapeState === 2) {
+        if (code === 0x1B) {
+          this.escapeState = 1;
+          this.escapeCode = '\x1b';
+          continue;
+        }
         this.escapeCode += char;
 
         // ANSI Cursor Position Report (CPR): \x1b[<satır>;<sütun>R
@@ -103,9 +138,9 @@ export class InputParser {
             this.pasteBuffer = '';
           } else if (this.escapeCode === '\x1b[201~') {
             this.isPasteMode = false;
-            actions.push({ type: 'PASTE_COMPLETE', content: this.pasteBuffer });
+            actions.push({ type: 'PASTE_COMPLETE', content: this.pasteBuffer, bracketed: true });
             this.pasteBuffer = '';
-          } else {
+          } else if (!this.isPasteMode) {
             const action = this.mapEscapeSequence(this.escapeCode);
             if (action) actions.push(action);
           }
@@ -123,9 +158,13 @@ export class InputParser {
       }
 
       if (code === 0x09) {
-        actions.push({ type: 'KEY_TAB' });
+        if (hasCharsInChunk) {
+          actions.push({ type: 'CHAR', char: '  ' });
+        } else {
+          actions.push({ type: 'KEY_TAB' });
+        }
       } else if (code === 0x0A) {
-        actions.push({ type: 'KEY_ENTER' });
+        actions.push({ type: 'KEY_ENTER', fromChunkWithChars: hasCharsInChunk });
       } else if (code === 0x08 || code === 0x7F) {
         actions.push({ type: 'KEY_BACKSPACE' });
       } else if (code === 0x17) {

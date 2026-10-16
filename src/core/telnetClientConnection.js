@@ -124,33 +124,35 @@ export class TelnetClientConnection {
     this.socket.write('\x1b[2J\x1b[H\x1b[1;36m' + I18n.t('TUI_WELCOME_BANNER') + '\x1b[0m');
     this.socket.write(I18n.t('TUI_LOGIN_PROMPT'));
 
-    this.socket.on('data', async (chunk) => {
-      try {
-        const actions = this.parser.parse(chunk);
+    this.socket.on('data', (chunk) => {
+      this.inputQueue = (this.inputQueue || Promise.resolve())
+        .then(async () => {
+          const actions = this.parser.parse(chunk);
 
-        for (const action of actions) {
-          if (action.type === 'RESIZE') {
-            this.detectedWidth = action.width;
-            this.detectedHeight = action.height;
-            if (this.session) this.session.resize(this.detectedWidth, this.detectedHeight);
-            continue;
+          for (const action of actions) {
+            if (action.type === 'RESIZE') {
+              this.detectedWidth = action.width;
+              this.detectedHeight = action.height;
+              if (this.session) this.session.resize(this.detectedWidth, this.detectedHeight);
+              continue;
+            }
+
+            if (this.authState !== AUTH_STATE.AUTHENTICATED) {
+              await this.handleAuthInput(action);
+              continue;
+            }
+
+            if (action.type === 'PASTE_COMPLETE') {
+              await this.handlePaste(action);
+              continue;
+            }
+
+            await this.handleSessionInput(action);
           }
-
-          if (this.authState !== AUTH_STATE.AUTHENTICATED) {
-            await this.handleAuthInput(action);
-            continue;
-          }
-
-          if (action.type === 'PASTE_COMPLETE') {
-            await this.handlePaste(action);
-            continue;
-          }
-
-          await this.handleSessionInput(action);
-        }
-      } catch (err) {
-        log.error(I18n.t('CLIENT_INPUT_ERROR', { error: err.message }));
-      }
+        })
+        .catch((err) => {
+          log.error(I18n.t('CLIENT_INPUT_ERROR', { error: err.message }));
+        });
     });
 
     this.socket.on('close', () => {

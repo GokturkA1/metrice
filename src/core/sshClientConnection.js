@@ -464,7 +464,7 @@ export class SshClientConnection extends EventEmitter {
 
     const virtualSocket = new EventEmitter();
     virtualSocket.write = (data) => {
-      if (!this.session || !this.socket || this.socket.destroyed || !this.socket.writable || this.socket.writableEnded) {
+      if (!this.authenticatedUser || !this.socket || this.socket.destroyed || !this.socket.writable || this.socket.writableEnded) {
         return false;
       }
 
@@ -510,8 +510,6 @@ export class SshClientConnection extends EventEmitter {
       }
     };
 
-    virtualSocket.write('\x1b[?2004h');
-
     this.session = new TerminalSession(
       virtualSocket,
       this.authenticatedUser,
@@ -554,6 +552,7 @@ export class SshClientConnection extends EventEmitter {
       this.session.renderFull(conv);
     });
 
+    virtualSocket.write('\x1b[?2004h');
     this.session.resize(this.termWidth, this.termHeight);
     this.clientServer.sessions.set(this.authenticatedUser, this.session);
 
@@ -563,21 +562,29 @@ export class SshClientConnection extends EventEmitter {
     this.clientServer.federation.broadcastPresenceAnnounce();
   }
 
-  async handleChannelInput(buffer) {
-    if (!this.session || !this.socket || this.socket.destroyed) return;
-    const actions = this.parser.parse(buffer);
+  handleChannelInput(buffer) {
+    if (!this.session || !this.socket || this.socket.destroyed) return Promise.resolve();
+    this.inputQueue = (this.inputQueue || Promise.resolve())
+      .then(async () => {
+        if (!this.session || !this.socket || this.socket.destroyed) return;
+        const actions = this.parser.parse(buffer);
 
-    for (const action of actions) {
-      if (!this.session) return;
-      await SessionInputHandler.handleAction(
-        action,
-        this.session,
-        this.clientServer,
-        this.authenticatedUser,
-        this.socket,
-        this.db
-      );
-    }
+        for (const action of actions) {
+          if (!this.session) return;
+          await SessionInputHandler.handleAction(
+            action,
+            this.session,
+            this.clientServer,
+            this.authenticatedUser,
+            this.socket,
+            this.db
+          );
+        }
+      })
+      .catch((err) => {
+        log.error(I18n.t('CLIENT_INPUT_ERROR', { error: err.message }));
+      });
+    return this.inputQueue;
   }
 
   cleanup() {

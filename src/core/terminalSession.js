@@ -132,7 +132,7 @@ export class TerminalSession extends EventEmitter {
     this.leftSidebarWidth = Math.min(26, Math.max(18, Math.floor(this.width * 0.22)));
     this.rightSidebarWidth = Math.min(24, Math.max(16, Math.floor(this.width * 0.20)));
     this.screenBuffer = [];
-    this.socket.write(ANSI.CLEAR);
+    this.socket.write(ANSI.CLEAR + '\x1b[?2004h');
     this.emit('request_render');
   }
 

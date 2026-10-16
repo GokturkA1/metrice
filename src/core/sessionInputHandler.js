@@ -2,27 +2,137 @@ import { AddressHelper } from '../utils/addressHelper.js';
 import { I18n } from '../locales/i18n.js';
 
 export class SessionInputHandler {
+  static queueOutboundBurst(session, clientServer, userAddress, textContent, isMultiLineChunk = false, fromChunkWithChars = false) {
+    if (!session.pendingPasteLines) {
+      session.pendingPasteLines = [];
+      session.pendingPasteIsSnippet = false;
+      session.pendingPasteFromChunk = false;
+    }
+
+    if (session.inputBuffer.length > 0 && isMultiLineChunk) {
+      session.pendingPasteLines.push(session.inputBuffer);
+      session.clearInput();
+    }
+
+    if (isMultiLineChunk) {
+      session.pendingPasteIsSnippet = true;
+      session.pendingPasteFromChunk = true;
+      const lines = textContent.split('\n');
+      session.pendingPasteLines.push(...lines);
+    } else {
+      session.pendingPasteLines.push(textContent);
+      if (fromChunkWithChars) {
+        session.pendingPasteFromChunk = true;
+      }
+    }
+
+    this.scheduleBurstFlush(session, clientServer, userAddress);
+  }
+
+  static scheduleBurstFlush(session, clientServer, userAddress) {
+    if (session.pasteFlushTimer) {
+      clearTimeout(session.pasteFlushTimer);
+    }
+
+    session.pasteFlushTimer = setTimeout(async () => {
+      session.pasteFlushTimer = null;
+      const lines = session.pendingPasteLines || [];
+      const wasSnippet = session.pendingPasteIsSnippet;
+      const wasFromChunk = session.pendingPasteFromChunk;
+
+      session.pendingPasteLines = [];
+      session.pendingPasteIsSnippet = false;
+      session.pendingPasteFromChunk = false;
+
+      if (lines.length === 0) return;
+
+      if ((lines.length >= 2 || wasSnippet || wasFromChunk) && session.inputBuffer.length > 0) {
+        lines.push(session.inputBuffer);
+        session.clearInput();
+      }
+
+      const isMulti = lines.length > 1 || wasSnippet;
+
+      if (!session.activeTarget || AddressHelper.isSystemConsole(session.activeTarget)) {
+        return;
+      }
+
+      try {
+        if (isMulti) {
+          const fullBlock = lines.join('\n').replace(/^\r?\n+|\r?\n+$/g, '');
+          if (fullBlock.trim().length > 0) {
+            await clientServer.handleOutboundMessage(
+              session,
+              userAddress,
+              session.activeTarget,
+              fullBlock,
+              false,
+              true
+            );
+          }
+        } else {
+          const singleMsg = lines[0].trim();
+          if (singleMsg.length > 0) {
+            session.pushHistory(singleMsg);
+            await clientServer.handleOutboundMessage(
+              session,
+              userAddress,
+              session.activeTarget,
+              singleMsg,
+              false,
+              false
+            );
+          }
+        }
+      } catch (err) {
+        session.addSystemLog(`\x1b[1;31m${I18n.t('CLIENT_MSG_DISPATCH_ERROR', { error: err.message })}\x1b[0m`);
+      }
+      session.emit('request_render');
+    }, 40);
+    session.pasteFlushTimer.unref?.();
+  }
+
   static async handlePaste(session, clientServer, userAddress, action) {
     const rawText = action.content || '';
-    const trimmed = rawText.trim();
+    const cleaned = rawText.replace(/^\r?\n+|\r?\n+$/g, '');
+    const trimmed = cleaned.trim();
+    if (!trimmed) return;
 
-    // 1. Komut veya tek satirlik metin yapistirildi
-    if (trimmed.startsWith('/') || !rawText.includes('\n')) {
+    const hasPendingBurst = session && session.pendingPasteLines && session.pendingPasteLines.length > 0;
+
+    // 1. Tek satirlik metin yapistirildi: gonderme, mesaj girisine yapistir
+    if (!trimmed.includes('\n') && !hasPendingBurst) {
       const singleLine = trimmed.replace(/[\r\n]+/g, ' ');
-      if (session && session.focus === 'input') {
+      if (session) {
+        if (session.focus !== 'input') {
+          session.focus = 'input';
+        }
         session.inputBuffer += singleLine;
         session.cursorIndex = session.inputBuffer.length;
         session.renderInputOnly();
       }
-    } 
+      return;
+    }
+
     // 2. Cok satirli kod veya metin blogu yapistirildi
-    else if (session && session.activeTarget && !AddressHelper.isSystemConsole(session.activeTarget)) {
+    if (session && session.activeTarget && !AddressHelper.isSystemConsole(session.activeTarget)) {
+      if (action.bracketed === false || hasPendingBurst) {
+        this.queueOutboundBurst(session, clientServer, userAddress, cleaned, true, true);
+        return;
+      }
+
+      let finalBlock = cleaned;
+      if (session.inputBuffer.length > 0) {
+        finalBlock = `${session.inputBuffer}\n${cleaned}`;
+        session.clearInput();
+      }
+
       try {
         await clientServer.handleOutboundMessage(
           session,
           userAddress,
           session.activeTarget,
-          rawText,
+          finalBlock,
           false,
           true
         );
@@ -57,6 +167,9 @@ export class SessionInputHandler {
         break;
 
       case 'CHAR':
+        if (session.pasteFlushTimer && (session.pendingPasteFromChunk || (session.pendingPasteLines && session.pendingPasteLines.length >= 2))) {
+          this.scheduleBurstFlush(session, clientServer, userAddress);
+        }
         if (session.focus === 'input') {
           session.insertChar(action.char);
           session.renderInputOnly();
@@ -154,7 +267,7 @@ export class SessionInputHandler {
         }
         break;
 
-      case 'KEY_ENTER':
+      case 'KEY_ENTER': {
         if (session.focus === 'sidebar') {
           const selectedTarget = session.contacts[session.selectedContactIdx];
           if (selectedTarget) {
@@ -164,17 +277,25 @@ export class SessionInputHandler {
           break;
         }
 
-        const input = session.inputBuffer.trim();
+        const rawLine = session.inputBuffer;
+        const input = rawLine.trim();
         session.clearInput();
 
+        const isBurstInProgress = session.pendingPasteLines && session.pendingPasteLines.length > 0;
+
         if (!input) {
-          session.renderInputOnly();
+          if (isBurstInProgress) {
+            this.queueOutboundBurst(session, clientServer, userAddress, '', false, Boolean(action.fromChunkWithChars));
+          } else {
+            session.renderInputOnly();
+          }
           break;
         }
 
-        session.pushHistory(input);
+        const isCommand = !isBurstInProgress && input.startsWith('/') && !input.startsWith('//') && !input.startsWith('/*');
 
-        if (input.startsWith('/')) {
+        if (isCommand) {
+          session.pushHistory(input);
           await clientServer.commands.execute(input, {
             session,
             socket: session.socket || socket,
@@ -197,21 +318,17 @@ export class SessionInputHandler {
         }
 
         if (session.activeTarget) {
-          try {
-            await clientServer.handleOutboundMessage(
-              session,
-              userAddress,
-              session.activeTarget,
-              input,
-              false,
-              false
-            );
-          } catch (err) {
-            session.addSystemLog(`\x1b[1;31m${I18n.t('CLIENT_MSG_DISPATCH_ERROR', { error: err.message })}\x1b[0m`);
-          }
-          session.emit('request_render');
+          this.queueOutboundBurst(
+            session,
+            clientServer,
+            userAddress,
+            rawLine,
+            false,
+            Boolean(action.fromChunkWithChars)
+          );
         }
         break;
+      }
 
       case 'KEY_INTERRUPT':
         if (session && session.socket) {
